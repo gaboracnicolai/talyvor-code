@@ -12,14 +12,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/talyvor/code/internal/codebase"
 	"github.com/talyvor/code/internal/config"
 	diffPkg "github.com/talyvor/code/internal/diff"
 	"github.com/talyvor/code/internal/docs"
+	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/track"
 )
@@ -104,6 +107,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runAgent(os.Stdin, stdout, stderr, cfg, rest)
 	case "docs":
 		return runDocs(stdout, stderr, cfg, rest)
+	case "review":
+		return runReview(os.Stdin, stdout, stderr, cfg, rest)
+	case "commit":
+		return runCommit(os.Stdin, stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -122,6 +129,8 @@ COMMANDS
   chat       Start an interactive chat REPL
   test       Generate tests for a source file
   run        Run an agentic multi-file task
+  review     Review staged changes or files for bugs/security/perf
+  commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
@@ -415,10 +424,27 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	ctx := context.Background()
 
+	// ── Phase 0: index codebase ──
+	// Index up front so the planner sees the actual stack and so
+	// we can later fuzzy-match planner-supplied paths against
+	// real ones (planner hallucinations are common when paths
+	// drift from the task description).
+	idx, idxErr := codebase.IndexDirectory(workspaceRoot, codebase.DefaultMaxFiles)
+	codebaseSummary := ""
+	if idxErr != nil {
+		fmt.Fprintf(stderr, "! codebase index: %v (continuing without it)\n", idxErr)
+	} else {
+		codebaseSummary = idx.Summary()
+		fmt.Fprintln(stdout, "▸ Indexed codebase:")
+		for _, line := range strings.Split(strings.TrimRight(codebaseSummary, "\n"), "\n") {
+			fmt.Fprintf(stdout, "  %s\n", line)
+		}
+	}
+
 	// ── Phase 1: plan ──
 	fmt.Fprintln(stdout, "▸ Planning…")
 	planText, err := lc.Complete(ctx,
-		[]lens.Message{{Role: "user", Content: planPrompt(taskDesc, workspaceRoot, cfg.ActiveIssue)}},
+		[]lens.Message{{Role: "user", Content: planPrompt(taskDesc, workspaceRoot, cfg.ActiveIssue, codebaseSummary)}},
 		agentModel, "agent-plan", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
@@ -433,6 +459,30 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	}
 	if len(plan.Files) > MaxAgentFiles {
 		return fmt.Errorf("plan: %d files exceeds MaxAgentFiles (%d)", len(plan.Files), MaxAgentFiles)
+	}
+
+	// ── Phase 1.5: smart file discovery ──
+	// For modify ops where the planner picked a non-existent
+	// path, look for a close-by file in the index and swap it
+	// in. Reduces "file not found" failures during execute.
+	if idx != nil {
+		for i, pf := range plan.Files {
+			if pf.Operation != "modify" {
+				continue
+			}
+			abs := pf.Path
+			if !isAbs(abs) {
+				abs = filepath.Join(workspaceRoot, pf.Path)
+			}
+			if _, err := os.Stat(abs); err == nil {
+				continue
+			}
+			matches := idx.FindRelevantFiles(filepath.Base(pf.Path), 1)
+			if len(matches) > 0 {
+				fmt.Fprintf(stdout, "  ↪ remapping %s → %s (closest match)\n", pf.Path, matches[0].Path)
+				plan.Files[i].Path = matches[0].Path
+			}
+		}
 	}
 
 	fmt.Fprintln(stdout, "Plan:")
@@ -513,6 +563,231 @@ func buildAgentCompletionComment(taskDesc string, filesChanged int, model string
 		"🤖 Talyvor Agent completed task: %s\nFiles changed: %d\nModel: %s",
 		taskDesc, filesChanged, model,
 	)
+}
+
+// ─── review subcommand ─────────────────────────────
+
+const reviewModel = "claude-sonnet-4-6"
+
+// runReview drives the code-review flow: read the staged diff
+// (or supplied files), build a structured prompt, call Lens, and
+// print the reply. Uses Sonnet because review quality matters
+// more than latency.
+func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		reviewType string
+		issue      string
+	)
+	fs := flag.NewFlagSet("review", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&reviewType, "type", "general", "Review type: general|security|performance")
+	fs.StringVar(&issue, "issue", "", "Override active issue")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if issue != "" {
+		cfg.ActiveIssue = issue
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	files := fs.Args()
+
+	var body string
+	switch {
+	case len(files) > 0:
+		ctx, err := codebase.ReadFilesForContext(files, codebase.DefaultMaxTotalBytes)
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		body = ctx
+	default:
+		diff, err := gitpkg.GetStagedDiff()
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		if strings.TrimSpace(diff) == "" {
+			return fmt.Errorf("review: no staged changes — pass files explicitly or stage with `git add`")
+		}
+		body = "=== git diff --staged ===\n" + diff
+	}
+
+	system := reviewSystemPrompt(reviewType)
+	user := system + "\n\nReview this code:\n\n" + body
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	out, err := lc.Complete(ctx,
+		[]lens.Message{{Role: "user", Content: user}},
+		reviewModel, "code-review", cfg.WorkspaceID, cfg.ActiveIssue,
+	)
+	if err != nil {
+		return fmt.Errorf("review: %w", err)
+	}
+	fmt.Fprintln(stdout, strings.TrimSpace(out))
+	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", reviewModel, nonEmpty(cfg.ActiveIssue, "(none)"))
+	return nil
+}
+
+// reviewSystemPrompt builds the structured review prompt. The
+// "type" knob shifts emphasis without overhauling the framing —
+// security/performance reviews still benefit from the same
+// "Issues Found / Critical / Warnings / Suggestions" skeleton.
+func reviewSystemPrompt(reviewType string) string {
+	focus := "Bugs and logic errors, security vulnerabilities, performance issues, code quality, and maintainability."
+	switch strings.ToLower(reviewType) {
+	case "security":
+		focus = "Authentication & authorization gaps, input validation, injection (SQL/command/template), unsafe deserialization, secret handling, CSRF/XSS, dependency CVEs, and data leakage."
+	case "performance":
+		focus = "Algorithmic complexity, N+1 queries, memory allocations on hot paths, blocking I/O, lock contention, and unnecessary computation in render paths."
+	}
+	return "You are an expert code reviewer. Focus on: " + focus + "\n\n" +
+		"Format your response as Markdown with these sections:\n" +
+		"## Summary\n## Issues Found\n### Critical\n### Warnings\n### Suggestions\n## Overall Assessment"
+}
+
+// ─── commit subcommand ─────────────────────────────
+
+const commitModel = "claude-haiku-4-6"
+
+// runCommit generates a conventional commit message from the
+// staged diff and confirms with the user before running `git
+// commit`. Uses Haiku — the output is short and speed matters
+// more than nuance for a one-line subject.
+func runCommit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		issue    string
+		doPush   bool
+	)
+	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&issue, "issue", "", "Prepend issue ID to message (e.g. ENG-42:)")
+	fs.BoolVar(&doPush, "push", false, "Push after a successful commit")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	diff, err := gitpkg.GetStagedDiff()
+	if err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	if strings.TrimSpace(diff) == "" {
+		return fmt.Errorf("commit: no staged changes")
+	}
+
+	system := "Generate a concise git commit message. Follow the conventional-commits format:\n" +
+		"<type>(<scope>): <description>\n\n" +
+		"Types: feat, fix, docs, refactor, test, chore. Keep the subject under 72 characters. " +
+		"Return ONLY the commit message — no explanation, no markdown fences, no quotes."
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	raw, err := lc.Complete(ctx,
+		[]lens.Message{{Role: "user", Content: system + "\n\n=== staged diff ===\n" + diff}},
+		commitModel, "code-commit", cfg.WorkspaceID, cfg.ActiveIssue,
+	)
+	if err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	msg := cleanCommitMessage(raw)
+	chosen := nonEmpty(issue, cfg.ActiveIssue)
+	if chosen != "" {
+		msg = chosen + ": " + msg
+	}
+
+	fmt.Fprintln(stdout, "Proposed commit message:")
+	fmt.Fprintln(stdout, "  "+msg)
+	fmt.Fprint(stdout, "Use this message? [Y/n/e] ")
+	reader := bufio.NewReader(stdin)
+	ans, _ := reader.ReadString('\n')
+	ans = strings.ToLower(strings.TrimSpace(ans))
+	switch ans {
+	case "", "y", "yes":
+		// accept as-is
+	case "n", "no":
+		fmt.Fprintln(stdout, "Aborted.")
+		return nil
+	case "e", "edit":
+		edited, err := editInExternalEditor(stderr, msg)
+		if err != nil {
+			return fmt.Errorf("commit: editor: %w", err)
+		}
+		if strings.TrimSpace(edited) == "" {
+			return fmt.Errorf("commit: empty message — aborted")
+		}
+		msg = edited
+	default:
+		return fmt.Errorf("commit: unknown response %q (expected Y/n/e)", ans)
+	}
+
+	if err := gitpkg.Commit(msg); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+	fmt.Fprintln(stdout, "Committed.")
+	if doPush {
+		if err := gitpkg.Push(); err != nil {
+			return fmt.Errorf("commit: push: %w", err)
+		}
+		fmt.Fprintln(stdout, "Pushed.")
+	}
+	return nil
+}
+
+// cleanCommitMessage strips fences/quotes/leading whitespace the
+// model sometimes adds despite the "no fences" instruction.
+func cleanCommitMessage(s string) string {
+	out := strings.TrimSpace(s)
+	out = strings.TrimPrefix(out, "```\n")
+	out = strings.TrimPrefix(out, "```")
+	out = strings.TrimSuffix(out, "```")
+	out = strings.TrimSpace(out)
+	// Drop matching surrounding quotes.
+	if strings.HasPrefix(out, "\"") && strings.HasSuffix(out, "\"") {
+		out = strings.TrimSuffix(strings.TrimPrefix(out, "\""), "\"")
+	}
+	// Take only the first line for the subject. Body (if any)
+	// remains in the next lines but trimmed of trailing space.
+	return strings.TrimRight(out, "\n ")
+}
+
+// editInExternalEditor opens $EDITOR with the proposed message,
+// returning the trimmed user-edited body. Falls back to nano /
+// vi when no $EDITOR is set, matching git's own behaviour.
+func editInExternalEditor(stderr io.Writer, initial string) (string, error) {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	tmp, err := os.CreateTemp("", "talyvor-commit-*.txt")
+	if err != nil {
+		return "", err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err := tmp.WriteString(initial); err != nil {
+		_ = tmp.Close()
+		return "", err
+	}
+	if err := tmp.Close(); err != nil {
+		return "", err
+	}
+	cmd := exec.Command(editor, tmpName)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = stderr
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	buf, err := os.ReadFile(tmpName)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(buf)), nil
 }
 
 // ─── docs subcommand ────────────────────────────────
@@ -668,7 +943,10 @@ type Plan struct {
 // planPrompt is the user message that follows the planner system
 // prompt. We keep both in one string so the model never sees a
 // stale "active issue" line from a cached system block.
-func planPrompt(taskDesc, workspaceRoot, issueID string) string {
+// codebaseSummary (optional) gives the planner a coarse map of
+// the repo — languages, file count, branch — so it picks paths
+// that line up with real files.
+func planPrompt(taskDesc, workspaceRoot, issueID, codebaseSummary string) string {
 	system := "You are an expert software engineer agent. " +
 		"Given a task description, create a detailed plan. " +
 		"List the files that need to be created or modified. " +
@@ -677,8 +955,12 @@ func planPrompt(taskDesc, workspaceRoot, issueID string) string {
 		"\"files\":[{\"path\":\"src/foo.go\",\"operation\":\"modify\",\"description\":\"…\"}]}. " +
 		"Valid operations are create, modify, delete. " +
 		"Use paths relative to the workspace root."
-	return fmt.Sprintf("%s\n\nTask: %s\nWorkspace: %s\nActive issue: %s",
+	out := fmt.Sprintf("%s\n\nTask: %s\nWorkspace: %s\nActive issue: %s",
 		system, taskDesc, workspaceRoot, nonEmpty(issueID, "(none)"))
+	if strings.TrimSpace(codebaseSummary) != "" {
+		out += "\n\nCodebase summary:\n" + codebaseSummary
+	}
+	return out
 }
 
 // parsePlan parses the planner's JSON reply. Strips an optional

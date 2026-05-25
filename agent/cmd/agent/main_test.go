@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -492,6 +493,220 @@ func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
 	if err := run([]string{"run", "--yes", "uppercase foo"}, &stdout, &stderr); err != nil {
 		t.Fatalf("run: %v", err)
 	}
+}
+
+// ─── review subcommand ─────────────────────────────
+
+func TestReview_NoStagedChangesErrors(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	chdirT(t, dir)
+
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"review"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "no staged") {
+		t.Fatalf("expected no-staged error, got %v", err)
+	}
+}
+
+func TestReview_OnExplicitFilesHitsSonnet(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "service.go")
+	if err := os.WriteFile(target, []byte("package svc\n\nfunc Risky(){\n\t// TODO\n}\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	var gotBody map[string]any
+	var gotFeature string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		gotFeature = r.Header.Get("X-Talyvor-Feature")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"## Summary\nLooks fine.\n## Issues Found\n### Critical\nNone.\n"}]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"review", target}, &stdout, &stderr); err != nil {
+		t.Fatalf("review: %v", err)
+	}
+	if gotBody["model"] != "claude-sonnet-4-6" {
+		t.Errorf("expected sonnet, got %v", gotBody["model"])
+	}
+	if gotFeature != "code-code-review" && gotFeature != "code-review" {
+		// Lens prepends "code-" to feature tags; either form is acceptable.
+		t.Errorf("feature header = %q", gotFeature)
+	}
+	if !strings.Contains(stdout.String(), "## Summary") {
+		t.Fatalf("review output missing structured markdown: %q", stdout.String())
+	}
+}
+
+// ─── commit subcommand ─────────────────────────────
+
+func TestCommit_NoStagedChangesErrors(t *testing.T) {
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	chdirT(t, dir)
+
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"commit"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "no staged changes") {
+		t.Fatalf("expected no-staged error, got %v", err)
+	}
+}
+
+func TestCommit_HappyPathConfirmsAndCommits(t *testing.T) {
+	dir := initRepoWithStaged(t, "hello.txt", "hello\n")
+	chdirT(t, dir)
+
+	var gotModel any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &body)
+		gotModel = body["model"]
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"feat: add hello file\n"}]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	// User answers "y" to the confirmation prompt.
+	stdin := strings.NewReader("y\n")
+	var stdout, stderr bytes.Buffer
+	if err := runCommit(stdin, &stdout, &stderr, config.Load(config.Config{}), nil); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	if gotModel != "claude-haiku-4-6" {
+		t.Errorf("expected haiku model, got %v", gotModel)
+	}
+	if !strings.Contains(stdout.String(), "feat: add hello file") {
+		t.Fatalf("proposed message not surfaced: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Committed.") {
+		t.Fatalf("commit confirmation missing: %q", stdout.String())
+	}
+	// Verify the commit actually landed.
+	out, _ := exec.Command("git", "log", "-1", "--pretty=%s").CombinedOutput()
+	if !strings.Contains(string(out), "feat: add hello file") {
+		t.Fatalf("commit subject not in log: %q", out)
+	}
+}
+
+func TestCommit_RejectionAborts(t *testing.T) {
+	dir := initRepoWithStaged(t, "x.txt", "x\n")
+	chdirT(t, dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"chore: x"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	stdin := strings.NewReader("n\n")
+	var stdout, stderr bytes.Buffer
+	if err := runCommit(stdin, &stdout, &stderr, config.Load(config.Config{}), nil); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Aborted.") {
+		t.Fatalf("expected abort message, got %q", stdout.String())
+	}
+	// No commit should have been created.
+	out, _ := exec.Command("git", "log").CombinedOutput()
+	if strings.Contains(string(out), "chore: x") {
+		t.Fatalf("commit unexpectedly created: %q", out)
+	}
+}
+
+func TestCommit_IssuePrefixIsPrepended(t *testing.T) {
+	dir := initRepoWithStaged(t, "y.txt", "y\n")
+	chdirT(t, dir)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"fix: bug in y"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	stdin := strings.NewReader("y\n")
+	var stdout, stderr bytes.Buffer
+	if err := runCommit(stdin, &stdout, &stderr, config.Load(config.Config{}), []string{"--issue", "ENG-42"}); err != nil {
+		t.Fatalf("runCommit: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "ENG-42: fix: bug in y") {
+		t.Fatalf("expected issue prefix, got %q", stdout.String())
+	}
+}
+
+func TestCleanCommitMessage_StripsArtifacts(t *testing.T) {
+	cases := map[string]string{
+		"```\nfeat: x\n```":    "feat: x",
+		"\"chore: y\"":          "chore: y",
+		"feat: z\n":             "feat: z",
+		"  fix: trim  ":         "fix: trim",
+	}
+	for in, want := range cases {
+		got := cleanCommitMessage(in)
+		if got != want {
+			t.Errorf("cleanCommitMessage(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// ─── helpers ─────────────────────────────────────
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func chdirT(t *testing.T, dir string) {
+	t.Helper()
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+}
+
+func initRepoWithStaged(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, dir, "add", name)
+	return dir
 }
 
 // ─── docs subcommand ────────────────────────────────
