@@ -7,6 +7,7 @@ import * as vscode from "vscode";
 import type { LensClient } from "../lens/client";
 import type { LensConfig, Message } from "../lens/types";
 import { CostTracker, estimateCostUSD, formatDuration } from "../providers/cost-tracker";
+import type { IssueContextProvider } from "../track/issue-context";
 import {
   buildSystemPrompt,
   escapeHTML,
@@ -48,6 +49,7 @@ export class ChatPanel {
     lens: LensClient,
     tracker: CostTracker,
     config: LensConfig,
+    issueContext?: IssueContextProvider,
   ): void {
     const column =
       vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -67,7 +69,7 @@ export class ChatPanel {
       },
     );
     void column;
-    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config);
+    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext);
   }
 
   // sendPrompt is the entry point context-menu commands use to
@@ -79,8 +81,9 @@ export class ChatPanel {
     tracker: CostTracker,
     config: LensConfig,
     prompt: string,
+    issueContext?: IssueContextProvider,
   ): Promise<void> {
-    ChatPanel.createOrShow(extensionUri, lens, tracker, config);
+    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext);
     await ChatPanel.currentPanel?.sendMessage(prompt);
   }
 
@@ -89,6 +92,7 @@ export class ChatPanel {
     private readonly lens: LensClient,
     private readonly tracker: CostTracker,
     private config: LensConfig,
+    private readonly issueContext?: IssueContextProvider,
   ) {
     this.panel = panel;
     this.panel.webview.html = this.renderHTML();
@@ -185,7 +189,13 @@ export class ChatPanel {
 
     try {
       const messages: Message[] = [
-        { role: "system", content: buildSystemPrompt(this.config.activeIssue) },
+        {
+          role: "system",
+          content: buildSystemPrompt(
+            this.config.activeIssue,
+            this.issueContext?.getIssueContext() ?? "",
+          ),
+        },
         ...this.history,
       ];
       const res = await this.lens.completeWithUsage(
@@ -201,6 +211,7 @@ export class ChatPanel {
         res.inputTokens + res.outputTokens,
         cost,
         this.config.activeIssue,
+        "chat",
       );
       this.history.push({ role: "assistant", content: res.text });
       this.history = trimHistory(this.history);
@@ -242,9 +253,13 @@ export class ChatPanel {
 
   private refreshSession(config: LensConfig, tracker: CostTracker): void {
     const s = tracker.getSessionSummary();
+    const current = this.issueContext?.getCurrentIssue();
+    const issueLabel = current
+      ? `${current.identifier} — ${current.title}`
+      : config.activeIssue || "(no issue)";
     this.post({
       type: "session",
-      issue: config.activeIssue || "(no issue)",
+      issue: issueLabel,
       model: config.model,
       totalCostUSD: s.totalCostUSD,
       duration: formatDuration(s.sessionStart),

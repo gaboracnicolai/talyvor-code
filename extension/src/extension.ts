@@ -1,35 +1,68 @@
 // Talyvor Code — VS Code extension entry point.
 //
-// Phase 2 adds the InlineCompletionItemProvider and wires the
-// session cost tracker into the status bar + dashboard. The
-// status bar shows a running spend ("$0.03") that updates after
-// every completion.
+// Phase 6 promotes Track integration to a first-class concern:
+//   - IssueContextProvider holds the active issue and feeds it
+//     into every AI prompt (completions, chat, agent, tests).
+//   - TalyvorStatusBar shows issue + session cost and drives the
+//     5-minute cost-sync to Track.
+//   - issue-commands.ts owns the QuickPick + "show issue" flows.
 
 import * as vscode from "vscode";
 import { TalyvorConfig } from "./config";
 import { LensClient } from "./lens/client";
 import { TrackClient } from "./track/client";
 import type { LensConfig } from "./lens/types";
-import { CostTracker, formatDuration } from "./providers/cost-tracker";
+import {
+  CostTracker,
+  formatDuration,
+  type FeatureUsage,
+} from "./providers/cost-tracker";
 import { TalyvorCompletionProvider } from "./providers/completions";
 import { ChatPanel } from "./panels/ChatPanel";
 import { TestGenerator } from "./providers/test-generator";
 import { TestPanel } from "./panels/TestPanel";
 import { AgentPanel } from "./panels/AgentPanel";
+import { IssueContextProvider } from "./track/issue-context";
+import { TalyvorStatusBar } from "./track/status-bar";
+import {
+  createIssueFromCodeCommand,
+  setActiveIssueCommand,
+  showIssueCommand,
+} from "./commands/issue-commands";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
   let lensClient = new LensClient(config.url, config.apiKey);
   let trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
   const tracker = new CostTracker();
+  const issueProvider = new IssueContextProvider(trackClient, lensClient);
 
-  const statusBar = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Right,
-    100,
+  // Listen for every Lens call's cost and roll it into the
+  // per-issue session bucket so the sync timer has something to
+  // push.
+  context.subscriptions.push(
+    tracker.onRecord((e) => issueProvider.recordCost(e.issueId, e.costUSD)),
   );
-  context.subscriptions.push(statusBar);
-  updateStatusBar(statusBar, config, tracker);
-  statusBar.show();
+
+  const statusBar = new TalyvorStatusBar(context);
+  const refreshStatusBar = () => {
+    const s = tracker.getSessionSummary();
+    statusBar.update(TalyvorConfig.getLensConfig(), s.totalCostUSD, s.totalTokens);
+  };
+  refreshStatusBar();
+  issueProvider.onUpdate(refreshStatusBar);
+  context.subscriptions.push(tracker.onRecord(refreshStatusBar));
+
+  // Resolve the persisted active issue on startup so prompts pick
+  // up the title/description without waiting for the first
+  // setActiveIssue call.
+  if (config.activeIssue && config.workspaceId) {
+    void issueProvider.setActiveIssue(config.activeIssue, config.workspaceId);
+  }
+
+  if (config.workspaceId) {
+    statusBar.startCostSync(issueProvider, config.workspaceId);
+  }
 
   // Completion provider registered for every file. setOnUpdate
   // lets the provider refresh the status bar after each successful
@@ -38,10 +71,9 @@ export function activate(context: vscode.ExtensionContext): void {
     lensClient,
     () => TalyvorConfig.getLensConfig(),
     tracker,
+    issueProvider,
   );
-  completionProvider.setOnUpdate(() =>
-    updateStatusBar(statusBar, TalyvorConfig.getLensConfig(), tracker),
-  );
+  completionProvider.setOnUpdate(refreshStatusBar);
   context.subscriptions.push(
     vscode.languages.registerInlineCompletionItemProvider(
       { pattern: "**" },
@@ -51,13 +83,19 @@ export function activate(context: vscode.ExtensionContext): void {
 
   context.subscriptions.push(
     vscode.commands.registerCommand("talyvor.setActiveIssue", () =>
-      setActiveIssueCommand(trackClient, TalyvorConfig.getLensConfig()),
+      setActiveIssueCommand(issueProvider, trackClient, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.showActiveIssue", () =>
+      showIssueCommand(issueProvider, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.createIssueFromCode", () =>
+      createIssueFromCodeCommand(TalyvorConfig.getLensConfig()),
     ),
     vscode.commands.registerCommand("talyvor.testConnection", () =>
       testConnectionCommand(lensClient),
     ),
     vscode.commands.registerCommand("talyvor.showCostDashboard", () =>
-      showCostDashboard(lensClient, TalyvorConfig.getLensConfig(), tracker),
+      showCostDashboard(lensClient, TalyvorConfig.getLensConfig(), tracker, issueProvider),
     ),
     vscode.commands.registerCommand("talyvor.openChat", () =>
       ChatPanel.createOrShow(
@@ -65,6 +103,7 @@ export function activate(context: vscode.ExtensionContext): void {
         lensClient,
         tracker,
         TalyvorConfig.getLensConfig(),
+        issueProvider,
       ),
     ),
     vscode.commands.registerCommand("talyvor.explainCode", () =>
@@ -72,17 +111,19 @@ export function activate(context: vscode.ExtensionContext): void {
         context.extensionUri,
         lensClient,
         tracker,
+        issueProvider,
         "Explain this code:",
       ),
     ),
     vscode.commands.registerCommand("talyvor.fixError", () =>
-      runFixErrorCommand(context.extensionUri, lensClient, tracker),
+      runFixErrorCommand(context.extensionUri, lensClient, tracker, issueProvider),
     ),
     vscode.commands.registerCommand("talyvor.refactorCode", () =>
       runContextPrompt(
         context.extensionUri,
         lensClient,
         tracker,
+        issueProvider,
         "Refactor this code to be cleaner and more maintainable:",
       ),
     ),
@@ -93,10 +134,10 @@ export function activate(context: vscode.ExtensionContext): void {
       runGenerateTestsCommand(context.extensionUri, lensClient, tracker, true),
     ),
     vscode.commands.registerCommand("talyvor.startAgentTask", () =>
-      runStartAgentCommand(context.extensionUri, lensClient, tracker, false),
+      runStartAgentCommand(context.extensionUri, lensClient, tracker, issueProvider, false),
     ),
     vscode.commands.registerCommand("talyvor.agentFromIssue", () =>
-      runStartAgentCommand(context.extensionUri, lensClient, tracker, true),
+      runStartAgentCommand(context.extensionUri, lensClient, tracker, issueProvider, true),
     ),
   );
 
@@ -106,8 +147,15 @@ export function activate(context: vscode.ExtensionContext): void {
       config = TalyvorConfig.getLensConfig();
       lensClient = new LensClient(config.url, config.apiKey);
       trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
-      updateStatusBar(statusBar, config, tracker);
+      refreshStatusBar();
+      // Restart sync with the (possibly new) workspaceId.
+      if (config.workspaceId) {
+        statusBar.startCostSync(issueProvider, config.workspaceId);
+      } else {
+        statusBar.stopCostSync();
+      }
     }),
+    statusBar,
   );
 
   if (!config.url || !config.apiKey) {
@@ -132,67 +180,7 @@ export function deactivate(): void {
   // by VS Code automatically. Nothing else to tear down today.
 }
 
-// ─── Status bar ─────────────────────────────────────
-
-// Status bar template now includes the running session cost:
-//   "$(warning) Talyvor: Not configured"
-//   "$(sparkle) Talyvor | No issue | $0.00"
-//   "$(sparkle) Talyvor | ENG-42 | $0.03"
-function updateStatusBar(
-  item: vscode.StatusBarItem,
-  config: LensConfig,
-  tracker: CostTracker,
-): void {
-  if (!config.url || !config.apiKey) {
-    item.text = "$(warning) Talyvor: Not configured";
-    item.tooltip = "Click to set up Talyvor Code";
-    item.command = "workbench.action.openSettings";
-    return;
-  }
-  const summary = tracker.getSessionSummary();
-  const costStr = `$${summary.totalCostUSD.toFixed(2)}`;
-  if (!config.activeIssue) {
-    item.text = `$(sparkle) Talyvor | No issue | ${costStr}`;
-    item.tooltip = `Session cost: ${costStr}. Click to set an active issue.`;
-    item.command = "talyvor.setActiveIssue";
-    return;
-  }
-  item.text = `$(sparkle) Talyvor | ${config.activeIssue} | ${costStr}`;
-  item.tooltip = `Active issue: ${config.activeIssue}. Session cost: ${costStr}. Click to change.`;
-  item.command = "talyvor.setActiveIssue";
-}
-
 // ─── Commands ──────────────────────────────────────
-
-async function setActiveIssueCommand(
-  track: TrackClient,
-  config: LensConfig,
-): Promise<void> {
-  const input = await vscode.window.showInputBox({
-    title: "Set active Talyvor issue",
-    prompt: "Enter the Track issue identifier (e.g. ENG-42)",
-    value: config.activeIssue,
-    placeHolder: "ENG-42",
-  });
-  if (input === undefined) return;
-  const id = input.trim();
-  if (id === "") {
-    await TalyvorConfig.setActiveIssue("");
-    void vscode.window.showInformationMessage("Active issue cleared.");
-    return;
-  }
-  const issue = await track.getIssue(config.workspaceId, id);
-  await TalyvorConfig.setActiveIssue(id);
-  if (issue) {
-    void vscode.window.showInformationMessage(
-      `Active issue: ${issue.identifier} — ${issue.title}`,
-    );
-  } else {
-    void vscode.window.showWarningMessage(
-      `Active issue set to ${id} (Track lookup failed — costs will still attribute).`,
-    );
-  }
-}
 
 async function testConnectionCommand(lens: LensClient): Promise<void> {
   if (!lens.isConfigured()) {
@@ -217,6 +205,7 @@ async function showCostDashboard(
   lens: LensClient,
   config: LensConfig,
   tracker: CostTracker,
+  provider: IssueContextProvider,
 ): Promise<void> {
   const panel = vscode.window.createWebviewPanel(
     "talyvorCost",
@@ -224,14 +213,16 @@ async function showCostDashboard(
     vscode.ViewColumn.Beside,
     { enableScripts: false, retainContextWhenHidden: true },
   );
-  const issue = config.activeIssue || "(no active issue)";
   const issueCost = await lens.getCostForIssue(
     config.workspaceId,
     config.activeIssue,
   );
   const summary = tracker.getSessionSummary();
+  const current = provider.getCurrentIssue();
   panel.webview.html = renderCostHTML(
-    issue,
+    config.activeIssue || "(no active issue)",
+    current?.title ?? "",
+    current?.status ?? "",
     issueCost.totalCostUSD,
     summary,
     config.model,
@@ -239,56 +230,97 @@ async function showCostDashboard(
 }
 
 function renderCostHTML(
-  issue: string,
+  issueId: string,
+  issueTitle: string,
+  issueStatus: string,
   issueTotalUsd: number,
   session: ReturnType<CostTracker["getSessionSummary"]>,
   model: string,
 ): string {
-  const byIssueRows = Object.entries(session.byIssue)
-    .sort((a, b) => b[1] - a[1])
-    .map(
-      ([k, v]) =>
-        `<tr><td>${escapeHTML(k)}</td><td>$${v.toFixed(4)}</td></tr>`,
+  const byIssueEntries = Object.entries(session.byIssue).sort(
+    (a, b) => b[1] - a[1],
+  );
+  const byIssueRows = byIssueEntries
+    .map(([k, v]) => {
+      const pct = session.totalCostUSD > 0
+        ? ((v / session.totalCostUSD) * 100).toFixed(0)
+        : "0";
+      return `<tr><td>${escapeHTML(k)}</td><td>$${v.toFixed(4)}</td><td class="muted">${pct}%</td></tr>`;
+    })
+    .join("");
+  const byFeatureRows = Object.entries(session.byFeature)
+    .sort((a, b) => b[1].costUSD - a[1].costUSD)
+    .map(([k, v]: [string, FeatureUsage]) =>
+      `<tr><td>${escapeHTML(featureLabel(k))}</td><td>$${v.costUSD.toFixed(4)}</td><td class="muted">${v.calls} call${v.calls === 1 ? "" : "s"} · ${v.tokens.toLocaleString()} tokens</td></tr>`,
     )
     .join("");
+  const sessionContribution =
+    session.byIssue[issueId] ?? session.byIssue["(no issue)"] ?? 0;
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>
 body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd;background:#1e1e1e;padding:16px;line-height:1.45}
 h1{font-size:14px;color:#fff;border-bottom:1px solid #333;padding-bottom:8px;margin-top:0}
 h2{font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-top:24px}
-.kv{display:grid;grid-template-columns:160px 1fr;gap:6px}
+.kv{display:grid;grid-template-columns:200px 1fr;gap:6px}
 .kv dt{color:#888}
 .kv dd{margin:0;color:#ddd}
 .cost{font-size:24px;color:#f0a030}
+.delta{font-size:12px;color:#5cd187;margin-left:8px}
 table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
 td{padding:4px 8px;border-bottom:1px solid #2a2a2a}
 .muted{color:#666;font-size:11px}
+.status-chip{display:inline-block;background:#2a2a2a;color:#aaa;padding:1px 6px;border-radius:3px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;margin-left:8px}
 </style></head><body>
-<h1>Talyvor Code — Session Cost Dashboard</h1>
+<h1>Talyvor Code — Cost Dashboard</h1>
 
-<h2>🎯 Active issue</h2>
+<h2>🎯 Current issue</h2>
 <dl class="kv">
-  <dt>Issue</dt><dd>${escapeHTML(issue)}</dd>
-  <dt>Total AI cost</dt><dd class="cost">$${issueTotalUsd.toFixed(2)}</dd>
+  <dt>Issue</dt><dd>${escapeHTML(issueId)}${issueTitle ? " — " + escapeHTML(issueTitle) : ""}${issueStatus ? `<span class="status-chip">${escapeHTML(issueStatus)}</span>` : ""}</dd>
+  <dt>Track total AI cost</dt><dd class="cost">$${issueTotalUsd.toFixed(2)}<span class="delta">+$${sessionContribution.toFixed(4)} this session</span></dd>
 </dl>
 
-<h2>This session</h2>
+<h2>Session summary</h2>
 <dl class="kv">
-  <dt>Completions</dt><dd>${session.completionCount}</dd>
-  <dt>Tokens used</dt><dd>${session.totalTokens.toLocaleString()}</dd>
-  <dt>Cost</dt><dd>$${session.totalCostUSD.toFixed(4)}</dd>
+  <dt>Total cost</dt><dd>$${session.totalCostUSD.toFixed(4)}</dd>
+  <dt>Total tokens</dt><dd>${session.totalTokens.toLocaleString()}</dd>
+  <dt>AI calls</dt><dd>${session.completionCount}</dd>
   <dt>Duration</dt><dd>${formatDuration(session.sessionStart)}</dd>
   <dt>Model</dt><dd>${escapeHTML(model)}</dd>
 </dl>
 
 ${
-  Object.keys(session.byIssue).length > 1
-    ? `<h2>By issue</h2><table>${byIssueRows}</table>`
+  Object.keys(session.byFeature).length > 0
+    ? `<h2>By feature</h2><table>${byFeatureRows}</table>`
     : ""
 }
 
-<p class="muted">Active-issue total comes from Lens analytics; session figures are estimated locally.</p>
+${
+  byIssueEntries.length > 0
+    ? `<h2>By issue (cost attribution)</h2><table>${byIssueRows}</table>`
+    : ""
+}
+
+<p class="muted">Active-issue total comes from Lens analytics; session figures are estimated locally. Cost syncs to Track every 5 minutes.</p>
 </body></html>`;
+}
+
+// featureLabel turns the internal feature tag into a friendlier
+// dashboard label.
+function featureLabel(tag: string): string {
+  switch (tag) {
+    case "completion":
+      return "Completions";
+    case "chat":
+      return "Chat";
+    case "test-generation":
+      return "Test generation";
+    case "agent-plan":
+      return "Agent planning";
+    case "agent-execute":
+      return "Agent execution";
+    default:
+      return tag;
+  }
 }
 
 function escapeHTML(s: string): string {
@@ -307,6 +339,7 @@ async function runContextPrompt(
   extensionUri: vscode.Uri,
   lens: LensClient,
   tracker: CostTracker,
+  provider: IssueContextProvider,
   instruction: string,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
@@ -328,6 +361,7 @@ async function runContextPrompt(
     tracker,
     TalyvorConfig.getLensConfig(),
     prompt,
+    provider,
   );
 }
 
@@ -340,6 +374,7 @@ async function runStartAgentCommand(
   extensionUri: vscode.Uri,
   lens: LensClient,
   tracker: CostTracker,
+  provider: IssueContextProvider,
   fromIssue: boolean,
 ): Promise<void> {
   const cfg = TalyvorConfig.getLensConfig();
@@ -357,8 +392,10 @@ async function runStartAgentCommand(
       );
       return;
     }
-    const track = new TrackClient(cfg.trackUrl, cfg.trackApiKey);
-    const issue = await track.getIssue(cfg.workspaceId, cfg.activeIssue);
+    const issue =
+      provider.getCurrentIssue() ??
+      (await provider.setActiveIssue(cfg.activeIssue, cfg.workspaceId)) ??
+      undefined;
     if (issue) {
       prefill = `${issue.title}\n\n${issue.description}`.trim();
     } else {
@@ -370,7 +407,7 @@ async function runStartAgentCommand(
       prefill = editor.document.getText(editor.selection);
     }
   }
-  AgentPanel.createOrShow(extensionUri, lens, tracker, cfg, prefill);
+  AgentPanel.createOrShow(extensionUri, lens, tracker, cfg, prefill, provider);
 }
 
 // runGenerateTestsCommand drives the test-generation flow. When
@@ -441,6 +478,7 @@ async function runFixErrorCommand(
   extensionUri: vscode.Uri,
   lens: LensClient,
   tracker: CostTracker,
+  provider: IssueContextProvider,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -470,5 +508,6 @@ async function runFixErrorCommand(
     tracker,
     TalyvorConfig.getLensConfig(),
     prompt,
+    provider,
   );
 }

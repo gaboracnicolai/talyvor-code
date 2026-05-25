@@ -76,7 +76,9 @@
       {"command": "talyvor.generateTests", "title": "Talyvor: Generate Tests"},
       {"command": "talyvor.generateTestsForFile", "title": "Talyvor: Generate Tests for File"},
       {"command": "talyvor.startAgentTask", "title": "Talyvor: Start Agent Task"},
-      {"command": "talyvor.agentFromIssue", "title": "Talyvor: Run Agent from Active Issue"}
+      {"command": "talyvor.agentFromIssue", "title": "Talyvor: Run Agent from Active Issue"},
+      {"command": "talyvor.showActiveIssue", "title": "Talyvor: Show Active Issue"},
+      {"command": "talyvor.createIssueFromCode", "title": "Talyvor: Create Track Issue from Code"}
     ],
     "menus": {
       "editor/context": [
@@ -85,7 +87,8 @@
         {"command": "talyvor.refactorCode", "group": "talyvor@3", "when": "editorHasSelection"},
         {"command": "talyvor.generateTests", "group": "talyvor@4", "when": "editorHasSelection"},
         {"command": "talyvor.generateTestsForFile", "group": "talyvor@5"},
-        {"command": "talyvor.startAgentTask", "group": "talyvor@6"}
+        {"command": "talyvor.startAgentTask", "group": "talyvor@6"},
+        {"command": "talyvor.createIssueFromCode", "group": "talyvor@7", "when": "editorHasSelection"}
       ]
     },
     "keybindings": [

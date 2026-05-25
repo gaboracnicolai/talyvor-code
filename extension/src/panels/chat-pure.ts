@@ -24,17 +24,22 @@ export function trimHistory(history: Message[], limit = MAX_HISTORY): Message[] 
 // buildSystemPrompt assembles the persistent system message that
 // rides on every chat request. We refresh it per-send so the
 // active issue stays current after the user runs /issue mid-chat.
-export function buildSystemPrompt(issueID: string): string {
+// issueContext (when present) is the multi-line Track summary
+// from IssueContextProvider — appended verbatim so the model sees
+// title, status, and description for grounded answers.
+export function buildSystemPrompt(issueID: string, issueContext = ""): string {
   const issueLine = issueID
     ? `The active issue is ${issueID}.`
     : "No active issue is set.";
-  return [
+  const base = [
     "You are an expert coding assistant integrated into VS Code.",
     "You help developers understand, fix, and improve code.",
     "When showing code, use markdown code fences with the language identifier.",
     "Be concise but complete. Skip restating the question.",
     issueLine,
   ].join(" ");
+  if (issueContext.trim() === "") return base;
+  return `${base}\n\nActive issue context:\n${issueContext}`;
 }
 
 // CodeBlock represents one ``` fenced segment in a response. The

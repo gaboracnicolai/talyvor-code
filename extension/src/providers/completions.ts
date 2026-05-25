@@ -11,6 +11,7 @@ import * as vscode from "vscode";
 import type { LensClient } from "../lens/client";
 import type { TalyvorConfig } from "../config";
 import { CostTracker, estimateCostUSD } from "./cost-tracker";
+import type { IssueContextProvider } from "../track/issue-context";
 import {
   buildCompletionPrompt,
   getCodeContext,
@@ -45,6 +46,7 @@ export class TalyvorCompletionProvider
     private lens: LensClient,
     private config: ConfigSupplier,
     private tracker: CostTracker,
+    private issueContext?: IssueContextProvider,
   ) {}
 
   // setOnUpdate lets the host (extension.ts) refresh the status bar
@@ -126,10 +128,14 @@ export class TalyvorCompletionProvider
     const cfg = this.config();
     const ctx = getCodeContext(document, position);
     const userPrompt = buildCompletionPrompt(ctx);
+    const issueCtx = this.issueContext?.getIssueContext() ?? "";
+    const systemPrompt = issueCtx
+      ? `${SYSTEM_PROMPT}\n\nActive issue context:\n${issueCtx}`
+      : SYSTEM_PROMPT;
 
     const res = await this.lens.completeWithUsage(
       [
-        { role: "user", content: `${SYSTEM_PROMPT}\n\n${userPrompt}` },
+        { role: "user", content: `${systemPrompt}\n\n${userPrompt}` },
       ],
       cfg.model || "claude-haiku-4-6",
       "completion",
@@ -143,6 +149,7 @@ export class TalyvorCompletionProvider
       res.inputTokens + res.outputTokens,
       cost,
       cfg.activeIssue,
+      "completion",
     );
     this.onUpdate?.();
     return sanitiseCompletion(res.text);

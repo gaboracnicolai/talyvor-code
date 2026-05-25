@@ -59,6 +59,7 @@ export class TestGenerator {
       res.inputTokens + res.outputTokens,
       cost,
       config.activeIssue,
+      "test-generation",
     );
     return {
       code: sanitiseGenerated(res.text),

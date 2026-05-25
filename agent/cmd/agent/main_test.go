@@ -404,6 +404,109 @@ func TestParsePlan_StripsMarkdownFence(t *testing.T) {
 	}
 }
 
+// TestRun_AgentPostsTrackCommentAfterSuccess wires a fake Track
+// alongside the fake Lens. After a successful agent run we expect
+// a POST to /v1/workspaces/ws-1/issues/ENG-42/comments carrying
+// the canonical "🤖 Talyvor Agent completed task" body.
+func TestRun_AgentPostsTrackCommentAfterSuccess(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	lensSrv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"uppercase"}]}`,
+		"HELLO\n",
+	})
+	defer lensSrv.Close()
+
+	var trackPath string
+	var trackBody map[string]string
+	trackSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		trackPath = r.URL.Path
+		if r.Method == http.MethodPost {
+			buf, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(buf, &trackBody)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer trackSrv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", lensSrv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+	t.Setenv("TALYVOR_TRACK_URL", trackSrv.URL)
+	t.Setenv("TALYVOR_TRACK_API_KEY", "tlv_track")
+
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.HasSuffix(trackPath, "/v1/workspaces/ws-1/issues/ENG-42/comments") {
+		t.Fatalf("track endpoint not hit, got path %q", trackPath)
+	}
+	if !strings.Contains(trackBody["content"], "Talyvor Agent completed task") {
+		t.Fatalf("comment body wrong: %q", trackBody["content"])
+	}
+	if trackBody["author_id"] != "talyvor-agent" {
+		t.Fatalf("author_id = %q", trackBody["author_id"])
+	}
+}
+
+// TestRun_AgentSkipsTrackCommentWhenUnconfigured ensures Track
+// failure modes don't cascade: if Track isn't configured we just
+// log and move on without erroring the CLI.
+func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify"],"files":[{"path":"foo.txt","operation":"modify","description":"x"}]}`,
+		"HELLO\n",
+	})
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+	t.Setenv("TALYVOR_TRACK_URL", "")
+	t.Setenv("TALYVOR_TRACK_API_KEY", "")
+
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+}
+
+func TestBuildAgentCompletionComment_HasExpectedShape(t *testing.T) {
+	out := buildAgentCompletionComment("add JWT auth", 3, "claude-sonnet-4-6")
+	for _, want := range []string{
+		"Talyvor Agent completed task: add JWT auth",
+		"Files changed: 3",
+		"Model: claude-sonnet-4-6",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in: %s", want, out)
+		}
+	}
+}
+
 func TestParseLineRange(t *testing.T) {
 	if a, b, ok := parseLineRange("10-50", 100); !ok || a != 10 || b != 50 {
 		t.Fatalf("10-50 → %d,%d,%v", a, b, ok)

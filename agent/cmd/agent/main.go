@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/talyvor/code/internal/config"
 	diffPkg "github.com/talyvor/code/internal/diff"
@@ -474,7 +475,32 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fmt.Fprintf(stdout, "\nApplied %d/%d changes (skipped %d)\n", applied, len(plan.Files), skipped)
 	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", agentModel,
 		nonEmpty(cfg.ActiveIssue, "(none)"))
+
+	// Best-effort Track comment so the issue trail captures the
+	// automated change. Failures here never fail the CLI — the
+	// user already has the change applied locally.
+	if applied > 0 && cfg.ActiveIssue != "" {
+		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if tc.IsConfigured() {
+			comment := buildAgentCompletionComment(taskDesc, applied, agentModel)
+			cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer ccancel()
+			if err := tc.AddComment(cctx, cfg.WorkspaceID, cfg.ActiveIssue, comment); err != nil {
+				fmt.Fprintf(stderr, "! Track comment failed: %v\n", err)
+			}
+		}
+	}
 	return nil
+}
+
+// buildAgentCompletionComment is the body posted to Track after a
+// successful agent run. Mirrors the extension-side helper so the
+// audit trail looks the same regardless of which client did it.
+func buildAgentCompletionComment(taskDesc string, filesChanged int, model string) string {
+	return fmt.Sprintf(
+		"🤖 Talyvor Agent completed task: %s\nFiles changed: %d\nModel: %s",
+		taskDesc, filesChanged, model,
+	)
 }
 
 // PlannedFile is one entry in the planner's JSON response. The

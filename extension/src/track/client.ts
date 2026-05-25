@@ -110,4 +110,49 @@ export class TrackClient {
       // Best-effort — swallowed.
     }
   }
+
+  // addComment posts a comment to a Track issue. Used by the
+  // agent flow to leave "agent task completed" notes alongside
+  // human discussion so the audit trail of automated changes is
+  // visible inside Track.
+  async addComment(
+    workspaceId: string,
+    issueId: string,
+    content: string,
+  ): Promise<void> {
+    if (!this.isConfigured() || !workspaceId || !issueId) return;
+    try {
+      await fetch(
+        `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues/${encodeURIComponent(issueId)}/comments`,
+        {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify({ content, author_id: "talyvor-code" }),
+        },
+      );
+    } catch {
+      // Best-effort — swallowed.
+    }
+  }
+
+  // listIssues returns recent issues for the workspace. Used to
+  // seed the QuickPick when the user hasn't typed enough chars to
+  // search yet.
+  async listIssues(
+    workspaceId: string,
+    limit = 25,
+  ): Promise<TrackIssue[]> {
+    if (!this.isConfigured() || !workspaceId) return [];
+    try {
+      const res = await fetch(
+        `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues?limit=${limit}`,
+        { headers: this.headers() },
+      );
+      if (!res.ok) return [];
+      const arr = (await res.json()) as RawIssue[];
+      return arr.map(normalise);
+    } catch {
+      return [];
+    }
+  }
 }

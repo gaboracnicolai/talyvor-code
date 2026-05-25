@@ -14,6 +14,7 @@ import type { LensConfig } from "../lens/types";
 import { CostTracker } from "../providers/cost-tracker";
 import { AgentMode, type AgentTask } from "../agent/AgentMode";
 import type { DiffLine } from "../agent/agent-pure";
+import type { IssueContextProvider } from "../track/issue-context";
 import { escapeHTML } from "./chat-pure";
 
 type Inbound =
@@ -36,6 +37,7 @@ export class AgentPanel {
     tracker: CostTracker,
     config: LensConfig,
     prefill = "",
+    issueContext?: IssueContextProvider,
   ): void {
     if (AgentPanel.current) {
       AgentPanel.current.panel.reveal(vscode.ViewColumn.Beside);
@@ -54,7 +56,7 @@ export class AgentPanel {
         localResourceRoots: [extensionUri],
       },
     );
-    AgentPanel.current = new AgentPanel(panel, lens, tracker, config, prefill);
+    AgentPanel.current = new AgentPanel(panel, lens, tracker, config, prefill, issueContext);
   }
 
   private constructor(
@@ -63,6 +65,7 @@ export class AgentPanel {
     private readonly tracker: CostTracker,
     private config: LensConfig,
     prefill: string,
+    private readonly issueContext?: IssueContextProvider,
   ) {
     this.prefill = prefill;
     this.panel.webview.html = this.renderHTML(undefined);
@@ -103,7 +106,7 @@ export class AgentPanel {
         break;
       case "applyAll":
         if (this.agent) {
-          const out = await this.agent.applyApproved();
+          const out = await this.agent.applyApproved(this.freshConfig().workspaceId);
           void vscode.window.showInformationMessage(
             `Applied ${out.applied} change(s)${out.failed ? `, ${out.failed} failed` : ""}.`,
           );
@@ -120,9 +123,14 @@ export class AgentPanel {
       void vscode.window.showWarningMessage("Describe what you want first.");
       return;
     }
-    this.agent = new AgentMode(this.lens, this.tracker, (task) => {
-      this.panel.webview.html = this.renderHTML(task);
-    });
+    this.agent = new AgentMode(
+      this.lens,
+      this.tracker,
+      (task) => {
+        this.panel.webview.html = this.renderHTML(task);
+      },
+      this.issueContext,
+    );
     await this.agent.startTask(
       description.trim(),
       this.freshConfig(),

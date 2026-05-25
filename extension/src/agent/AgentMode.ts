@@ -12,6 +12,7 @@ import * as vscode from "vscode";
 import type { LensClient } from "../lens/client";
 import type { LensConfig } from "../lens/types";
 import { CostTracker, estimateCostUSD } from "../providers/cost-tracker";
+import type { IssueContextProvider } from "../track/issue-context";
 import {
   AgentPlan,
   AgentStatus,
@@ -69,6 +70,7 @@ export class AgentMode {
     private readonly lens: LensClient,
     private readonly tracker: CostTracker,
     private readonly onUpdate: UpdateListener,
+    private readonly issueContext?: IssueContextProvider,
   ) {}
 
   currentTask(): AgentTask | undefined {
@@ -168,7 +170,9 @@ export class AgentMode {
   // applyApproved writes every approved change to disk. Failures
   // along the way are accumulated rather than aborting — partial
   // success is the honest outcome of a multi-file task.
-  async applyApproved(): Promise<{ applied: number; failed: number }> {
+  async applyApproved(
+    workspaceId = "",
+  ): Promise<{ applied: number; failed: number }> {
     if (!this.task) return { applied: 0, failed: 0 };
     if (!canTransition(this.task.status, "applying")) {
       return { applied: 0, failed: 0 };
@@ -195,6 +199,26 @@ export class AgentMode {
       this.task.completedAt = new Date();
     }
     this.emit();
+
+    // Push a completion comment to Track — best-effort, never
+    // raise. Runs after the state transition so the panel updates
+    // immediately and the comment posts in the background.
+    if (
+      applied > 0 &&
+      this.issueContext &&
+      workspaceId &&
+      this.task.issueId
+    ) {
+      void this.issueContext.pushAgentCompletionComment(
+        workspaceId,
+        this.task.issueId,
+        this.task.description,
+        applied,
+        this.task.totalCostUSD,
+        AGENT_MODEL,
+      );
+    }
+
     return { applied, failed };
   }
 
@@ -213,7 +237,11 @@ export class AgentMode {
     config: LensConfig,
     workspaceRoot: string,
   ): Promise<AgentPlan> {
-    const user = `${PLANNER_SYSTEM}\n\nTask: ${description}\nWorkspace: ${workspaceRoot}\nActive issue: ${config.activeIssue || "(none)"}`;
+    const issueCtx = this.issueContext?.getIssueContext() ?? "";
+    const issueBlock = issueCtx
+      ? `\nActive issue context:\n${issueCtx}\n`
+      : `\nActive issue: ${config.activeIssue || "(none)"}\n`;
+    const user = `${PLANNER_SYSTEM}\n\nTask: ${description}\nWorkspace: ${workspaceRoot}${issueBlock}`;
     const res = await this.lens.completeWithUsage(
       [{ role: "user", content: user }],
       AGENT_MODEL,
@@ -222,7 +250,7 @@ export class AgentMode {
       config.activeIssue,
       2048,
     );
-    this.recordCost(res.inputTokens, res.outputTokens, config.activeIssue);
+    this.recordCost(res.inputTokens, res.outputTokens, config.activeIssue, "agent-plan");
     return parsePlan(res.text);
   }
 
@@ -261,7 +289,7 @@ export class AgentMode {
         config.activeIssue,
         4096,
       );
-      this.recordCost(res.inputTokens, res.outputTokens, config.activeIssue);
+      this.recordCost(res.inputTokens, res.outputTokens, config.activeIssue, "agent-execute");
       newContent = stripFences(res.text);
     }
     return {
@@ -292,9 +320,10 @@ export class AgentMode {
     inputTokens: number,
     outputTokens: number,
     issue: string,
+    feature: string,
   ): void {
     const cost = estimateCostUSD(inputTokens, outputTokens);
-    this.tracker.recordCompletion(inputTokens + outputTokens, cost, issue);
+    this.tracker.recordCompletion(inputTokens + outputTokens, cost, issue, feature);
     if (this.task) {
       this.task.totalCostUSD += cost;
     }
