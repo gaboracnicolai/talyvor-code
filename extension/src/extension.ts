@@ -39,6 +39,7 @@ import {
   openDocsCommand,
   searchDocsCommand,
 } from "./commands/docs-commands";
+import { generateShellCommand } from "./commands/shell-command";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -190,6 +191,9 @@ export function activate(context: vscode.ExtensionContext): void {
         TalyvorConfig.getLensConfig(),
         issueProvider,
       ),
+    ),
+    vscode.commands.registerCommand("talyvor.generateShellCommand", () =>
+      generateShellCommand(lensClient, tracker, TalyvorConfig.getLensConfig()),
     ),
   );
 

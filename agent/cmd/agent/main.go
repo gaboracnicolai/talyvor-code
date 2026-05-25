@@ -27,6 +27,7 @@ import (
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
 	"github.com/talyvor/code/internal/rules"
+	"github.com/talyvor/code/internal/shell"
 	"github.com/talyvor/code/internal/track"
 )
 
@@ -118,6 +119,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runServe(stdout, stderr, cfg, rest)
 	case "init":
 		return runInit(stdout, stderr)
+	case "shell", "sh":
+		return runShell(os.Stdin, stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -141,6 +144,7 @@ COMMANDS
   docs       Search and query Talyvor Docs
   serve      Start the Talyvor Code MCP server
   init       Write a starter .talyvor-rules file in the current directory
+  shell      Generate a shell command from a description (alias: sh)
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -1475,6 +1479,150 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// ─── shell subcommand ──────────────────────────────
+
+// maxShellFixAttempts caps the recovery loop. After three tries
+// the user is better off writing the command themselves than
+// burning more Lens calls.
+const maxShellFixAttempts = 3
+
+// runShell drives the shell-command generation flow. Steps:
+//   1. Resolve shell + OS context.
+//   2. Ask Lens (Haiku) for a single command.
+//   3. Print the command.
+//   4. Optional --explain pass for a brief breakdown.
+//   5. Optional --run with safety prompt + fix-on-failure loop.
+func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		explain  bool
+		runIt    bool
+		shellArg string
+		issue    string
+	)
+	fs := flag.NewFlagSet("shell", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&explain, "explain", false, "Explain the command before running")
+	fs.BoolVar(&runIt, "run", false, "Execute the command after confirmation")
+	fs.StringVar(&shellArg, "shell", "", "Shell type: bash|zsh|fish|powershell (default: auto)")
+	fs.StringVar(&issue, "issue", "", "Override active issue for this call")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tail := fs.Args()
+	if len(tail) == 0 {
+		return fmt.Errorf("shell: description required (talyvor-code shell \"kill process on port 8080\")")
+	}
+	description := strings.Join(tail, " ")
+
+	if issue != "" {
+		cfg.ActiveIssue = issue
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	shellName := shellArg
+	if shellName == "" {
+		shellName = shell.DetectShell()
+	}
+	osName := shell.DetectOS()
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx := context.Background()
+	command, cost, err := shell.Generate(ctx, lc, &cfg, description, shellName, osName)
+	if err != nil {
+		return fmt.Errorf("shell: %w", err)
+	}
+	fmt.Fprintf(stdout, "$ %s\n", command)
+	fmt.Fprintf(stderr, "(cost: $%.4f)\n", cost)
+
+	if explain {
+		exp, expCost, err := shell.Explain(ctx, lc, &cfg, command, shellName, osName)
+		if err != nil {
+			fmt.Fprintf(stderr, "! explain: %v\n", err)
+		} else {
+			fmt.Fprintln(stdout)
+			fmt.Fprintln(stdout, exp)
+			fmt.Fprintf(stderr, "(explain cost: $%.4f)\n", expCost)
+		}
+	}
+
+	if !runIt {
+		fmt.Fprintln(stdout, "")
+		fmt.Fprintln(stdout, "Add --run to execute this command.")
+		return nil
+	}
+
+	return runWithFixLoop(ctx, stdin, stdout, stderr, lc, &cfg, command, shellName, osName)
+}
+
+// runWithFixLoop executes the command, and on failure asks the
+// model to suggest a fix and offers to retry. Capped at
+// maxShellFixAttempts so a stubbornly-broken command doesn't
+// spiral.
+func runWithFixLoop(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, lc *lens.Client, cfg *config.Config, command, shellName, osName string) error {
+	reader := bufio.NewReader(stdin)
+	current := command
+	for attempt := 0; attempt < maxShellFixAttempts; attempt++ {
+		// Safety warning for known-dangerous patterns. Advisory
+		// only — user always confirms.
+		if !shell.IsCommandSafe(current) {
+			fmt.Fprintln(stdout, "⚠️  This command may be destructive.")
+		}
+		fmt.Fprint(stdout, "Run this command? [y/N] ")
+		ans, _ := reader.ReadString('\n')
+		ans = strings.ToLower(strings.TrimSpace(ans))
+		if ans != "y" && ans != "yes" {
+			fmt.Fprintln(stdout, "Aborted.")
+			return nil
+		}
+
+		out, errOut, code, runErr := shell.ExecuteCommand(ctx, current)
+		if out != "" {
+			fmt.Fprint(stdout, out)
+			if !strings.HasSuffix(out, "\n") {
+				fmt.Fprintln(stdout)
+			}
+		}
+		if errOut != "" {
+			fmt.Fprint(stderr, errOut)
+			if !strings.HasSuffix(errOut, "\n") {
+				fmt.Fprintln(stderr)
+			}
+		}
+		if runErr != nil {
+			return fmt.Errorf("shell: execute: %w", runErr)
+		}
+		if code == 0 {
+			return nil
+		}
+
+		fmt.Fprintf(stderr, "Command exited with status %d.\n", code)
+		if attempt == maxShellFixAttempts-1 {
+			fmt.Fprintln(stderr, "Max fix attempts reached.")
+			return fmt.Errorf("shell: command failed (exit %d)", code)
+		}
+
+		fmt.Fprint(stdout, "Command failed. Try to fix? [y/N] ")
+		fixAns, _ := reader.ReadString('\n')
+		fixAns = strings.ToLower(strings.TrimSpace(fixAns))
+		if fixAns != "y" && fixAns != "yes" {
+			return nil
+		}
+		fixed, err := shell.SuggestFix(ctx, lc, cfg, current, errOut, shellName, osName)
+		if err != nil {
+			return fmt.Errorf("shell: fix: %w", err)
+		}
+		if fixed == "" || fixed == current {
+			fmt.Fprintln(stderr, "No improved command available.")
+			return nil
+		}
+		fmt.Fprintf(stdout, "$ %s\n", fixed)
+		current = fixed
+	}
+	return nil
 }
 
 // ─── init subcommand ───────────────────────────────

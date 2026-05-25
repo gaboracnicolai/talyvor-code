@@ -495,6 +495,153 @@ func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// ─── shell subcommand ──────────────────────────────
+
+// shellLensServer is a tiny fake Lens that captures every
+// request body and replies with canned answers in order. Lets us
+// assert "shell --explain called Lens twice" cleanly.
+type shellLensServer struct {
+	srv      *httptest.Server
+	requests []map[string]any
+	replies  []string
+	idx      int
+}
+
+func newShellLens(t *testing.T, replies []string) *shellLensServer {
+	t.Helper()
+	s := &shellLensServer{replies: replies}
+	s.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &body)
+		s.requests = append(s.requests, body)
+		text := ""
+		if s.idx < len(s.replies) {
+			text = s.replies[s.idx]
+		}
+		s.idx++
+		enc, _ := json.Marshal(text)
+		fmt.Fprintf(w, `{"content":[{"type":"text","text":%s}],"usage":{"input_tokens":60,"output_tokens":12}}`, enc)
+	}))
+	t.Cleanup(s.srv.Close)
+	return s
+}
+
+func TestShell_PrintsCommandAndUsesHaiku(t *testing.T) {
+	srv := newShellLens(t, []string{"lsof -ti :8080 | xargs kill -9"})
+
+	t.Setenv("TALYVOR_LENS_URL", srv.srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("SHELL", "/bin/zsh")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"shell", "kill", "port", "8080"}, &stdout, &stderr); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "$ lsof -ti :8080") {
+		t.Fatalf("command not surfaced: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Add --run") {
+		t.Fatalf("expected --run hint, got: %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "cost: $") {
+		t.Fatalf("cost not surfaced: %q", stderr.String())
+	}
+	if len(srv.requests) != 1 {
+		t.Fatalf("expected 1 lens request, got %d", len(srv.requests))
+	}
+	if srv.requests[0]["model"] != "claude-haiku-4-6" {
+		t.Errorf("expected haiku, got %v", srv.requests[0]["model"])
+	}
+}
+
+func TestShell_AliasSh(t *testing.T) {
+	srv := newShellLens(t, []string{"docker ps -a"})
+	t.Setenv("TALYVOR_LENS_URL", srv.srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"sh", "list", "containers"}, &stdout, &stderr); err != nil {
+		t.Fatalf("sh: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "docker ps -a") {
+		t.Fatalf("alias did not run: %q", stdout.String())
+	}
+}
+
+func TestShell_ExplainCallsLensTwice(t *testing.T) {
+	srv := newShellLens(t, []string{
+		"docker ps -a",
+		"`docker ps` lists containers; `-a` includes stopped ones.",
+	})
+	t.Setenv("TALYVOR_LENS_URL", srv.srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"shell", "--explain", "list", "all", "containers"}, &stdout, &stderr); err != nil {
+		t.Fatalf("shell: %v", err)
+	}
+	if len(srv.requests) != 2 {
+		t.Fatalf("expected 2 lens requests (gen + explain), got %d", len(srv.requests))
+	}
+	if !strings.Contains(stdout.String(), "lists containers") {
+		t.Fatalf("explanation not surfaced: %q", stdout.String())
+	}
+}
+
+func TestShell_RunFlagExecutesCommand(t *testing.T) {
+	srv := newShellLens(t, []string{`printf hello`})
+	t.Setenv("TALYVOR_LENS_URL", srv.srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	stdin := strings.NewReader("y\n")
+	var stdout, stderr bytes.Buffer
+	if err := runShell(stdin, &stdout, &stderr, config.Load(config.Config{}), []string{"--run", "say hello"}); err != nil {
+		t.Fatalf("runShell: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "hello") {
+		t.Fatalf("execution output missing: %q", stdout.String())
+	}
+}
+
+func TestShell_RunFlagAbortsOnNo(t *testing.T) {
+	srv := newShellLens(t, []string{"echo banana"})
+	t.Setenv("TALYVOR_LENS_URL", srv.srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	stdin := strings.NewReader("n\n")
+	var stdout, stderr bytes.Buffer
+	if err := runShell(stdin, &stdout, &stderr, config.Load(config.Config{}), []string{"--run", "print banana"}); err != nil {
+		t.Fatalf("runShell: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Aborted.") {
+		t.Fatalf("expected abort, got %q", stdout.String())
+	}
+	// stdout will contain "$ echo banana" (the printed command).
+	// After the abort, no separate execution-output line with
+	// just "banana\n" should appear.
+	lines := strings.Split(stdout.String(), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "banana" {
+			t.Fatalf("execution output leaked despite abort: %q", stdout.String())
+		}
+	}
+}
+
+func TestShell_RequiresDescription(t *testing.T) {
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"shell"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "description") {
+		t.Fatalf("expected description error, got %v", err)
+	}
+}
+
 // ─── init subcommand ───────────────────────────────
 
 func TestInit_CreatesRulesFile(t *testing.T) {
