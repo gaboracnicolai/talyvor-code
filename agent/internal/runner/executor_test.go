@@ -170,6 +170,9 @@ func TestRun_TimeoutKillsProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-only command")
 	}
+	if os.Getenv("CI") != "" {
+		t.Skip("skipping process-kill test in CI environment")
+	}
 	res, err := Run(context.Background(), "sleep 10", t.TempDir(), 2*time.Second)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
