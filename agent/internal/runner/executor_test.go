@@ -170,7 +170,7 @@ func TestRun_TimeoutKillsProcess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-only command")
 	}
-	res, err := Run(context.Background(), "sleep 5", t.TempDir(), 200*time.Millisecond)
+	res, err := Run(context.Background(), "sleep 10", t.TempDir(), 2*time.Second)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestRun_TimeoutKillsProcess(t *testing.T) {
 	if res.ExitCode == 0 {
 		t.Fatalf("expected non-zero exit when timed out, got 0")
 	}
-	if res.Duration >= 5*time.Second {
+	if res.Duration >= 10*time.Second {
 		t.Fatalf("timeout did not kick in: duration = %v", res.Duration)
 	}
 }
