@@ -10,6 +10,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 
 	"github.com/talyvor/code/internal/config"
 	"github.com/talyvor/code/internal/lens"
@@ -144,15 +147,162 @@ func runCheck(w io.Writer, cfg config.Config) error {
 	return nil
 }
 
-// runAsk + runChat are placeholders for Phase 2. Today they print
-// a helpful "coming in Phase 2" line so users discover the surface
-// without bumping into a panic.
-func runAsk(w io.Writer, _ config.Config, _ []string) error {
-	fmt.Fprintln(w, "`ask` ships in Phase 2 once the streaming chat surface lands.")
+// runAsk implements the one-shot Q&A command. Usage:
+//   talyvor-code ask [--file path] [--lines a-b] [--issue ENG-42] "question..."
+//
+// File content (when --file is supplied) gets wrapped in a fenced
+// code block so the model sees structured context. The reply goes
+// to stdout; a cost-attribution summary goes to stderr so callers
+// can pipe stdout cleanly.
+func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
+	var (
+		filePath  string
+		lineRange string
+		issue     string
+	)
+	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.StringVar(&filePath, "file", "", "Path to file to include as context")
+	fs.StringVar(&lineRange, "lines", "", "Line range, e.g. 10-50 (requires --file)")
+	fs.StringVar(&issue, "issue", "", "Override active issue for this call")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tail := fs.Args()
+	if len(tail) == 0 {
+		return fmt.Errorf("ask: question is required")
+	}
+	question := strings.Join(tail, " ")
+
+	if issue != "" {
+		cfg.ActiveIssue = issue
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	// File context precedes the question — the model sees what
+	// it's looking at before being told what to do with it.
+	var prompt strings.Builder
+	if filePath != "" {
+		body, lang, err := readFileSlice(filePath, lineRange)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&prompt, "File: %s\n```%s\n%s\n```\n\n",
+			filepath.Base(filePath), lang, body)
+	}
+	prompt.WriteString("Question: ")
+	prompt.WriteString(question)
+
+	ctx := context.Background()
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	out, err := lc.Complete(ctx,
+		[]lens.Message{{Role: "user", Content: prompt.String()}},
+		cfg.Model, "ask", cfg.WorkspaceID, cfg.ActiveIssue)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, out)
+	// Cost-attribution summary on stderr — keeps stdout clean
+	// for pipes.
+	fmt.Fprintf(os.Stderr, "issue=%s model=%s chars=%d\n",
+		nonEmpty(cfg.ActiveIssue, "(none)"), cfg.Model, len(out))
 	return nil
 }
 
+// runChat is the Phase-3 placeholder. Today it explains why the
+// command exists but defers the REPL implementation.
 func runChat(w io.Writer, _ config.Config) error {
-	fmt.Fprintln(w, "`chat` ships in Phase 2 once the streaming chat surface lands.")
+	fmt.Fprintln(w, "`chat` ships in Phase 3 alongside the streaming chat surface.")
 	return nil
+}
+
+// readFileSlice reads a file and optionally limits the result to a
+// "N-M" line range. Returns the body + a language hint for the
+// markdown fence.
+func readFileSlice(path, lineRange string) (string, string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", fmt.Errorf("ask: read %s: %w", path, err)
+	}
+	body := string(raw)
+	if lineRange != "" {
+		lines := strings.Split(body, "\n")
+		start, end, ok := parseLineRange(lineRange, len(lines))
+		if !ok {
+			return "", "", fmt.Errorf("ask: invalid --lines %q (want N-M)", lineRange)
+		}
+		body = strings.Join(lines[start-1:end], "\n")
+	}
+	return body, langFromPath(path), nil
+}
+
+// parseLineRange accepts "N-M" with 1-based inclusive bounds. The
+// resulting range is clamped to [1, total]; malformed values
+// return ok=false so the handler can surface a clear error.
+func parseLineRange(s string, total int) (int, int, bool) {
+	parts := strings.SplitN(s, "-", 2)
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	start, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
+	end, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err1 != nil || err2 != nil || start <= 0 || end < start {
+		return 0, 0, false
+	}
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	return start, end, true
+}
+
+// langFromPath maps a file extension to a markdown-fence language
+// hint. Unknown extensions return the empty string — the model
+// still reads the code, just without the hint.
+func langFromPath(path string) string {
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".go":
+		return "go"
+	case ".ts", ".tsx":
+		return "typescript"
+	case ".js", ".jsx":
+		return "javascript"
+	case ".py":
+		return "python"
+	case ".rb":
+		return "ruby"
+	case ".rs":
+		return "rust"
+	case ".java":
+		return "java"
+	case ".kt":
+		return "kotlin"
+	case ".swift":
+		return "swift"
+	case ".c":
+		return "c"
+	case ".cpp", ".cc", ".cxx":
+		return "cpp"
+	case ".sh":
+		return "bash"
+	case ".json":
+		return "json"
+	case ".yml", ".yaml":
+		return "yaml"
+	case ".sql":
+		return "sql"
+	}
+	return ""
+}
+
+func nonEmpty(s, fallback string) string {
+	if s == "" {
+		return fallback
+	}
+	return s
 }

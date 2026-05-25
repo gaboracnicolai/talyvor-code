@@ -1,29 +1,49 @@
 // Talyvor Code — VS Code extension entry point.
 //
-// Phase 1 ships the connective tissue: status bar, three commands
-// (set issue, test connection, cost dashboard), config-change
-// listener, and a first-install welcome nudge. AI features
-// (completions, chat) land in later phases on top of this scaffold.
+// Phase 2 adds the InlineCompletionItemProvider and wires the
+// session cost tracker into the status bar + dashboard. The
+// status bar shows a running spend ("$0.03") that updates after
+// every completion.
 
 import * as vscode from "vscode";
 import { TalyvorConfig } from "./config";
 import { LensClient } from "./lens/client";
 import { TrackClient } from "./track/client";
 import type { LensConfig } from "./lens/types";
+import { CostTracker, formatDuration } from "./providers/cost-tracker";
+import { TalyvorCompletionProvider } from "./providers/completions";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
   let lensClient = new LensClient(config.url, config.apiKey);
   let trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
+  const tracker = new CostTracker();
 
   const statusBar = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
     100,
   );
-  statusBar.command = "talyvor.setActiveIssue";
   context.subscriptions.push(statusBar);
-  updateStatusBar(statusBar, config);
+  updateStatusBar(statusBar, config, tracker);
   statusBar.show();
+
+  // Completion provider registered for every file. setOnUpdate
+  // lets the provider refresh the status bar after each successful
+  // completion without holding a reference to the bar itself.
+  const completionProvider = new TalyvorCompletionProvider(
+    lensClient,
+    () => TalyvorConfig.getLensConfig(),
+    tracker,
+  );
+  completionProvider.setOnUpdate(() =>
+    updateStatusBar(statusBar, TalyvorConfig.getLensConfig(), tracker),
+  );
+  context.subscriptions.push(
+    vscode.languages.registerInlineCompletionItemProvider(
+      { pattern: "**" },
+      completionProvider,
+    ),
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand("talyvor.setActiveIssue", () =>
@@ -33,33 +53,25 @@ export function activate(context: vscode.ExtensionContext): void {
       testConnectionCommand(lensClient),
     ),
     vscode.commands.registerCommand("talyvor.showCostDashboard", () =>
-      showCostDashboard(context, lensClient, TalyvorConfig.getLensConfig()),
+      showCostDashboard(lensClient, TalyvorConfig.getLensConfig(), tracker),
     ),
     vscode.commands.registerCommand("talyvor.openChat", () =>
-      // Phase 1 stub. Phase 2 wires the side-panel chat surface.
       vscode.window.showInformationMessage(
-        "AI Chat ships in Phase 2. Use Test Connection to verify Lens is reachable.",
+        "AI Chat ships in Phase 3. Inline completions are live; use the status bar to set the active issue.",
       ),
     ),
   );
 
-  // Re-build the clients + refresh the status bar whenever the
-  // user changes any talyvor.* setting. Cheaper than restarting
-  // the extension and keeps the live status accurate.
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (!e.affectsConfiguration("talyvor")) return;
       config = TalyvorConfig.getLensConfig();
       lensClient = new LensClient(config.url, config.apiKey);
       trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
-      updateStatusBar(statusBar, config);
+      updateStatusBar(statusBar, config, tracker);
     }),
   );
 
-  // First-install welcome — nudge the user toward settings if
-  // Lens isn't wired up yet. We deliberately only fire when both
-  // URL + key are missing so re-opening a project with a working
-  // config doesn't pop the toast.
   if (!config.url || !config.apiKey) {
     vscode.window
       .showInformationMessage(
@@ -84,9 +96,14 @@ export function deactivate(): void {
 
 // ─── Status bar ─────────────────────────────────────
 
+// Status bar template now includes the running session cost:
+//   "$(warning) Talyvor: Not configured"
+//   "$(sparkle) Talyvor | No issue | $0.00"
+//   "$(sparkle) Talyvor | ENG-42 | $0.03"
 function updateStatusBar(
   item: vscode.StatusBarItem,
   config: LensConfig,
+  tracker: CostTracker,
 ): void {
   if (!config.url || !config.apiKey) {
     item.text = "$(warning) Talyvor: Not configured";
@@ -94,14 +111,16 @@ function updateStatusBar(
     item.command = "workbench.action.openSettings";
     return;
   }
+  const summary = tracker.getSessionSummary();
+  const costStr = `$${summary.totalCostUSD.toFixed(2)}`;
   if (!config.activeIssue) {
-    item.text = "$(sparkle) Talyvor | No issue";
-    item.tooltip = "Click to set the active Track issue";
+    item.text = `$(sparkle) Talyvor | No issue | ${costStr}`;
+    item.tooltip = `Session cost: ${costStr}. Click to set an active issue.`;
     item.command = "talyvor.setActiveIssue";
     return;
   }
-  item.text = `$(sparkle) Talyvor | ${config.activeIssue}`;
-  item.tooltip = `Active issue: ${config.activeIssue}. Click to change.`;
+  item.text = `$(sparkle) Talyvor | ${config.activeIssue} | ${costStr}`;
+  item.tooltip = `Active issue: ${config.activeIssue}. Session cost: ${costStr}. Click to change.`;
   item.command = "talyvor.setActiveIssue";
 }
 
@@ -124,9 +143,6 @@ async function setActiveIssueCommand(
     void vscode.window.showInformationMessage("Active issue cleared.");
     return;
   }
-  // Track lookup is best-effort: if Track isn't reachable we still
-  // commit the identifier so cost attribution works (Lens only
-  // needs the X-Talyvor-Issue header value).
   const issue = await track.getIssue(config.workspaceId, id);
   await TalyvorConfig.setActiveIssue(id);
   if (issue) {
@@ -159,13 +175,10 @@ async function testConnectionCommand(lens: LensClient): Promise<void> {
   }
 }
 
-// showCostDashboard renders a minimal webview with the active
-// issue + the latest cost figures. Phase 1 keeps the panel small
-// and read-only; richer charts land alongside the chat surface.
 async function showCostDashboard(
-  _context: vscode.ExtensionContext,
   lens: LensClient,
   config: LensConfig,
+  tracker: CostTracker,
 ): Promise<void> {
   const panel = vscode.window.createWebviewPanel(
     "talyvorCost",
@@ -174,35 +187,69 @@ async function showCostDashboard(
     { enableScripts: false, retainContextWhenHidden: true },
   );
   const issue = config.activeIssue || "(no active issue)";
-  const cost = await lens.getCostForIssue(
+  const issueCost = await lens.getCostForIssue(
     config.workspaceId,
     config.activeIssue,
   );
-  panel.webview.html = renderCostHTML(issue, cost.totalCostUSD, cost.tokens);
+  const summary = tracker.getSessionSummary();
+  panel.webview.html = renderCostHTML(
+    issue,
+    issueCost.totalCostUSD,
+    summary,
+    config.model,
+  );
 }
 
 function renderCostHTML(
   issue: string,
-  totalUsd: number,
-  tokens: number,
+  issueTotalUsd: number,
+  session: ReturnType<CostTracker["getSessionSummary"]>,
+  model: string,
 ): string {
-  // Webview content is fully local + inert (scripts disabled), so
-  // we don't need a CSP nonce or a sanitiser here.
+  const byIssueRows = Object.entries(session.byIssue)
+    .sort((a, b) => b[1] - a[1])
+    .map(
+      ([k, v]) =>
+        `<tr><td>${escapeHTML(k)}</td><td>$${v.toFixed(4)}</td></tr>`,
+    )
+    .join("");
   return `<!doctype html><html><head><meta charset="utf-8">
 <style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd;background:#1e1e1e;padding:16px}
-h1{font-size:14px;color:#fff;border-bottom:1px solid #333;padding-bottom:8px}
-.kv{display:grid;grid-template-columns:140px 1fr;gap:6px;margin-top:12px}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd;background:#1e1e1e;padding:16px;line-height:1.45}
+h1{font-size:14px;color:#fff;border-bottom:1px solid #333;padding-bottom:8px;margin-top:0}
+h2{font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-top:24px}
+.kv{display:grid;grid-template-columns:160px 1fr;gap:6px}
 .kv dt{color:#888}
-.kv dd{margin:0}
-.cost{font-size:28px;color:#f0a030;margin-top:8px}
+.kv dd{margin:0;color:#ddd}
+.cost{font-size:24px;color:#f0a030}
+table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
+td{padding:4px 8px;border-bottom:1px solid #2a2a2a}
+.muted{color:#666;font-size:11px}
 </style></head><body>
-<h1>AI Cost — Talyvor Code</h1>
+<h1>Talyvor Code — Session Cost Dashboard</h1>
+
+<h2>🎯 Active issue</h2>
 <dl class="kv">
-  <dt>Active issue</dt><dd>${escapeHTML(issue)}</dd>
-  <dt>Total spend</dt><dd class="cost">$${totalUsd.toFixed(2)}</dd>
-  <dt>Tokens used</dt><dd>${tokens.toLocaleString()}</dd>
+  <dt>Issue</dt><dd>${escapeHTML(issue)}</dd>
+  <dt>Total AI cost</dt><dd class="cost">$${issueTotalUsd.toFixed(2)}</dd>
 </dl>
+
+<h2>This session</h2>
+<dl class="kv">
+  <dt>Completions</dt><dd>${session.completionCount}</dd>
+  <dt>Tokens used</dt><dd>${session.totalTokens.toLocaleString()}</dd>
+  <dt>Cost</dt><dd>$${session.totalCostUSD.toFixed(4)}</dd>
+  <dt>Duration</dt><dd>${formatDuration(session.sessionStart)}</dd>
+  <dt>Model</dt><dd>${escapeHTML(model)}</dd>
+</dl>
+
+${
+  Object.keys(session.byIssue).length > 1
+    ? `<h2>By issue</h2><table>${byIssueRows}</table>`
+    : ""
+}
+
+<p class="muted">Active-issue total comes from Lens analytics; session figures are estimated locally.</p>
 </body></html>`;
 }
 

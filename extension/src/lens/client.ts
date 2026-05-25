@@ -11,6 +11,15 @@ import {
   Message,
 } from "./types";
 
+// CompletionResult bundles text + upstream token usage so callers
+// (the completion provider) can roll up session cost without a
+// second Lens round-trip.
+export interface CompletionResult {
+  text: string;
+  inputTokens: number;
+  outputTokens: number;
+}
+
 export class LensClient {
   constructor(
     private url: string,
@@ -66,6 +75,56 @@ export class LensClient {
       .filter((c) => c.type === "text")
       .map((c) => c.text)
       .join("");
+  }
+
+  // completeWithUsage is the same call as complete() but returns
+  // the upstream token usage so the caller can attribute cost
+  // immediately. We expose both signatures to keep simple "give
+  // me the text" callers ergonomic.
+  async completeWithUsage(
+    messages: Message[],
+    model: string,
+    feature: string,
+    workspaceId: string,
+    issueId: string,
+    maxTokens = 2048,
+    signal?: AbortSignal,
+  ): Promise<CompletionResult> {
+    if (!this.isConfigured()) {
+      throw new LensError("Lens is not configured", 0);
+    }
+    const body = { model, max_tokens: maxTokens, messages };
+    const res = await fetch(
+      `${this.url.replace(/\/$/, "")}/v1/proxy/anthropic/v1/messages`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+          "X-Talyvor-Feature": `code-${feature}`,
+          "X-Talyvor-Workspace": workspaceId,
+          "X-Talyvor-Issue": issueId,
+        },
+        body: JSON.stringify(body),
+        signal,
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new LensError(
+        `Lens ${res.status}: ${text || res.statusText}`,
+        res.status,
+      );
+    }
+    const data = (await res.json()) as CompletionResponse;
+    return {
+      text: (data.content ?? [])
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join(""),
+      inputTokens: data.usage?.input_tokens ?? 0,
+      outputTokens: data.usage?.output_tokens ?? 0,
+    };
   }
 
   // getStatus probes /healthz so the "Test Connection" command

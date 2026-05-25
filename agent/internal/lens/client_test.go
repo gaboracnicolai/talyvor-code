@@ -55,3 +55,20 @@ func TestComplete_ErrorsWhenUnconfigured(t *testing.T) {
 		t.Fatalf("expected unconfigured error, got %v", err)
 	}
 }
+
+// TestComplete_BubblesLensErrors covers the upstream-failure
+// paths. 401 and 5xx both surface as a lens:-prefixed error so
+// the CLI's runAsk can show a clean message to the user.
+func TestComplete_BubblesLensErrors(t *testing.T) {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusInternalServerError} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "denied", code)
+		}))
+		c := New(srv.URL, "tlv_k")
+		_, err := c.Complete(context.Background(), nil, "m", "f", "w", "i")
+		if err == nil || !strings.Contains(err.Error(), "lens:") {
+			t.Errorf("status %d: expected lens error, got %v", code, err)
+		}
+		srv.Close()
+	}
+}
