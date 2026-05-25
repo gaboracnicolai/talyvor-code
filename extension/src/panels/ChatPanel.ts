@@ -34,6 +34,9 @@ type WebviewOutbound =
   | { type: "userMessage"; text: string }
   | { type: "assistantMessage"; html: string; costUSD: number }
   | { type: "thinking" }
+  | { type: "streamStart" }
+  | { type: "streamChunk"; text: string }
+  | { type: "streamEnd"; html: string; costUSD: number }
   | { type: "error"; message: string }
   | { type: "cleared" }
   | {
@@ -200,29 +203,86 @@ export class ChatPanel {
     this.history = trimHistory(this.history);
 
     this.post({ type: "userMessage", text: trimmed });
-    this.post({ type: "thinking" });
 
+    // Rules → context → scope, then chat's baseline system
+    // prompt. All three sources are optional.
+    const rulesPrefix = promptPrefix(
+      forLanguage(this.rulesLoader?.get(), ""),
+    );
+    let prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+    const scopeSection = scopePromptSection(
+      this.scopeManager?.getActive(),
+      this.scopeManager?.activeName(),
+    );
+    if (scopeSection) prefix += scopeSection + "\n";
+    const systemContent = prefix
+      + buildSystemPrompt(
+        this.config.activeIssue,
+        this.issueContext?.getIssueContext() ?? "",
+      );
+    const messages: Message[] = [
+      { role: "system", content: systemContent },
+      ...this.history,
+    ];
+
+    // Stream the reply token-by-token. The webview renders a
+    // ▌ cursor that ticks as chunks arrive; on done we swap in
+    // the rendered markdown.
+    let buf = "";
+    let sawChunk = false;
+    this.post({ type: "streamStart" });
+    await new Promise<void>((resolve) => {
+      this.lens.completeStream(
+        messages,
+        this.config.model,
+        "chat",
+        this.config.workspaceId,
+        this.config.activeIssue,
+        {
+          onChunk: (text) => {
+            sawChunk = true;
+            buf += text;
+            this.post({ type: "streamChunk", text });
+          },
+          onDone: (usage) => {
+            const cost = estimateCostUSD(usage.inputTokens, usage.outputTokens);
+            this.tracker.recordCompletion(
+              usage.inputTokens + usage.outputTokens,
+              cost,
+              this.config.activeIssue,
+              "chat",
+            );
+            this.history.push({ role: "assistant", content: buf });
+            this.history = trimHistory(this.history);
+            this.post({
+              type: "streamEnd",
+              html: this.renderAssistant(buf),
+              costUSD: cost,
+            });
+            this.refreshSession(this.config, this.tracker);
+            resolve();
+          },
+          onError: (err) => {
+            // Fall back to a blocking complete only when we got
+            // no useful chunks — otherwise surface what we have
+            // so the user keeps the partial reply.
+            if (!sawChunk) {
+              void this.fallbackBlocking(messages).then(resolve, resolve);
+              return;
+            }
+            this.post({ type: "error", message: err.message });
+            resolve();
+          },
+        },
+      );
+    });
+  }
+
+  // fallbackBlocking is used when the streaming attempt errors
+  // before any chunk arrives. Mirrors the original blocking
+  // path so the user still gets a reply.
+  private async fallbackBlocking(messages: Message[]): Promise<void> {
     try {
-      // Rules → context → scope, then chat's baseline system
-      // prompt. All three sources are optional.
-      const rulesPrefix = promptPrefix(
-        forLanguage(this.rulesLoader?.get(), ""),
-      );
-      let prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
-      const scopeSection = scopePromptSection(
-        this.scopeManager?.getActive(),
-        this.scopeManager?.activeName(),
-      );
-      if (scopeSection) prefix += scopeSection + "\n";
-      const systemContent = prefix
-        + buildSystemPrompt(
-          this.config.activeIssue,
-          this.issueContext?.getIssueContext() ?? "",
-        );
-      const messages: Message[] = [
-        { role: "system", content: systemContent },
-        ...this.history,
-      ];
       const res = await this.lens.completeWithUsage(
         messages,
         this.config.model,
@@ -241,7 +301,7 @@ export class ChatPanel {
       this.history.push({ role: "assistant", content: res.text });
       this.history = trimHistory(this.history);
       this.post({
-        type: "assistantMessage",
+        type: "streamEnd",
         html: this.renderAssistant(res.text),
         costUSD: cost,
       });
@@ -350,6 +410,9 @@ main{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:
 .code pre{margin:0;padding:8px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;overflow-x:auto;color:#d4d8e2}
 .thinking{display:flex;gap:4px;align-self:flex-start;padding:8px 12px}
 .thinking i{width:6px;height:6px;border-radius:50%;background:#888;animation:bounce 1.2s infinite}
+.msg.assistant.streaming .stream-body{white-space:pre-wrap;font-family:inherit;color:#d4d8e2}
+.msg.assistant.streaming .caret{display:inline-block;color:#f0a030;animation:blink 1s steps(2,start) infinite;margin-left:1px;font-weight:bold}
+@keyframes blink{to{visibility:hidden}}
 .thinking i:nth-child(2){animation-delay:0.15s}
 .thinking i:nth-child(3){animation-delay:0.3s}
 @keyframes bounce{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}
@@ -452,6 +515,47 @@ messages.addEventListener('click', (e) => {
   }
 });
 
+// streamingBubble + streamingBuffer track the bubble that's
+// currently being filled by streamChunk events. Cleared on
+// streamEnd (or error) so the next exchange starts fresh.
+let streamingBubble = null;
+let streamingBuffer = '';
+
+function startStreaming() {
+  hideThinking();
+  streamingBubble = document.createElement('div');
+  streamingBubble.className = 'msg assistant streaming';
+  // Pre-formatted body preserves whitespace + monospaces the
+  // partial text so it doesn't look like prose mid-stream.
+  streamingBubble.innerHTML =
+    '<div class="stream-body"></div><span class="caret">▌</span>';
+  streamingBuffer = '';
+  messages.appendChild(streamingBubble);
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function appendStreamingChunk(text) {
+  if (!streamingBubble) startStreaming();
+  streamingBuffer += text;
+  const body = streamingBubble.querySelector('.stream-body');
+  if (body) body.textContent = streamingBuffer;
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function finishStreaming(html, costUSD) {
+  if (!streamingBubble) {
+    // Defensive: the host can post streamEnd without a prior
+    // chunk if the model returned an empty body. Render the
+    // empty bubble so the user sees the assistant turn.
+    appendMsg('assistant', html);
+    return;
+  }
+  streamingBubble.classList.remove('streaming');
+  streamingBubble.innerHTML = html;
+  streamingBubble = null;
+  streamingBuffer = '';
+}
+
 window.addEventListener('message', (e) => {
   const m = e.data;
   switch (m.type) {
@@ -461,17 +565,34 @@ window.addEventListener('message', (e) => {
     case 'thinking':
       showThinking();
       break;
+    case 'streamStart':
+      hideThinking();
+      startStreaming();
+      break;
+    case 'streamChunk':
+      appendStreamingChunk(m.text || '');
+      break;
+    case 'streamEnd':
+      finishStreaming(m.html, m.costUSD);
+      break;
     case 'assistantMessage':
       hideThinking();
       appendMsg('assistant', m.html);
       break;
     case 'error':
       hideThinking();
+      if (streamingBubble) {
+        streamingBubble.remove();
+        streamingBubble = null;
+        streamingBuffer = '';
+      }
       appendMsg('error', escapeHTML(m.message));
       break;
     case 'cleared':
       messages.innerHTML = '';
       hideThinking();
+      streamingBubble = null;
+      streamingBuffer = '';
       break;
     case 'session':
       session = m;

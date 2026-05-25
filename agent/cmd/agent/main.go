@@ -272,17 +272,22 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 
 	ctx := context.Background()
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
-	out, err := lc.Complete(ctx,
+	text, _, err := streamWithFallback(ctx, lc, stdout,
 		[]lens.Message{{Role: "user", Content: prompt.String()}},
 		chosenModel, "ask", cfg.WorkspaceID, cfg.ActiveIssue)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, out)
+	// streamWithFallback writes the body as it streams; print a
+	// trailing newline so the next shell prompt starts on its
+	// own line.
+	if !strings.HasSuffix(text, "\n") {
+		fmt.Fprintln(stdout)
+	}
 	// Cost-attribution summary on stderr — keeps stdout clean
 	// for pipes.
 	fmt.Fprintf(os.Stderr, "issue=%s model=%s chars=%d\n",
-		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(out))
+		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(text))
 	return nil
 }
 
@@ -296,6 +301,72 @@ func resolveAndValidate(flagValue, envValue, command string) (string, error) {
 		return "", err
 	}
 	return chosen, nil
+}
+
+// streamWithFallback runs a streaming completion against Lens,
+// echoing each chunk to `out` as it arrives, and returns the
+// final accumulated text plus the usage. If the stream errors
+// before any chunk arrives we fall back to a blocking Complete
+// so the user still gets a reply.
+//
+// Streaming is the default for chat / ask / review per the
+// spec — the fallback exists so a Lens that doesn't support
+// SSE (or a transient failure) doesn't break the command.
+func streamWithFallback(
+	ctx context.Context,
+	lc *lens.Client,
+	out io.Writer,
+	messages []lens.Message,
+	model, feature, workspaceID, issueID string,
+) (string, *lens.StreamChunk, error) {
+	chunks := make(chan lens.StreamChunk, lens.StreamChunkBuffer)
+	go func() {
+		_ = lc.CompleteAuto(ctx, messages, model, feature, workspaceID, issueID, chunks)
+	}()
+	var (
+		buf     strings.Builder
+		first   = true
+		streamE error
+		final   *lens.StreamChunk
+	)
+	for ch := range chunks {
+		if ch.Error != nil {
+			if first {
+				// Drain any tail chunks before falling back so
+				// the goroutine releases cleanly.
+				for range chunks {
+				}
+				streamE = ch.Error
+				break
+			}
+			// Mid-stream errors surface to stderr but we keep
+			// whatever text we already got.
+			fmt.Fprintf(out, "\n[stream error: %v]\n", ch.Error)
+			continue
+		}
+		if ch.Done {
+			cp := ch
+			final = &cp
+			continue
+		}
+		first = false
+		buf.WriteString(ch.Text)
+		_, _ = io.WriteString(out, ch.Text)
+		if f, ok := out.(interface{ Flush() error }); ok {
+			_ = f.Flush()
+		}
+	}
+	if streamE != nil {
+		// Non-streaming fallback. Emit the whole reply when it
+		// arrives so the user still sees an answer.
+		text, err := lc.Complete(ctx, messages, model, feature, workspaceID, issueID)
+		if err != nil {
+			return "", nil, err
+		}
+		_, _ = io.WriteString(out, text)
+		return text, nil, nil
+	}
+	return buf.String(), final, nil
 }
 
 // combinedPrefix loads .talyvor-rules + .talyvor-context +
@@ -442,15 +513,23 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		}, history...)
 
 		ctx := context.Background()
-		reply, err := lc.Complete(ctx, messages, chosenModel, "chat",
+		// Stream the reply token-by-token. The "Assistant: " label
+		// lands first so the user sees that something's happening
+		// before the model warms up; streamWithFallback writes the
+		// rest as chunks arrive.
+		fmt.Fprint(stdout, "Assistant: ")
+		reply, _, err := streamWithFallback(ctx, lc, stdout,
+			messages, chosenModel, "chat",
 			cfg.WorkspaceID, cfg.ActiveIssue)
 		if err != nil {
-			fmt.Fprintf(stderr, "! %v\n", err)
+			fmt.Fprintf(stderr, "\n! %v\n", err)
 			continue
+		}
+		if !strings.HasSuffix(reply, "\n") {
+			fmt.Fprintln(stdout)
 		}
 		history = append(history, lens.Message{Role: "assistant", Content: reply})
 		history = trimChatHistory(history)
-		fmt.Fprintln(stdout, reply)
 		fmt.Fprintf(stderr, "(issue=%s model=%s chars=%d)\n",
 			nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(reply))
 	}
@@ -1016,23 +1095,25 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	userMsg := buildReviewUserMessage(system, body, commits, changedFiles, prMode)
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	feature := "code-review"
 	if prMode {
 		feature = "pr-review"
 	}
-	out, err := lc.Complete(ctx,
-		[]lens.Message{{Role: "user", Content: userMsg}},
-		chosenModel, feature, cfg.WorkspaceID, cfg.ActiveIssue,
-	)
-	if err != nil {
-		return fmt.Errorf("review: %w", err)
-	}
-	review := strings.TrimSpace(out)
-
-	switch strings.ToLower(output) {
-	case "json":
+	wantsJSON := strings.EqualFold(output, "json")
+	var review string
+	if wantsJSON {
+		// JSON output needs the full body before it can be
+		// structured — stick with the blocking call.
+		out, err := lc.Complete(ctx,
+			[]lens.Message{{Role: "user", Content: userMsg}},
+			chosenModel, feature, cfg.WorkspaceID, cfg.ActiveIssue,
+		)
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		review = strings.TrimSpace(out)
 		critical, warning := github.CountFindings(review)
 		payload, _ := jsonPkg.MarshalIndent(map[string]any{
 			"verdict":        github.ExtractVerdict(review),
@@ -1042,8 +1123,20 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 			"full_review":    review,
 		}, "", "  ")
 		fmt.Fprintln(stdout, string(payload))
-	default:
-		fmt.Fprintln(stdout, review)
+	} else {
+		// Text/markdown — stream the review as it arrives so
+		// the user sees feedback within a second.
+		text, _, err := streamWithFallback(ctx, lc, stdout,
+			[]lens.Message{{Role: "user", Content: userMsg}},
+			chosenModel, feature, cfg.WorkspaceID, cfg.ActiveIssue,
+		)
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		review = strings.TrimSpace(text)
+		if !strings.HasSuffix(text, "\n") {
+			fmt.Fprintln(stdout)
+		}
 	}
 	fmt.Fprintf(stderr, "(model=%s issue=%s feature=%s)\n",
 		chosenModel, nonEmpty(cfg.ActiveIssue, "(none)"), feature)

@@ -391,6 +391,67 @@ func TestRun_YesAppliesAllChanges(t *testing.T) {
 	}
 }
 
+// ─── streaming ─────────────────────────────────────
+
+// sseAnthropicHandler writes one fake-SSE Anthropic event per
+// supplied line. Each call wraps the body in `data: <line>\n\n`.
+func sseAnthropicHandler(events []string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		flusher, _ := w.(http.Flusher)
+		for _, ev := range events {
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", ev)
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+	}
+}
+
+func TestAsk_StreamingDeliversChunks(t *testing.T) {
+	srv := httptest.NewServer(sseAnthropicHandler([]string{
+		`{"type":"message_start","message":{"usage":{"input_tokens":12}}}`,
+		`{"type":"content_block_delta","delta":{"text":"Hello "}}`,
+		`{"type":"content_block_delta","delta":{"text":"streaming "}}`,
+		`{"type":"content_block_delta","delta":{"text":"world"}}`,
+		`{"type":"message_delta","usage":{"output_tokens":3}}`,
+		`{"type":"message_stop"}`,
+		`[DONE]`,
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "say hi"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Hello streaming world") {
+		t.Fatalf("stdout missing concatenated stream: %q", stdout.String())
+	}
+}
+
+func TestAsk_StreamingFallsBackToJSONWhenLensReturnsNonSSE(t *testing.T) {
+	// Server returns plain JSON despite the stream:true request
+	// — the streaming client should still surface the text.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"non-stream reply"}],"usage":{"input_tokens":10,"output_tokens":4}}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "anything"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "non-stream reply") {
+		t.Fatalf("fallback content missing: %q", stdout.String())
+	}
+}
+
 // ─── pr subcommand ─────────────────────────────────
 
 func TestPR_RequiresGitHubToken(t *testing.T) {
