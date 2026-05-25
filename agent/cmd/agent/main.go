@@ -5,6 +5,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -86,7 +87,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "ask":
 		return runAsk(stdout, cfg, rest)
 	case "chat":
-		return runChat(stdout, cfg)
+		return runChat(os.Stdin, stdout, stderr, cfg)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -211,11 +212,132 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	return nil
 }
 
-// runChat is the Phase-3 placeholder. Today it explains why the
-// command exists but defers the REPL implementation.
-func runChat(w io.Writer, _ config.Config) error {
-	fmt.Fprintln(w, "`chat` ships in Phase 3 alongside the streaming chat surface.")
-	return nil
+// runChat implements an interactive REPL. Each turn appends to a
+// conversation history that's re-sent with every request; the
+// system prompt rides on every request alongside the trimmed
+// history. `/clear`, `/issue <id>`, `/file <path>` slash commands
+// manage state without leaving the REPL.
+//
+// The stdin/stdout/stderr split lets tests drive the REPL with
+// bytes.Buffer inputs.
+func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Talyvor Code Chat (issue: %s, model: %s)\n",
+		nonEmpty(cfg.ActiveIssue, "(none)"), cfg.Model)
+	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/file <path>" to attach a file.`)
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	history := []lens.Message{}
+	pendingFile := "" // attached via /file, consumed by next message
+
+	scanner := bufio.NewScanner(stdin)
+	// 1 MB scanner buffer accommodates large pasted snippets
+	// without truncating the user's input mid-line.
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+
+	for {
+		fmt.Fprint(stdout, "> ")
+		if !scanner.Scan() {
+			// EOF or scanner error — exit cleanly so Ctrl+D / piped
+			// input doesn't crash the process.
+			break
+		}
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		if line == "exit" || line == "quit" {
+			break
+		}
+		if line == "/clear" {
+			history = history[:0]
+			pendingFile = ""
+			fmt.Fprintln(stdout, "History cleared.")
+			continue
+		}
+		if strings.HasPrefix(line, "/issue ") {
+			cfg.ActiveIssue = strings.TrimSpace(strings.TrimPrefix(line, "/issue"))
+			fmt.Fprintf(stdout, "Active issue: %s\n",
+				nonEmpty(cfg.ActiveIssue, "(none)"))
+			continue
+		}
+		if strings.HasPrefix(line, "/file ") {
+			path := strings.TrimSpace(strings.TrimPrefix(line, "/file"))
+			body, _, err := readFileSlice(path, "")
+			if err != nil {
+				fmt.Fprintf(stderr, "! %v\n", err)
+				continue
+			}
+			pendingFile = fmt.Sprintf("File: %s\n```%s\n%s\n```",
+				filepath.Base(path), langFromPath(path), body)
+			fmt.Fprintf(stdout, "Attached %s (%d bytes) to your next message.\n",
+				filepath.Base(path), len(body))
+			continue
+		}
+
+		// Build the user turn — optional file context first, then
+		// the prompt itself.
+		userContent := line
+		if pendingFile != "" {
+			userContent = pendingFile + "\n\n" + line
+			pendingFile = ""
+		}
+		history = append(history, lens.Message{Role: "user", Content: userContent})
+		history = trimChatHistory(history)
+
+		// System prompt rides on every request so /issue changes
+		// take effect immediately. We rebuild rather than store
+		// because the active issue is the only dynamic input.
+		messages := append([]lens.Message{
+			{Role: "system", Content: chatSystemPrompt(cfg.ActiveIssue)},
+		}, history...)
+
+		ctx := context.Background()
+		reply, err := lc.Complete(ctx, messages, cfg.Model, "chat",
+			cfg.WorkspaceID, cfg.ActiveIssue)
+		if err != nil {
+			fmt.Fprintf(stderr, "! %v\n", err)
+			continue
+		}
+		history = append(history, lens.Message{Role: "assistant", Content: reply})
+		history = trimChatHistory(history)
+		fmt.Fprintln(stdout, reply)
+		fmt.Fprintf(stderr, "(issue=%s chars=%d)\n",
+			nonEmpty(cfg.ActiveIssue, "(none)"), len(reply))
+	}
+	return scanner.Err()
+}
+
+// chatSystemPrompt mirrors the extension's buildSystemPrompt so
+// both surfaces feel the same. Kept short — the model already
+// knows it's a coding assistant; the active-issue line is the
+// load-bearing part.
+func chatSystemPrompt(issueID string) string {
+	issueLine := "No active issue is set."
+	if issueID != "" {
+		issueLine = "The active issue is " + issueID + "."
+	}
+	return "You are an expert coding assistant. When showing code, " +
+		"use markdown code fences with the language identifier. " +
+		"Be concise but complete. " + issueLine
+}
+
+// trimChatHistory caps the history at MaxChatHistory pairs.
+// Drops the oldest user/assistant pair as a unit so the model
+// never sees a mismatched half-turn.
+const MaxChatHistory = 20
+
+func trimChatHistory(in []lens.Message) []lens.Message {
+	if len(in) <= MaxChatHistory {
+		return in
+	}
+	overflow := len(in) - MaxChatHistory
+	if overflow%2 != 0 {
+		overflow++
+	}
+	return in[overflow:]
 }
 
 // readFileSlice reads a file and optionally limits the result to a

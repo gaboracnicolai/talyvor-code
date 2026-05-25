@@ -12,6 +12,7 @@ import { TrackClient } from "./track/client";
 import type { LensConfig } from "./lens/types";
 import { CostTracker, formatDuration } from "./providers/cost-tracker";
 import { TalyvorCompletionProvider } from "./providers/completions";
+import { ChatPanel } from "./panels/ChatPanel";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -56,8 +57,30 @@ export function activate(context: vscode.ExtensionContext): void {
       showCostDashboard(lensClient, TalyvorConfig.getLensConfig(), tracker),
     ),
     vscode.commands.registerCommand("talyvor.openChat", () =>
-      vscode.window.showInformationMessage(
-        "AI Chat ships in Phase 3. Inline completions are live; use the status bar to set the active issue.",
+      ChatPanel.createOrShow(
+        context.extensionUri,
+        lensClient,
+        tracker,
+        TalyvorConfig.getLensConfig(),
+      ),
+    ),
+    vscode.commands.registerCommand("talyvor.explainCode", () =>
+      runContextPrompt(
+        context.extensionUri,
+        lensClient,
+        tracker,
+        "Explain this code:",
+      ),
+    ),
+    vscode.commands.registerCommand("talyvor.fixError", () =>
+      runFixErrorCommand(context.extensionUri, lensClient, tracker),
+    ),
+    vscode.commands.registerCommand("talyvor.refactorCode", () =>
+      runContextPrompt(
+        context.extensionUri,
+        lensClient,
+        tracker,
+        "Refactor this code to be cleaner and more maintainable:",
       ),
     ),
   );
@@ -258,4 +281,77 @@ function escapeHTML(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// ─── Chat-launching helpers ─────────────────────────
+
+// runContextPrompt grabs the active editor selection (falling back
+// to the current line) and seeds the chat with the supplied
+// instruction. The chat panel handles the actual Lens round-trip.
+async function runContextPrompt(
+  extensionUri: vscode.Uri,
+  lens: LensClient,
+  tracker: CostTracker,
+  instruction: string,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    void vscode.window.showWarningMessage(
+      "Open a file to use this command.",
+    );
+    return;
+  }
+  const selected = editor.document.getText(editor.selection);
+  const snippet = selected.trim().length > 0
+    ? selected
+    : editor.document.lineAt(editor.selection.active.line).text;
+  const lang = editor.document.languageId;
+  const prompt = `${instruction}\n\n\`\`\`${lang}\n${snippet}\n\`\`\``;
+  await ChatPanel.sendPrompt(
+    extensionUri,
+    lens,
+    tracker,
+    TalyvorConfig.getLensConfig(),
+    prompt,
+  );
+}
+
+// runFixErrorCommand reads VS Code diagnostics at the cursor and
+// builds a "fix this error" prompt around the surrounding code
+// context. When no diagnostics are present, falls back to a
+// generic "what's wrong here" prompt.
+async function runFixErrorCommand(
+  extensionUri: vscode.Uri,
+  lens: LensClient,
+  tracker: CostTracker,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    void vscode.window.showWarningMessage(
+      "Open a file to use this command.",
+    );
+    return;
+  }
+  const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+  const cursor = editor.selection.active;
+  const here = diagnostics.find((d) => d.range.contains(cursor));
+  const errorMsg = here?.message ?? "Unknown error";
+  // Pull a tight context window (5 lines before, 5 after) so the
+  // model can see surrounding code without bloating the prompt.
+  const startLine = Math.max(0, cursor.line - 5);
+  const endLine = Math.min(editor.document.lineCount - 1, cursor.line + 5);
+  const context = editor.document.getText(
+    new vscode.Range(startLine, 0, endLine, editor.document.lineAt(endLine).text.length),
+  );
+  const lang = editor.document.languageId;
+  const prompt = here
+    ? `Fix this error: ${errorMsg}\n\n\`\`\`${lang}\n${context}\n\`\`\``
+    : `Something looks wrong around here. What's going on?\n\n\`\`\`${lang}\n${context}\n\`\`\``;
+  await ChatPanel.sendPrompt(
+    extensionUri,
+    lens,
+    tracker,
+    TalyvorConfig.getLensConfig(),
+    prompt,
+  );
 }

@@ -2,10 +2,14 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/talyvor/code/internal/config"
+	"github.com/talyvor/code/internal/lens"
 )
 
 func TestRun_VersionPrintsVersion(t *testing.T) {
@@ -86,6 +90,104 @@ func TestRun_AskHitsLensWithIssueHeader(t *testing.T) {
 	}
 	if got.Get("X-Talyvor-Feature") != "code-ask" {
 		t.Fatalf("feature header wrong: %q", got.Get("X-Talyvor-Feature"))
+	}
+}
+
+// ─── chat REPL ───────────────────────────────────────
+
+// TestChat_GreetsAndExitsOnEOF — the REPL prints its banner and
+// quits cleanly when stdin closes (EOF). No HTTP traffic expected
+// because the user never sent a message.
+func TestChat_GreetsAndExitsOnEOF(t *testing.T) {
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"chat"}, &stdout, &stderr); err != nil {
+		t.Fatalf("chat: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Talyvor Code Chat") {
+		t.Fatalf("banner missing: %q", out)
+	}
+	if !strings.Contains(out, "ENG-42") {
+		t.Fatalf("issue missing from banner: %q", out)
+	}
+}
+
+// TestChat_SlashClearAndIssueAffectsState drives the slash
+// commands directly via runChat with a stdin buffer so we don't
+// need a live Lens. The REPL prints state changes to stdout; we
+// assert against those.
+func TestChat_SlashClearAndIssueAffectsState(t *testing.T) {
+	cfg := config.Config{
+		LensURL:     "http://localhost:9999",
+		LensAPIKey:  "tlv_k",
+		WorkspaceID: "ws-1",
+		ActiveIssue: "ENG-1",
+		Model:       "claude-haiku-4-6",
+	}
+	stdin := strings.NewReader("/clear\n/issue ENG-99\nexit\n")
+	var stdout, stderr bytes.Buffer
+	if err := runChat(stdin, &stdout, &stderr, cfg); err != nil {
+		t.Fatalf("runChat: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "History cleared.") {
+		t.Fatalf("/clear didn't echo: %q", out)
+	}
+	if !strings.Contains(out, "Active issue: ENG-99") {
+		t.Fatalf("/issue didn't echo: %q", out)
+	}
+}
+
+// TestChat_SendMessageRoundTrip drives one full message through a
+// fake Lens server and asserts the reply lands on stdout, plus
+// the X-Talyvor-Issue header carries the active issue.
+func TestChat_SendMessageRoundTrip(t *testing.T) {
+	var gotHeaders http.Header
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"hello back"}]}`))
+	}))
+	defer srv.Close()
+	cfg := config.Config{
+		LensURL:     srv.URL,
+		LensAPIKey:  "tlv_k",
+		WorkspaceID: "ws-1",
+		ActiveIssue: "ENG-42",
+		Model:       "claude-haiku-4-6",
+	}
+	stdin := strings.NewReader("ping\nexit\n")
+	var stdout, stderr bytes.Buffer
+	if err := runChat(stdin, &stdout, &stderr, cfg); err != nil {
+		t.Fatalf("runChat: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "hello back") {
+		t.Fatalf("reply missing: %q", stdout.String())
+	}
+	if gotHeaders.Get("X-Talyvor-Issue") != "ENG-42" {
+		t.Fatalf("issue header wrong: %q", gotHeaders.Get("X-Talyvor-Issue"))
+	}
+}
+
+func TestTrimChatHistory_DropsOldestPair(t *testing.T) {
+	// 22 messages — over by 2. Expect length 20 with q1 at head.
+	in := make([]lens.Message, 0, 22)
+	for i := 0; i < 11; i++ {
+		in = append(in,
+			lens.Message{Role: "user", Content: fmt.Sprintf("q%d", i)},
+			lens.Message{Role: "assistant", Content: fmt.Sprintf("a%d", i)},
+		)
+	}
+	out := trimChatHistory(in)
+	if len(out) != MaxChatHistory {
+		t.Fatalf("len = %d", len(out))
+	}
+	if out[0].Content != "q1" {
+		t.Fatalf("head = %q, want q1", out[0].Content)
 	}
 }
 
