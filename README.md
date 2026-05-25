@@ -2,12 +2,13 @@
 
 **AI coding assistant powered by Talyvor Lens — every AI call attributed to your active Track issue.**
 
-Two surfaces ship from this repository:
+Three surfaces ship from this repository:
 
 | Surface | Path | What it gives you |
 | --- | --- | --- |
 | VS Code extension (TypeScript) | `extension/` | Inline completions, chat, test generation, agentic mode, docs hover, status bar, dashboard |
-| CLI agent (Go) | `agent/` | `ask`, `chat`, `test`, `run`, `review`, `commit`, `docs`, `serve` (MCP) |
+| CLI agent (Go) | `agent/` | `ask`, `chat`, `test`, `run`, `review`, `commit`, `docs`, `serve` (MCP), `pr`, `shell`, `context`, `scope` |
+| JetBrains plugin (Kotlin) | `jetbrains/` | Explain code · Generate tests · AI chat tool window (Phase 1 — feature parity coming) |
 
 ## Why Talyvor Code?
 
@@ -26,6 +27,7 @@ Two surfaces ship from this repository:
 | **CLI agent** | ❌ | ❌ | ✅ |
 | **Code review** | ❌ | ❌ | ✅ |
 | **AI commit messages** | ❌ | ❌ | ✅ |
+| **JetBrains IDE support** | ✅ | ❌ | ✅ (Phase 1) |
 
 ## VS Code extension
 
@@ -152,6 +154,24 @@ talyvor-code serve --port 7777 --root .
 | `TALYVOR_WORKSPACE_ID` | `--workspace` |
 | `TALYVOR_ISSUE` | `--issue` |
 | `TALYVOR_MODEL` | `--model` |
+
+## JetBrains plugin (IntelliJ IDEA, GoLand, PyCharm, …)
+
+```bash
+cd jetbrains
+gradle wrapper        # one-time, materialises ./gradlew + jar
+./gradlew buildPlugin # → build/distributions/talyvor-code-0.1.0.zip
+```
+
+Install via **Settings → Plugins → ⚙️ → Install Plugin from Disk…** and configure under **Settings → Tools → Talyvor Code**.
+
+Phase 1 ships:
+
+- Right-click → **Talyvor → Explain Code** (Lens-routed, issue-attributed)
+- Right-click → **Talyvor → Generate Tests** (auto-upgrades Haiku → Sonnet)
+- **Talyvor Code** tool window with multi-turn chat
+
+Roadmap: inline completions, streaming chat, full agent mode, Track + Docs integration parity. See [`jetbrains/README.md`](jetbrains/README.md) for the full plugin-side write-up.
 
 ## MCP integration
 

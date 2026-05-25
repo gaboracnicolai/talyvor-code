@@ -41,6 +41,27 @@ jobs:
       - run: cd agent && go vet ./...
       - run: cd agent && go test -race -count=1 ./...
 
+  jetbrains:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: "temurin"
+      - uses: gradle/actions/setup-gradle@v3
+      # The gradle wrapper jar isn't checked in (binary); we use
+      # the runner's gradle to bootstrap the wrapper and then run
+      # buildPlugin + verifyPlugin against it.
+      - name: Generate wrapper
+        run: cd jetbrains && gradle wrapper
+      - name: Build plugin
+        run: cd jetbrains && ./gradlew buildPlugin --no-daemon
+      - name: Verify plugin
+        run: cd jetbrains && ./gradlew verifyPlugin --no-daemon
+
   release:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest

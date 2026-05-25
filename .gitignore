@@ -3,3 +3,12 @@ out/
 *.js.map
 dist/
 *.vsix
+
+# JetBrains Gradle build outputs (the wrapper jar is generated
+# by `gradle wrapper` on first build — see jetbrains/README.md).
+jetbrains/.gradle/
+jetbrains/build/
+jetbrains/gradle/wrapper/gradle-wrapper.jar
+jetbrains/gradlew
+jetbrains/gradlew.bat
+jetbrains/.idea/

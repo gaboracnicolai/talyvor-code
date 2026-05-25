@@ -1,0 +1,60 @@
+<idea-plugin>
+    <id>com.talyvor.code</id>
+    <name>Talyvor Code</name>
+    <vendor email="hello@talyvor.com" url="https://github.com/gaboracnicolai/talyvor-code">Talyvor</vendor>
+
+    <description><![CDATA[
+        AI coding assistant powered by Talyvor Lens.
+        Every AI call is attributed to your active Track issue, so
+        engineering leaders can see exactly how much AI was used to
+        implement each feature.
+
+        <h3>Phase 1 features</h3>
+        <ul>
+            <li>Explain selected code (right-click → Talyvor → Explain Code)</li>
+            <li>Generate tests for a selection</li>
+            <li>AI chat tool window with issue-attributed cost</li>
+        </ul>
+
+        Full feature parity with the VS Code extension lands in
+        subsequent phases (inline completions, agentic mode, docs
+        integration).
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <applicationConfigurable
+            parentId="tools"
+            instance="com.talyvor.code.TalyvorSettingsConfigurable"
+            id="com.talyvor.code.settings"
+            displayName="Talyvor Code"/>
+
+        <applicationService
+            serviceImplementation="com.talyvor.code.TalyvorSettings"/>
+
+        <toolWindow
+            id="Talyvor Code"
+            anchor="right"
+            icon="AllIcons.Toolwindows.ToolWindowMessages"
+            factoryClass="com.talyvor.code.toolwindow.ChatToolWindowFactory"/>
+    </extensions>
+
+    <actions>
+        <group id="com.talyvor.code.EditorGroup" text="Talyvor" popup="true">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <action id="com.talyvor.code.Explain"
+                    class="com.talyvor.code.actions.ExplainAction"
+                    text="Explain Code"
+                    description="Explain selected code with Talyvor AI"/>
+            <action id="com.talyvor.code.GenerateTests"
+                    class="com.talyvor.code.actions.GenerateTestsAction"
+                    text="Generate Tests"
+                    description="Generate tests for selected code"/>
+            <action id="com.talyvor.code.OpenChat"
+                    class="com.talyvor.code.actions.OpenChatAction"
+                    text="Open Chat"
+                    description="Open the Talyvor AI chat tool window"/>
+        </group>
+    </actions>
+</idea-plugin>
