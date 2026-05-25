@@ -11,6 +11,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,6 +25,7 @@ import (
 	"github.com/talyvor/code/internal/docs"
 	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/lens"
+	"github.com/talyvor/code/internal/mcp"
 	"github.com/talyvor/code/internal/track"
 )
 
@@ -111,6 +113,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runReview(os.Stdin, stdout, stderr, cfg, rest)
 	case "commit":
 		return runCommit(os.Stdin, stdout, stderr, cfg, rest)
+	case "serve":
+		return runServe(stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -132,6 +136,7 @@ COMMANDS
   review     Review staged changes or files for bugs/security/perf
   commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
+  serve      Start the Talyvor Code MCP server
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -1437,4 +1442,54 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// ─── serve subcommand ──────────────────────────────
+
+// runServe starts the Talyvor Code MCP server. Binds 0.0.0.0 so
+// IDE/agent clients on any interface can reach it; the user is
+// responsible for the security posture (usually a localhost-only
+// SSH tunnel or a firewalled subnet).
+func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		port int
+		root string
+	)
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.IntVar(&port, "port", 7777, "Port to listen on")
+	fs.StringVar(&root, "root", ".", "Codebase root to index")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+	dc := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+
+	server := mcp.New(lc, tc, dc, &cfg, version)
+	server.SetRoot(root)
+	if err := server.IndexNow(); err != nil {
+		fmt.Fprintf(stderr, "! initial index: %v (continuing)\n", err)
+	}
+	idx := server.CurrentIndex()
+	if idx != nil {
+		fmt.Fprintf(stdout, "Codebase: %d files indexed (%d lines)\n", len(idx.Files), idx.TotalLines)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server.StartReindex(ctx)
+	defer server.Stop()
+
+	mux := http.NewServeMux()
+	server.Routes(mux)
+	addr := fmt.Sprintf("0.0.0.0:%d", port)
+	fmt.Fprintf(stdout, "Talyvor Code MCP server running on :%d\n", port)
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	return srv.ListenAndServe()
 }
