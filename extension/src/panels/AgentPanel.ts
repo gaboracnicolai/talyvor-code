@@ -24,6 +24,7 @@ type Inbound =
   | { type: "regenerate"; index: number; feedback: string }
   | { type: "applyAll" }
   | { type: "applyAndHeal" }
+  | { type: "createPR" }
   | { type: "cancel" };
 
 export class AgentPanel {
@@ -129,9 +130,53 @@ export class AgentPanel {
           );
         }
         break;
+      case "createPR":
+        await this.handleCreatePR();
+        break;
       case "cancel":
         this.agent?.cancel();
         break;
+    }
+  }
+
+  // handleCreatePR drives the QuickPick UX for opening a PR from
+  // the completed-state action. Confirms title + draft choice
+  // before handing off to AgentMode.createPR, which runs the
+  // preflight and the GitHub API call.
+  private async handleCreatePR(): Promise<void> {
+    if (!this.agent) return;
+    const task = this.agent.currentTask();
+    if (!task) return;
+    const cfg = this.freshConfig();
+    const defaultTitle = task.description.trim().slice(0, 70);
+    const title = await vscode.window.showInputBox({
+      title: "PR title",
+      prompt: "Confirm or edit the pull-request title",
+      value: defaultTitle,
+      ignoreFocusOut: true,
+    });
+    if (!title) return;
+    const draftChoice = await vscode.window.showQuickPick(
+      [
+        { label: "$(git-pull-request) Open PR", draft: false },
+        { label: "$(git-pull-request-draft) Open as Draft", draft: true },
+      ],
+      { title: "Pull request kind", ignoreFocusOut: true },
+    );
+    if (!draftChoice) return;
+    const url = await this.agent.createPR({
+      workspaceRoot: this.workspaceRoot(),
+      title: title.trim(),
+      draft: draftChoice.draft,
+      config: cfg,
+    });
+    if (!url) return;
+    const action = await vscode.window.showInformationMessage(
+      `✅ PR opened: ${url}`,
+      "Open in browser",
+    );
+    if (action === "Open in browser") {
+      await vscode.env.openExternal(vscode.Uri.parse(url));
     }
   }
 
@@ -229,6 +274,9 @@ export class AgentPanel {
         ${healedBadge}
         <p>Total cost: $${task.totalCostUSD.toFixed(4)}</p>
         ${task.issueId ? `<p>Active issue: <code>${escapeHTML(task.issueId)}</code></p>` : ""}
+        <div class="actions">
+          <button id="createPRBtn">Create PR</button>
+        </div>
       </div>`;
     }
     if (task.status === "healing") {
@@ -420,6 +468,8 @@ const applyBtn = document.getElementById('applyBtn');
 if (applyBtn) applyBtn.addEventListener('click', () => vscode.postMessage({type:'applyAll'}));
 const applyAndHealBtn = document.getElementById('applyAndHealBtn');
 if (applyAndHealBtn) applyAndHealBtn.addEventListener('click', () => vscode.postMessage({type:'applyAndHeal'}));
+const createPRBtn = document.getElementById('createPRBtn');
+if (createPRBtn) createPRBtn.addEventListener('click', () => vscode.postMessage({type:'createPR'}));
 const cancelBtn = document.getElementById('cancelBtn');
 if (cancelBtn) cancelBtn.addEventListener('click', () => vscode.postMessage({type:'cancel'}));
 })();`;

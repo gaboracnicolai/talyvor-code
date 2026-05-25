@@ -24,6 +24,7 @@ import (
 	diffPkg "github.com/talyvor/code/internal/diff"
 	"github.com/talyvor/code/internal/docs"
 	gitpkg "github.com/talyvor/code/internal/git"
+	"github.com/talyvor/code/internal/github"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
 	modelpkg "github.com/talyvor/code/internal/model"
@@ -125,6 +126,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runShell(os.Stdin, stdout, stderr, cfg, rest)
 	case "models":
 		return runModels(stdout)
+	case "pr":
+		return runPR(os.Stdin, stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -150,6 +153,7 @@ COMMANDS
   init       Write a starter .talyvor-rules file in the current directory
   shell      Generate a shell command from a description (alias: sh)
   models     List supported AI models with their profiles
+  pr         Open a GitHub pull request from the current branch
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -466,6 +470,10 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		healEnabled bool
 		healCmd     string
 		maxAttempts int
+		openPR      bool
+		prDraft     bool
+		branchName  string
+		ghToken     string
 	)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -476,6 +484,10 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fs.BoolVar(&healEnabled, "heal", false, "Run build/test after applying and self-heal failures")
 	fs.StringVar(&healCmd, "heal-cmd", "", "Override the build/test command for --heal")
 	fs.IntVar(&maxAttempts, "max-attempts", runner.MaxHealAttempts, "Max self-heal attempts (default: 3)")
+	fs.BoolVar(&openPR, "pr", false, "Create a GitHub pull request after the task completes")
+	fs.BoolVar(&prDraft, "pr-draft", false, "Open the PR as a draft (requires --pr)")
+	fs.StringVar(&branchName, "branch", "", "Branch name for --pr (default: auto-generated)")
+	fs.StringVar(&ghToken, "token", "", "GitHub token (or GITHUB_TOKEN env)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -631,6 +643,25 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		}
 	}
 
+	// ── Phase 4: optional PR ──
+	// Branch + commit + push + open PR. Captures the PR URL so
+	// the Track comment can reference it.
+	prURL := ""
+	if openPR && applied > 0 && !dryRun {
+		changedFiles := make([]string, 0, applied)
+		for _, pf := range plan.Files {
+			changedFiles = append(changedFiles, pf.Path)
+		}
+		url, err := runPRAfterAgent(ctx, stdin, stdout, stderr, lc, cfg,
+			taskDesc, changedFiles, branchName, ghToken, prDraft, yes)
+		if err != nil {
+			fmt.Fprintf(stderr, "! pr: %v\n", err)
+		} else if url != "" {
+			prURL = url
+			fmt.Fprintf(stdout, "✅ PR opened: %s\n", url)
+		}
+	}
+
 	// Best-effort Track comment so the issue trail captures the
 	// automated change. Failures here never fail the CLI — the
 	// user already has the change applied locally.
@@ -638,6 +669,9 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
 		if tc.IsConfigured() {
 			comment := buildAgentCompletionComment(taskDesc, applied, chosenModel)
+			if prURL != "" {
+				comment += "\nPR: " + prURL
+			}
 			cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer ccancel()
 			if err := tc.AddComment(cctx, cfg.WorkspaceID, cfg.ActiveIssue, comment); err != nil {
@@ -1745,6 +1779,304 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// ─── pr subcommand ─────────────────────────────────
+
+// runPR opens a pull request from the *current* branch (whatever
+// the user is on). Useful after a manual commit cycle or after
+// `talyvor-code commit`. The complementary path is `run --pr`
+// which slugs+creates+commits+pushes a fresh branch.
+func runPR(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		title    string
+		draft    bool
+		base     string
+		issue    string
+		token    string
+		modelOpt string
+	)
+	fs := flag.NewFlagSet("pr", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&title, "title", "", "PR title (default: AI-generated from diff)")
+	fs.BoolVar(&draft, "draft", false, "Open as a draft PR")
+	fs.StringVar(&base, "base", "", "Target branch (default: auto-detect)")
+	fs.StringVar(&issue, "issue", "", "Override active issue for cost attribution")
+	fs.StringVar(&token, "token", "", "GitHub token (or GITHUB_TOKEN env)")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model for title generation")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if issue != "" {
+		cfg.ActiveIssue = issue
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	ghToken := nonEmpty(token, os.Getenv("GITHUB_TOKEN"))
+	if ghToken == "" {
+		return fmt.Errorf("pr: GITHUB_TOKEN required (set the env var or pass --token)")
+	}
+	remote, err := gitpkg.GetRemoteURL()
+	if err != nil {
+		return fmt.Errorf("pr: %w", err)
+	}
+	if !gitpkg.IsGitHub(remote) {
+		return fmt.Errorf("pr: not a GitHub repository (remote: %s)", remote)
+	}
+	owner, repo, err := github.ParseRepoFromURL(remote)
+	if err != nil {
+		return fmt.Errorf("pr: %w", err)
+	}
+	branch, err := gitpkg.GetCurrentBranch()
+	if err != nil {
+		return fmt.Errorf("pr: %w", err)
+	}
+	if base == "" {
+		def, err := gitpkg.GetDefaultBranch()
+		if err != nil {
+			return fmt.Errorf("pr: %w (pass --base)", err)
+		}
+		base = def
+	}
+	if branch == base {
+		return fmt.Errorf("pr: current branch (%s) is the base branch — switch to a feature branch first", branch)
+	}
+	stats, _ := gitpkg.GetDiffStats()
+
+	if title == "" {
+		generated, err := generatePRTitle(context.Background(), cfg, modelOpt, stats)
+		if err != nil {
+			fmt.Fprintf(stderr, "! pr: title generation failed (%v), using fallback\n", err)
+			title = "Talyvor PR: " + branch
+		} else {
+			title = generated
+		}
+	}
+
+	// Fetch issue title from Track (best-effort) for the body.
+	issueTitle := ""
+	if cfg.ActiveIssue != "" && cfg.TrackURL != "" && cfg.TrackAPIKey != "" {
+		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		ictx, icancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer icancel()
+		if iss, _ := tc.GetIssue(ictx, cfg.WorkspaceID, cfg.ActiveIssue); iss != nil {
+			issueTitle = iss.Title
+		}
+	}
+	body := github.GeneratePRBody(cfg.ActiveIssue, issueTitle, "", changedFilesFromStats(stats), 0)
+
+	fmt.Fprintln(stdout, "Creating PR:")
+	fmt.Fprintf(stdout, "  Title:  %s\n", title)
+	fmt.Fprintf(stdout, "  Branch: %s → %s\n", branch, base)
+	if strings.TrimSpace(stats) != "" {
+		fmt.Fprintln(stdout, indent(strings.TrimSpace(stats), "  "))
+	}
+	if draft {
+		fmt.Fprintln(stdout, "  (draft)")
+	}
+	if !confirm(stdin, stdout, "Confirm? [y/N] ") {
+		fmt.Fprintln(stdout, "Aborted.")
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	res, err := github.CreatePR(ctx, ghToken, github.PRConfig{
+		Owner: owner, Repo: repo,
+		Title: title, Body: body,
+		Head: branch, Base: base, Draft: draft,
+	})
+	if err != nil {
+		return fmt.Errorf("pr: %w", err)
+	}
+	fmt.Fprintf(stdout, "✅ PR opened: %s\n", res.URL)
+	return nil
+}
+
+// runPRAfterAgent is the run --pr path. Creates a fresh branch,
+// stages everything, commits, pushes, and opens the PR. The
+// helper takes the changed-file list directly so the PR body
+// matches the agent's actual scope (`git diff --stat` could
+// include unrelated uncommitted files).
+func runPRAfterAgent(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	lc *lens.Client,
+	cfg config.Config,
+	taskDesc string,
+	changedFiles []string,
+	branchOverride, tokenOverride string,
+	draft, autoYes bool,
+) (string, error) {
+	ghToken := nonEmpty(tokenOverride, os.Getenv("GITHUB_TOKEN"))
+	if ghToken == "" {
+		return "", fmt.Errorf("GITHUB_TOKEN required (set the env var or pass --token)")
+	}
+	remote, err := gitpkg.GetRemoteURL()
+	if err != nil {
+		return "", err
+	}
+	if !gitpkg.IsGitHub(remote) {
+		fmt.Fprintln(stdout, "Not a GitHub repository — skipping PR creation.")
+		return "", nil
+	}
+	owner, repo, err := github.ParseRepoFromURL(remote)
+	if err != nil {
+		return "", err
+	}
+	base, err := gitpkg.GetDefaultBranch()
+	if err != nil {
+		return "", err
+	}
+	branch := branchOverride
+	if branch == "" {
+		branch = github.SlugifyBranch(taskDesc)
+	}
+
+	fmt.Fprintf(stdout, "\n📦 Creating branch %s (from %s)…\n", branch, base)
+	if exists, _ := gitpkg.BranchExists(branch); exists {
+		return "", fmt.Errorf("branch %q already exists", branch)
+	}
+	if err := gitpkg.CreateBranch(branch); err != nil {
+		return "", err
+	}
+	if err := gitpkg.AddAll(); err != nil {
+		return "", err
+	}
+	commitMsg := buildAgentCommitMessage(cfg.ActiveIssue, taskDesc)
+	if err := gitpkg.Commit(commitMsg); err != nil {
+		return "", err
+	}
+	fmt.Fprintf(stdout, "Pushing to origin/%s…\n", branch)
+	if err := gitpkg.PushBranch(branch); err != nil {
+		return "", err
+	}
+
+	// Title: AI-generated from the task description with Haiku.
+	title, err := generatePRTitle(ctx, cfg, "", "Task: "+taskDesc)
+	if err != nil || strings.TrimSpace(title) == "" {
+		title = strings.TrimSpace(taskDesc)
+		if len(title) > 70 {
+			title = title[:70]
+		}
+	}
+
+	issueTitle := ""
+	if cfg.ActiveIssue != "" && cfg.TrackURL != "" && cfg.TrackAPIKey != "" {
+		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if iss, _ := tc.GetIssue(ctx, cfg.WorkspaceID, cfg.ActiveIssue); iss != nil {
+			issueTitle = iss.Title
+		}
+	}
+	body := github.GeneratePRBody(cfg.ActiveIssue, issueTitle, taskDesc, changedFiles, 0)
+
+	fmt.Fprintln(stdout, "\nCreating PR:")
+	fmt.Fprintf(stdout, "  Title:  %s\n", title)
+	fmt.Fprintf(stdout, "  Branch: %s → %s\n", branch, base)
+	if draft {
+		fmt.Fprintln(stdout, "  (draft)")
+	}
+	// Confirmation required regardless of --yes (PR creation
+	// publishes outside the local checkout).
+	if !confirm(stdin, stdout, "Confirm? [y/N] ") {
+		fmt.Fprintln(stdout, "Aborted PR creation (branch pushed; create manually if you change your mind).")
+		_ = autoYes // intentionally not honoured here
+		return "", nil
+	}
+
+	prCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	res, err := github.CreatePR(prCtx, ghToken, github.PRConfig{
+		Owner: owner, Repo: repo,
+		Title: title, Body: body,
+		Head: branch, Base: base, Draft: draft,
+	})
+	if err != nil {
+		return "", err
+	}
+	_ = stderr
+	return res.URL, nil
+}
+
+// generatePRTitle asks Lens (Haiku) for a concise PR title.
+// Empty diff/desc input → empty string + nil so the caller
+// applies a deterministic fallback.
+func generatePRTitle(ctx context.Context, cfg config.Config, modelOpt, diff string) (string, error) {
+	if strings.TrimSpace(diff) == "" {
+		return "", nil
+	}
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	chosen, err := resolveAndValidate(modelOpt, cfg.Model, "commit")
+	if err != nil {
+		return "", err
+	}
+	system := "Generate a concise pull-request title (under 72 characters) " +
+		"for the following changes. Use a conventional-commits prefix " +
+		"(feat:, fix:, docs:, refactor:, test:, chore:). " +
+		"Return ONLY the title — no quotes, no markdown."
+	tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	raw, err := lc.Complete(tctx,
+		[]lens.Message{{Role: "user", Content: system + "\n\n" + diff}},
+		chosen, "pr-title", cfg.WorkspaceID, cfg.ActiveIssue,
+	)
+	if err != nil {
+		return "", err
+	}
+	title := cleanCommitMessage(raw)
+	if len(title) > 70 {
+		title = title[:70]
+	}
+	return title, nil
+}
+
+func buildAgentCommitMessage(issueID, taskDesc string) string {
+	subject := strings.TrimSpace(taskDesc)
+	if len(subject) > 60 {
+		subject = subject[:60]
+	}
+	prefix := "feat"
+	low := strings.ToLower(subject)
+	for _, kw := range []string{"fix", "bug", "patch", "hotfix"} {
+		if strings.Contains(low, kw) {
+			prefix = "fix"
+			break
+		}
+	}
+	msg := fmt.Sprintf("%s: %s", prefix, subject)
+	if issueID != "" {
+		msg = issueID + ": " + msg
+	}
+	return msg
+}
+
+// changedFilesFromStats pulls filenames out of `git diff --stat`
+// output. Cheap regex — good enough for body rendering.
+func changedFilesFromStats(stats string) []string {
+	out := []string{}
+	for _, line := range strings.Split(stats, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.Contains(line, "file changed") || strings.Contains(line, "files changed") {
+			continue
+		}
+		// Format: "path/to/file | 4 +-"
+		if i := strings.Index(line, "|"); i > 0 {
+			out = append(out, strings.TrimSpace(line[:i]))
+		}
+	}
+	return out
+}
+
+// confirm prompts with `prompt` and returns true for y/yes.
+func confirm(stdin io.Reader, stdout io.Writer, prompt string) bool {
+	reader := bufio.NewReader(stdin)
+	fmt.Fprint(stdout, prompt)
+	ans, _ := reader.ReadString('\n')
+	ans = strings.ToLower(strings.TrimSpace(ans))
+	return ans == "y" || ans == "yes"
 }
 
 // ─── models subcommand ─────────────────────────────

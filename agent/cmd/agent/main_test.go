@@ -391,6 +391,44 @@ func TestRun_YesAppliesAllChanges(t *testing.T) {
 	}
 }
 
+// ─── pr subcommand ─────────────────────────────────
+
+func TestPR_RequiresGitHubToken(t *testing.T) {
+	// chdir into a fresh git repo with a github remote so the
+	// preflight checks pass up to the token gate.
+	dir := initRepoWithStaged(t, "f.txt", "x\n")
+	runGit(t, dir, "remote", "add", "origin", "git@github.com:acme/widgets.git")
+	chdirT(t, dir)
+
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"pr"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "GITHUB_TOKEN") {
+		t.Fatalf("expected GITHUB_TOKEN error, got %v", err)
+	}
+}
+
+func TestPR_RejectsNonGitHubRemote(t *testing.T) {
+	dir := initRepoWithStaged(t, "f.txt", "x\n")
+	runGit(t, dir, "remote", "add", "origin", "git@gitlab.com:acme/widgets.git")
+	chdirT(t, dir)
+
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("GITHUB_TOKEN", "tlv_gh")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"pr"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "GitHub") {
+		t.Fatalf("expected non-GitHub error, got %v", err)
+	}
+}
+
 // ─── run --heal ────────────────────────────────────
 
 // TestRun_HealSuccessOnFirstBuild asserts the happy path: agent

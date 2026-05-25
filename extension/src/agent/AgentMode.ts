@@ -34,6 +34,13 @@ import {
   runBuild,
   stitchOutput,
 } from "./heal";
+import {
+  createPR,
+  preflight as prPreflight,
+  resolveToken,
+  promptForToken,
+} from "../github/pr-creator";
+import { generatePRBody, slugifyBranch } from "../github/pr-pure";
 
 const AGENT_MODEL = "claude-sonnet-4-6";
 
@@ -428,6 +435,68 @@ export class AgentMode {
       this.outputChannel = vscode.window.createOutputChannel("Talyvor Agent — Heal");
     }
     return this.outputChannel;
+  }
+
+  // createPR opens a GitHub pull request for the current task.
+  // Returns the PR URL on success, undefined when the workspace
+  // isn't a GitHub repo or the user cancels. The caller (the
+  // AgentPanel) drives the QuickPick / inputBox UX.
+  async createPR(opts: {
+    workspaceRoot: string;
+    title?: string;
+    base?: string;
+    draft?: boolean;
+    config: LensConfig;
+  }): Promise<string | undefined> {
+    if (!this.task) return undefined;
+    const pre = await prPreflight(opts.workspaceRoot);
+    if (!pre) {
+      void vscode.window.showWarningMessage(
+        "Not a GitHub repository — skipping PR creation.",
+      );
+      return undefined;
+    }
+    let token = resolveToken();
+    if (!token) {
+      const entered = await promptForToken();
+      if (!entered) {
+        void vscode.window.showWarningMessage(
+          "GitHub token required to open a PR.",
+        );
+        return undefined;
+      }
+      token = entered;
+    }
+    const base = opts.base || pre.defaultBranch;
+    if (pre.branch === base) {
+      void vscode.window.showWarningMessage(
+        `Current branch (${pre.branch}) is the base — switch to a feature branch first.`,
+      );
+      return undefined;
+    }
+    const title = (opts.title ?? slugifyBranch(this.task.description)).slice(0, 70);
+    const body = generatePRBody(
+      this.task.issueId,
+      "",
+      this.task.description,
+      this.task.changes.filter((c) => c.approved).map((c) => c.filePath),
+      this.task.totalCostUSD,
+    );
+    try {
+      const res = await createPR(pre.owner, pre.repo, token, {
+        title,
+        body,
+        head: pre.branch,
+        base,
+        draft: opts.draft ?? false,
+      });
+      return res.url;
+    } catch (err) {
+      void vscode.window.showErrorMessage(
+        "PR creation failed: " + (err instanceof Error ? err.message : String(err)),
+      );
+      return undefined;
+    }
   }
 
   cancel(): void {

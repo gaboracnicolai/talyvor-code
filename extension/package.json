@@ -45,6 +45,11 @@
           "default": "",
           "description": "Talyvor Docs API key"
         },
+        "talyvor.githubToken": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub personal-access token used for `Create PR` from the agent panel (falls back to $GITHUB_TOKEN). Requires `repo` scope."
+        },
         "talyvor.workspaceId": {
           "type": "string",
           "default": "",
