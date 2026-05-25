@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -188,6 +192,98 @@ func TestTrimChatHistory_DropsOldestPair(t *testing.T) {
 	}
 	if out[0].Content != "q1" {
 		t.Fatalf("head = %q, want q1", out[0].Content)
+	}
+}
+
+// ─── test subcommand ────────────────────────────────
+
+// TestTest_HitsLensWithSonnetAndWritesFile drives the full
+// happy-path test-generation flow through a fake Lens. Asserts:
+// the request uses claude-sonnet-4-6 (quality model), the
+// feature header carries code-test-gen, and the response lands
+// at the auto-suggested test-file path.
+func TestTest_HitsLensWithSonnetAndWritesFile(t *testing.T) {
+	var gotBody map[string]any
+	var gotFeature string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		gotFeature = r.Header.Get("X-Talyvor-Feature")
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"package foo\n\nimport \"testing\"\n\nfunc TestFoo(t *testing.T) {}\n"}]}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	src := filepath.Join(dir, "foo.go")
+	if err := os.WriteFile(src, []byte("package foo\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"test", src}, &stdout, &stderr); err != nil {
+		t.Fatalf("run test: %v", err)
+	}
+	if gotBody["model"] != "claude-sonnet-4-6" {
+		t.Fatalf("expected sonnet model, got %v", gotBody["model"])
+	}
+	if gotFeature != "code-test-gen" {
+		t.Fatalf("feature header: %q", gotFeature)
+	}
+	expected := filepath.Join(dir, "foo_test.go")
+	body, err := os.ReadFile(expected)
+	if err != nil {
+		t.Fatalf("expected test file %s: %v", expected, err)
+	}
+	if !strings.Contains(string(body), "TestFoo") {
+		t.Fatalf("test body not written: %q", string(body))
+	}
+	if !strings.Contains(stdout.String(), expected) {
+		t.Fatalf("stdout should mention output path: %q", stdout.String())
+	}
+}
+
+func TestTest_ExistingOutputRefuses(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "foo.go")
+	if err := os.WriteFile(src, []byte("package foo\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	// Pre-create the suggested target — runTest must refuse to
+	// overwrite without an explicit --output.
+	if err := os.WriteFile(filepath.Join(dir, "foo_test.go"), []byte("// existing\n"), 0o644); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"test", src}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("expected already-exists error, got %v", err)
+	}
+}
+
+func TestSuggestTestOutput(t *testing.T) {
+	cases := []struct {
+		path, lang, want string
+	}{
+		{"/a/foo.go", "go", "/a/foo_test.go"},
+		{"/a/bar.py", "python", "/a/test_bar.py"},
+		{"/a/baz.ts", "typescript", "/a/baz.test.ts"},
+		{"/a/Baz.java", "java", "/a/BazTest.java"},
+	}
+	for _, c := range cases {
+		got := suggestTestOutput(c.path, c.lang)
+		if got != c.want {
+			t.Errorf("suggestTestOutput(%s, %s) = %s, want %s",
+				c.path, c.lang, got, c.want)
+		}
 	}
 }
 

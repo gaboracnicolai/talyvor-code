@@ -13,6 +13,8 @@ import type { LensConfig } from "./lens/types";
 import { CostTracker, formatDuration } from "./providers/cost-tracker";
 import { TalyvorCompletionProvider } from "./providers/completions";
 import { ChatPanel } from "./panels/ChatPanel";
+import { TestGenerator } from "./providers/test-generator";
+import { TestPanel } from "./panels/TestPanel";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -82,6 +84,12 @@ export function activate(context: vscode.ExtensionContext): void {
         tracker,
         "Refactor this code to be cleaner and more maintainable:",
       ),
+    ),
+    vscode.commands.registerCommand("talyvor.generateTests", () =>
+      runGenerateTestsCommand(context.extensionUri, lensClient, tracker, false),
+    ),
+    vscode.commands.registerCommand("talyvor.generateTestsForFile", () =>
+      runGenerateTestsCommand(context.extensionUri, lensClient, tracker, true),
     ),
   );
 
@@ -313,6 +321,66 @@ async function runContextPrompt(
     tracker,
     TalyvorConfig.getLensConfig(),
     prompt,
+  );
+}
+
+// runGenerateTestsCommand drives the test-generation flow. When
+// `wholeFile` is true (the "for File" command) we ignore any
+// selection and use the entire document; otherwise we prefer the
+// selection if non-empty, falling back to the file. A progress
+// notification covers the 5-10s Sonnet round-trip.
+async function runGenerateTestsCommand(
+  extensionUri: vscode.Uri,
+  lens: LensClient,
+  tracker: CostTracker,
+  wholeFile: boolean,
+): Promise<void> {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor) {
+    void vscode.window.showWarningMessage(
+      "Open a file to generate tests.",
+    );
+    return;
+  }
+  const useSelection =
+    !wholeFile && !editor.selection.isEmpty;
+  const code = useSelection
+    ? editor.document.getText(editor.selection)
+    : editor.document.getText();
+  if (code.trim().length === 0) {
+    void vscode.window.showWarningMessage("Nothing to test.");
+    return;
+  }
+  const cfg = TalyvorConfig.getLensConfig();
+  if (!cfg.url || !cfg.apiKey) {
+    void vscode.window.showErrorMessage(
+      "Talyvor is not configured. Set talyvor.lensUrl and talyvor.lensApiKey.",
+    );
+    return;
+  }
+  const gen = new TestGenerator(lens, tracker);
+  await vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: "Generating tests…",
+      cancellable: false,
+    },
+    async () => {
+      try {
+        const tests = await gen.generateTests(
+          code,
+          editor.document.languageId,
+          editor.document.uri.fsPath,
+          cfg,
+        );
+        TestPanel.show(extensionUri, tests, editor.document.uri);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(
+          "Test generation failed: " + msg,
+        );
+      }
+    },
   );
 }
 
