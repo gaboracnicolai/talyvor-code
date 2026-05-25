@@ -23,6 +23,7 @@ type Inbound =
   | { type: "reject"; index: number; feedback: string }
   | { type: "regenerate"; index: number; feedback: string }
   | { type: "applyAll" }
+  | { type: "applyAndHeal" }
   | { type: "cancel" };
 
 export class AgentPanel {
@@ -109,6 +110,22 @@ export class AgentPanel {
           const out = await this.agent.applyApproved(this.freshConfig().workspaceId);
           void vscode.window.showInformationMessage(
             `Applied ${out.applied} change(s)${out.failed ? `, ${out.failed} failed` : ""}.`,
+          );
+        }
+        break;
+      case "applyAndHeal":
+        if (this.agent) {
+          const cfg = this.freshConfig();
+          const out = await this.agent.applyAndHeal(
+            cfg.workspaceId,
+            this.workspaceRoot(),
+            cfg,
+          );
+          const tail = out.healed
+            ? "build passes."
+            : "build still failing — see the Heal output channel.";
+          void vscode.window.showInformationMessage(
+            `Applied ${out.applied} change(s); ${tail}`,
           );
         }
         break;
@@ -203,15 +220,49 @@ export class AgentPanel {
     }
     if (task.status === "completed") {
       const approved = task.changes.filter((c) => c.approved).length;
+      const healedBadge = (task.healAttempts ?? []).some((a) => a.success)
+        ? `<p class="muted">🔧 Self-healed across ${task.healAttempts!.length} build attempt${task.healAttempts!.length === 1 ? "" : "s"}.</p>`
+        : "";
       return `<div class="completed">
         <h2>✅ Task completed</h2>
         <p>Applied ${approved} file change${approved === 1 ? "" : "s"}.</p>
+        ${healedBadge}
         <p>Total cost: $${task.totalCostUSD.toFixed(4)}</p>
         ${task.issueId ? `<p>Active issue: <code>${escapeHTML(task.issueId)}</code></p>` : ""}
       </div>`;
     }
+    if (task.status === "healing") {
+      return this.renderHealing(task);
+    }
     // awaiting_approval / applying
     return this.renderReview(task);
+  }
+
+  private renderHealing(task: AgentTask): string {
+    const attempts = task.healAttempts ?? [];
+    const cards = attempts.map((a) => this.renderHealAttempt(a)).join("");
+    return `<div class="healing">
+  <h2>🔧 Self-healing</h2>
+  <p class="muted">Running the project's build command and asking the model to fix any failures. Streaming output appears in the <code>Talyvor Agent — Heal</code> output channel.</p>
+  ${attempts.length > 0 ? `<div class="attempts">${cards}</div>` : `<div class="progress"><div class="dots"><i></i><i></i><i></i></div></div>`}
+</div>`;
+  }
+
+  private renderHealAttempt(a: AgentTask["healAttempts"] extends Array<infer T> | undefined ? T : never): string {
+    const stateClass = a.success ? "ok" : "fail";
+    const fixesBlock = a.fixes.length > 0
+      ? `<ul class="heal-fixes">${a.fixes.map((f) => `<li><code>${escapeHTML(f.file)}</code></li>`).join("")}</ul>`
+      : "";
+    return `<article class="heal-attempt ${stateClass}">
+  <header>
+    <span class="op">attempt ${a.attempt}</span>
+    <code>${escapeHTML(a.command)}</code>
+    <span class="status-pill">${a.success ? "passed" : `exit ${a.exitCode}`}</span>
+  </header>
+  ${!a.success ? `<pre class="heal-err">${escapeHTML(a.stderrTail || a.stdoutTail || "(no output)")}</pre>` : ""}
+  ${a.appliedCount > 0 ? `<p class="muted">Applied ${a.appliedCount} fix${a.appliedCount === 1 ? "" : "es"}</p>` : ""}
+  ${fixesBlock}
+</article>`;
   }
 
   private renderReview(task: AgentTask): string {
@@ -232,6 +283,7 @@ export class AgentPanel {
   </section>
   <footer class="actions">
     <button id="applyBtn">Apply approved changes</button>
+    <button id="applyAndHealBtn">Run &amp; Heal</button>
     <button id="cancelBtn" class="ghost">Cancel task</button>
   </footer>
 </div>`;
@@ -324,7 +376,20 @@ pre.diff{margin:0;padding:8px;background:#0c0e12;overflow:auto;font-family:"SF M
 .feedback{padding:8px;background:#13161c;font-size:11px;color:#888;border-top:1px solid #2a2a2a}
 .feedback button{margin-left:8px;padding:2px 8px;font-size:11px}
 .actions{padding:12px 0;display:flex;gap:8px}
-.muted{color:#666}`;
+.muted{color:#666}
+.healing h2{font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0}
+.healing .attempts{display:flex;flex-direction:column;gap:8px;margin-top:12px}
+.heal-attempt{border:1px solid #2a2a2a;border-radius:6px;overflow:hidden}
+.heal-attempt.ok{border-color:#5cd187}
+.heal-attempt.fail{border-color:#f0a030}
+.heal-attempt header{background:#13161c;padding:6px 8px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #2a2a2a}
+.heal-attempt .op{font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;background:#2a2a2a;color:#f0a030}
+.heal-attempt .status-pill{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#aaa}
+.heal-attempt.ok .status-pill{color:#5cd187}
+.heal-attempt.fail .status-pill{color:#ff7070}
+pre.heal-err{margin:0;padding:8px;background:#0c0e12;color:#ff9090;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow:auto}
+.heal-fixes{list-style:none;padding:6px 10px;margin:0;font-size:11px;color:#aaa}
+.heal-fixes li{padding:2px 0}`;
   }
 
   private script(): string {
@@ -353,6 +418,8 @@ document.querySelectorAll('.change').forEach((node) => {
 });
 const applyBtn = document.getElementById('applyBtn');
 if (applyBtn) applyBtn.addEventListener('click', () => vscode.postMessage({type:'applyAll'}));
+const applyAndHealBtn = document.getElementById('applyAndHealBtn');
+if (applyAndHealBtn) applyAndHealBtn.addEventListener('click', () => vscode.postMessage({type:'applyAndHeal'}));
 const cancelBtn = document.getElementById('cancelBtn');
 if (cancelBtn) cancelBtn.addEventListener('click', () => vscode.postMessage({type:'cancel'}));
 })();`;

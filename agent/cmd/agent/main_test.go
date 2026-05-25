@@ -391,6 +391,130 @@ func TestRun_YesAppliesAllChanges(t *testing.T) {
 	}
 }
 
+// ─── run --heal ────────────────────────────────────
+
+// TestRun_HealSuccessOnFirstBuild asserts the happy path: agent
+// applies the change, --heal detects the build command, runs it,
+// and succeeds without ever calling Lens for healing.
+func TestRun_HealSuccessOnFirstBuild(t *testing.T) {
+	dir := t.TempDir()
+	// Drop a go.mod so DetectBuildCommand resolves to "go build
+	// ./...". We point --heal-cmd at `true` so we don't actually
+	// shell out to the Go toolchain in the test.
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"uppercase"}]}`,
+		"HELLO\n",
+	})
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+
+	chdirT(t, dir)
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "--heal", "--heal-cmd", "true", "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run --heal: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Running build check") {
+		t.Fatalf("heal banner missing: %q", out)
+	}
+	if !strings.Contains(out, "Build passes") {
+		t.Fatalf("success line missing: %q", out)
+	}
+}
+
+// TestRun_HealLoopRecoversAfterOneFix exercises the repair pass:
+// the fake "build" exits non-zero on the first invocation and
+// zero on the second, Lens replies with a single FileFix, and
+// the loop reports "Fixed on attempt 1".
+func TestRun_HealLoopRecoversAfterOneFix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	// Stateful "build" command: a script that fails the first
+	// time it's run and succeeds the second time. Lives in a
+	// tmpdir alongside the source so it's reachable via PATH.
+	flagFile := filepath.Join(dir, ".heal-state")
+	healScript := filepath.Join(dir, "fake-build.sh")
+	if err := os.WriteFile(healScript, []byte(`#!/bin/sh
+if [ -f "$0.ran" ]; then
+  echo "ok"
+  exit 0
+fi
+touch "$0.ran"
+echo "compile error: undefined symbol" >&2
+exit 1
+`), 0o755); err != nil {
+		t.Fatalf("write script: %v", err)
+	}
+	_ = flagFile // kept for clarity; the script writes its own marker
+
+	healJSON := `[{"file":"foo.txt","content":"FIXED\n"}]`
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"uppercase"}]}`,
+		"HELLO\n",
+		healJSON,
+	})
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	chdirT(t, dir)
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "--heal", "--heal-cmd", healScript, "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run --heal: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Build failed") {
+		t.Fatalf("expected first-attempt failure surfaced: %q", out)
+	}
+	if !strings.Contains(out, "Fixed on attempt 1") {
+		t.Fatalf("expected recovery line: %q", out)
+	}
+	// The heal fix must have been written.
+	body, _ := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if string(body) != "FIXED\n" {
+		t.Fatalf("heal content not written, got %q", string(body))
+	}
+}
+
+// TestRun_HealSkipsWhenBuildSystemAbsent exercises the graceful
+// degradation path: no go.mod / package.json / etc → heal prints
+// a warning and the run completes normally.
+func TestRun_HealSkipsWhenBuildSystemAbsent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"x"}]}`,
+		"HELLO\n",
+	})
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	chdirT(t, dir)
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "--heal", "uppercase"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run --heal: %v", err)
+	}
+	// No build markers → graceful skip with warning on stderr.
+	if !strings.Contains(stderr.String(), "heal:") {
+		t.Fatalf("expected heal warning on stderr: %q", stderr.String())
+	}
+}
+
 func TestParsePlan_StripsMarkdownFence(t *testing.T) {
 	raw := "```json\n{\"plan\":[\"a\"],\"files\":[{\"path\":\"x.go\",\"operation\":\"create\",\"description\":\"d\"}]}\n```"
 	p, err := parsePlan(raw)

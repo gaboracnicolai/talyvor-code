@@ -22,6 +22,18 @@ import {
   renderUnifiedDiff,
   type DiffLine,
 } from "./agent-pure";
+import {
+  buildHealPrompt,
+  MAX_HEAL_ATTEMPTS,
+  parseHealResult,
+  type FileFix,
+  type HealLanguage,
+} from "./heal-pure";
+import {
+  detectBuildCommand,
+  runBuild,
+  stitchOutput,
+} from "./heal";
 
 const AGENT_MODEL = "claude-sonnet-4-6";
 
@@ -35,6 +47,17 @@ export interface FileChange {
   rejectionFeedback?: string;
 }
 
+export interface HealAttemptInfo {
+  attempt: number;
+  command: string;
+  exitCode: number;
+  stdoutTail: string;
+  stderrTail: string;
+  fixes: FileFix[];
+  appliedCount: number;
+  success: boolean;
+}
+
 export interface AgentTask {
   id: string;
   description: string;
@@ -46,6 +69,7 @@ export interface AgentTask {
   createdAt: Date;
   completedAt?: Date;
   error?: string;
+  healAttempts?: HealAttemptInfo[];
 }
 
 export type UpdateListener = (task: AgentTask) => void;
@@ -63,8 +87,14 @@ const EXECUTOR_SYSTEM =
   "file. Return ONLY the complete new file content. No explanations, no " +
   "markdown fences. The file must be syntactically correct.";
 
+// HEAL_MODEL pins Sonnet for the repair pass per spec — debugging
+// is reasoning-heavy and the model-selector consensus puts review
+// on Sonnet too.
+const HEAL_MODEL = "claude-sonnet-4-6";
+
 export class AgentMode {
   private task: AgentTask | undefined;
+  private outputChannel: vscode.OutputChannel | undefined;
 
   constructor(
     private readonly lens: LensClient,
@@ -222,6 +252,184 @@ export class AgentMode {
     return { applied, failed };
   }
 
+  // applyAndHeal is the "Run & Heal" entry point. Walks the same
+  // file-write loop as applyApproved, but then transitions into
+  // the healing state and drives the Lens-powered repair loop
+  // until the build passes or we hit MAX_HEAL_ATTEMPTS.
+  async applyAndHeal(
+    workspaceId: string,
+    workspaceRoot: string,
+    config: LensConfig,
+  ): Promise<{ applied: number; failed: number; healed: boolean }> {
+    if (!this.task) return { applied: 0, failed: 0, healed: false };
+    if (!canTransition(this.task.status, "applying")) {
+      return { applied: 0, failed: 0, healed: false };
+    }
+    this.transition("applying");
+
+    // Write phase — mirrors applyApproved.
+    let applied = 0;
+    let failed = 0;
+    const errors: string[] = [];
+    for (const c of this.task.changes) {
+      if (!c.approved) continue;
+      try {
+        await this.writeChange(c);
+        applied++;
+      } catch (err) {
+        failed++;
+        errors.push(`${c.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    if (failed > 0) {
+      this.task.error = errors.join("\n");
+      this.task.status = "failed";
+      this.emit();
+      return { applied, failed, healed: false };
+    }
+
+    // Heal phase.
+    this.task.healAttempts = [];
+    this.transition("healing");
+    const healed = await this.runHealCycle(workspaceRoot, config);
+
+    if (healed) {
+      this.task.status = "completed";
+      this.task.completedAt = new Date();
+      this.emit();
+      if (this.issueContext && workspaceId && this.task.issueId) {
+        void this.issueContext.pushAgentCompletionComment(
+          workspaceId,
+          this.task.issueId,
+          this.task.description,
+          applied,
+          this.task.totalCostUSD,
+          AGENT_MODEL,
+        );
+      }
+    } else {
+      this.task.status = "failed";
+      this.task.error = "Self-heal exhausted — build still failing.";
+      this.emit();
+    }
+    return { applied, failed, healed };
+  }
+
+  // runHealCycle runs the heal loop (detect → run → fix → retry)
+  // up to MAX_HEAL_ATTEMPTS times. Returns true when the build
+  // passes; false when we give up.
+  private async runHealCycle(
+    workspaceRoot: string,
+    config: LensConfig,
+  ): Promise<boolean> {
+    if (!this.task) return false;
+    const channel = this.ensureOutputChannel();
+    channel.show(true);
+
+    const plan = await detectBuildCommand(workspaceRoot);
+    if (!plan) {
+      channel.appendLine("⚠️  No build system detected — skipping heal.");
+      // Treat as success — the changes are on disk; we just can't
+      // verify them automatically.
+      return true;
+    }
+    channel.appendLine(`🔧 Build command: ${plan.command}`);
+
+    for (let attempt = 1; attempt <= MAX_HEAL_ATTEMPTS; attempt++) {
+      const result = await runBuild(plan.command, workspaceRoot, channel);
+      const ok = result.exitCode === 0;
+      const fixes: FileFix[] = [];
+      let appliedCount = 0;
+
+      if (!ok) {
+        channel.appendLine(`\n❌ Build failed (exit ${result.exitCode}). Asking the model for a fix (${attempt}/${MAX_HEAL_ATTEMPTS})…`);
+        const errorBody = stitchOutput(result);
+        const prompt = buildHealPrompt({
+          taskDescription: this.task.description,
+          failedCommand: plan.command,
+          errorOutput: errorBody,
+          changedFiles: this.task.changes.filter((c) => c.approved).map((c) => c.filePath),
+          language: plan.language as HealLanguage,
+          attempt,
+        });
+        try {
+          const res = await this.lens.completeWithUsage(
+            [{ role: "user", content: prompt }],
+            HEAL_MODEL,
+            "agent-heal",
+            config.workspaceId,
+            config.activeIssue,
+            4096,
+          );
+          this.recordCost(res.inputTokens, res.outputTokens, config.activeIssue, "agent-heal");
+          const parsed = parseHealResult(res.text);
+          fixes.push(...parsed);
+        } catch (err) {
+          channel.appendLine(`! heal: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        appliedCount = await this.applyHealFixes(fixes, workspaceRoot, channel);
+      }
+
+      const info: HealAttemptInfo = {
+        attempt,
+        command: plan.command,
+        exitCode: result.exitCode,
+        stdoutTail: tail(result.stdout, 2000),
+        stderrTail: tail(result.stderr, 2000),
+        fixes,
+        appliedCount,
+        success: ok,
+      };
+      this.task.healAttempts = [...(this.task.healAttempts ?? []), info];
+      this.emit();
+
+      if (ok) {
+        channel.appendLine(attempt === 1 ? "✅ Build passes." : `✅ Fixed on attempt ${attempt - 1}.`);
+        return true;
+      }
+      if (appliedCount === 0) {
+        channel.appendLine("No fixes applied — giving up.");
+        return false;
+      }
+    }
+    channel.appendLine(`❌ Could not fix automatically after ${MAX_HEAL_ATTEMPTS} attempts.`);
+    return false;
+  }
+
+  // applyHealFixes writes the model's corrections to disk.
+  // Returns the count of files actually written. Mirrors the CLI's
+  // applyHealFixes — no per-file prompt because the user already
+  // consented when they clicked "Run & Heal".
+  private async applyHealFixes(
+    fixes: FileFix[],
+    workspaceRoot: string,
+    channel: vscode.OutputChannel,
+  ): Promise<number> {
+    let applied = 0;
+    for (const fix of fixes) {
+      const abs = absolutise(fix.file, workspaceRoot);
+      try {
+        const enc = new TextEncoder();
+        await vscode.workspace.fs.writeFile(
+          vscode.Uri.file(abs),
+          enc.encode(fix.content),
+        );
+        channel.appendLine(`  ↪ wrote fix to ${fix.file}`);
+        applied++;
+      } catch (err) {
+        channel.appendLine(`! write ${fix.file}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return applied;
+  }
+
+  private ensureOutputChannel(): vscode.OutputChannel {
+    if (!this.outputChannel) {
+      this.outputChannel = vscode.window.createOutputChannel("Talyvor Agent — Heal");
+    }
+    return this.outputChannel;
+  }
+
   cancel(): void {
     if (!this.task) return;
     if (canTransition(this.task.status, "cancelled")) {
@@ -355,6 +563,16 @@ function absolutise(p: string, root: string): string {
   // vscode.Uri.file.
   if (p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p)) return p;
   return root ? `${root}/${p}` : p;
+}
+
+// tail returns the last `max` characters of s with a leading
+// "…" marker when the input was truncated. Used to keep heal
+// telemetry small in the AgentTask payload (the full output
+// still lives in the OutputChannel).
+function tail(s: string, max: number): string {
+  if (!s) return "";
+  if (s.length <= max) return s;
+  return "…" + s.slice(-max);
 }
 
 function stripFences(text: string): string {

@@ -8,6 +8,7 @@ export type AgentStatus =
   | "executing"
   | "awaiting_approval"
   | "applying"
+  | "healing"
   | "completed"
   | "failed"
   | "cancelled";
@@ -82,7 +83,12 @@ export const allowedTransitions: Record<AgentStatus, AgentStatus[]> = {
   planning: ["executing", "failed", "cancelled"],
   executing: ["awaiting_approval", "failed", "cancelled"],
   awaiting_approval: ["applying", "cancelled", "failed"],
-  applying: ["completed", "failed"],
+  // applying can transition into healing (when the user clicked
+  // "Run & Heal") or settle into the usual terminal states.
+  applying: ["healing", "completed", "failed"],
+  // healing can recover (back to completed) or give up (failed).
+  // It can also be cancelled if the user dismisses the heal loop.
+  healing: ["completed", "failed", "cancelled"],
   completed: [],
   failed: [],
   cancelled: [],

@@ -28,6 +28,7 @@ import (
 	"github.com/talyvor/code/internal/mcp"
 	modelpkg "github.com/talyvor/code/internal/model"
 	"github.com/talyvor/code/internal/rules"
+	"github.com/talyvor/code/internal/runner"
 	"github.com/talyvor/code/internal/shell"
 	"github.com/talyvor/code/internal/track"
 )
@@ -458,10 +459,13 @@ const MaxAgentFiles = 20
 // with a bytes.Buffer instead of needing a real TTY.
 func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
-		dryRun   bool
-		yes      bool
-		issue    string
-		modelOpt string
+		dryRun      bool
+		yes         bool
+		issue       string
+		modelOpt    string
+		healEnabled bool
+		healCmd     string
+		maxAttempts int
 	)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -469,6 +473,9 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fs.BoolVar(&yes, "yes", false, "Auto-approve all changes")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this task")
 	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
+	fs.BoolVar(&healEnabled, "heal", false, "Run build/test after applying and self-heal failures")
+	fs.StringVar(&healCmd, "heal-cmd", "", "Override the build/test command for --heal")
+	fs.IntVar(&maxAttempts, "max-attempts", runner.MaxHealAttempts, "Max self-heal attempts (default: 3)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -610,6 +617,20 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", chosenModel,
 		nonEmpty(cfg.ActiveIssue, "(none)"))
 
+	// ── Phase 3: optional self-heal ──
+	if healEnabled && applied > 0 && !dryRun {
+		changedFiles := make([]string, 0, applied)
+		for _, pf := range plan.Files {
+			changedFiles = append(changedFiles, pf.Path)
+		}
+		if err := runHealLoop(
+			ctx, stdin, stdout, stderr, lc, cfg, taskDesc, workspaceRoot,
+			healCmd, changedFiles, chosenModel, yes, maxAttempts,
+		); err != nil {
+			return err
+		}
+	}
+
 	// Best-effort Track comment so the issue trail captures the
 	// automated change. Failures here never fail the CLI — the
 	// user already has the change applied locally.
@@ -625,6 +646,186 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		}
 	}
 	return nil
+}
+
+// runHealLoop runs the build/test command and asks Lens to repair
+// failures up to maxAttempts times. Healing always uses Sonnet
+// (debugging needs reasoning) regardless of the agent's chosen
+// model — that's the spec, and it keeps the cost/quality trade-
+// off honest. Returns nil on success or after the cap; non-nil
+// only when something unrecoverable happens (e.g. Lens down).
+func runHealLoop(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	lc *lens.Client,
+	cfg config.Config,
+	taskDesc, workspaceRoot, healCmdOverride string,
+	changedFiles []string,
+	agentModel string,
+	autoYes bool,
+	maxAttempts int,
+) error {
+	if maxAttempts <= 0 {
+		maxAttempts = runner.MaxHealAttempts
+	}
+	cmd, lang, err := resolveHealCommand(workspaceRoot, healCmdOverride)
+	if err != nil {
+		fmt.Fprintf(stderr, "! heal: %v (skipping)\n", err)
+		return nil
+	}
+	healModel := modelpkg.DefaultForCommand("review") // Sonnet, per spec
+	reader := bufio.NewReader(stdin)
+
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if attempt == 1 {
+			fmt.Fprintf(stdout, "\n🔧 Running build check: %s\n", cmd)
+		}
+		res, err := runner.Run(ctx, cmd, workspaceRoot, 60*time.Second)
+		if err != nil {
+			fmt.Fprintf(stderr, "! heal: command run: %v\n", err)
+			return nil
+		}
+		if runner.IsSuccess(res) {
+			if attempt == 1 {
+				fmt.Fprintln(stdout, "✅ Build passes. Task complete.")
+			} else {
+				fmt.Fprintf(stdout, "✅ Fixed on attempt %d.\n", attempt-1)
+			}
+			return nil
+		}
+		fmt.Fprintf(stdout, "❌ Build failed (exit %d). Attempting self-heal (%d/%d)…\n",
+			res.ExitCode, attempt, maxAttempts)
+		// Surface a slice of the error so the user sees what's
+		// wrong without us echoing megabytes of test output.
+		if errBody := stitchOutput(res); errBody != "" {
+			fmt.Fprintln(stderr, indent(truncate(errBody, 4000), "  "))
+		}
+
+		prompt := runner.HealingPrompt(runner.HealContext{
+			TaskDescription: taskDesc,
+			FailedCommand:   cmd,
+			ErrorOutput:     stitchOutput(res),
+			ChangedFiles:    changedFiles,
+			Language:        lang,
+			Attempt:         attempt,
+		})
+		reply, err := lc.Complete(ctx,
+			[]lens.Message{{Role: "user", Content: prompt}},
+			healModel, "agent-heal", cfg.WorkspaceID, cfg.ActiveIssue,
+		)
+		if err != nil {
+			return fmt.Errorf("heal: %w", err)
+		}
+		_ = agentModel // surfaced via the apply-summary line above; healing pins Sonnet
+		fixes, err := runner.ParseHealResult(reply)
+		if err != nil {
+			fmt.Fprintf(stderr, "! heal: %v\n", err)
+			continue
+		}
+		if len(fixes) == 0 {
+			fmt.Fprintln(stderr, "! heal: model returned no fixes")
+			continue
+		}
+		applied := applyHealFixes(stdin, stdout, stderr, reader, workspaceRoot, fixes, autoYes)
+		if applied == 0 {
+			fmt.Fprintln(stdout, "No fixes applied — aborting heal loop.")
+			return nil
+		}
+	}
+	fmt.Fprintf(stdout,
+		"❌ Could not fix automatically after %d attempts. Review the errors above and fix manually.\n",
+		maxAttempts)
+	return fmt.Errorf("heal: gave up after %d attempts", maxAttempts)
+}
+
+// resolveHealCommand honours --heal-cmd if supplied, otherwise
+// auto-detects from on-disk markers.
+func resolveHealCommand(root, override string) (string, runner.Language, error) {
+	if strings.TrimSpace(override) != "" {
+		return override, "", nil
+	}
+	return runner.DetectBuildCommand(root)
+}
+
+// stitchOutput combines stderr and stdout into one blob the model
+// can reason about. Most build tools write the useful diagnostic
+// to stderr but some (notably Go test) put it on stdout — we
+// don't try to be clever, we just concatenate.
+func stitchOutput(r *runner.ExecutionResult) string {
+	if r == nil {
+		return ""
+	}
+	if r.Stderr != "" && r.Stdout != "" {
+		return r.Stderr + "\n" + r.Stdout
+	}
+	if r.Stderr != "" {
+		return r.Stderr
+	}
+	return r.Stdout
+}
+
+// applyHealFixes writes the model's corrected files to disk,
+// prompting per-file when autoYes is false. Returns the count of
+// applied fixes.
+func applyHealFixes(
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	reader *bufio.Reader,
+	workspaceRoot string,
+	fixes []runner.FileFix,
+	autoYes bool,
+) int {
+	applied := 0
+	for _, f := range fixes {
+		abs := f.File
+		if !isAbs(abs) {
+			abs = filepath.Join(workspaceRoot, f.File)
+		}
+		original := ""
+		if body, err := os.ReadFile(abs); err == nil {
+			original = string(body)
+		}
+		diff := GenerateUnifiedDiffWrap(original, f.Content, f.File)
+		if diff == "" {
+			fmt.Fprintf(stdout, "  (no change to %s)\n", f.File)
+			continue
+		}
+		fmt.Fprintf(stdout, "\n— heal fix: %s —\n%s\n", f.File, diff)
+		approve := autoYes
+		if !approve {
+			fmt.Fprint(stdout, "Apply this fix? [y/N] ")
+			ans, _ := reader.ReadString('\n')
+			ans = strings.ToLower(strings.TrimSpace(ans))
+			approve = ans == "y" || ans == "yes"
+		}
+		if !approve {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			fmt.Fprintf(stderr, "! mkdir %s: %v\n", filepath.Dir(abs), err)
+			continue
+		}
+		if err := os.WriteFile(abs, []byte(f.Content), 0o644); err != nil {
+			fmt.Fprintf(stderr, "! write %s: %v\n", abs, err)
+			continue
+		}
+		applied++
+	}
+	return applied
+}
+
+// indent prepends `prefix` to every line of s. Used to set off
+// the captured build output from the rest of the CLI's chatter.
+func indent(s, prefix string) string {
+	if s == "" {
+		return ""
+	}
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = prefix + l
+	}
+	return strings.Join(lines, "\n")
 }
 
 // buildAgentCompletionComment is the body posted to Track after a
