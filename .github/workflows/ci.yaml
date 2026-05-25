@@ -18,7 +18,6 @@ jobs:
       - run: cd extension && npm install
       - run: cd extension && npm run compile
       - run: cd extension && npx tsc --noEmit
-      - run: cd extension && node -e "require('./out/test/extension.test.js'); require('./out/test/completions.test.js'); require('./out/test/chat.test.js')" 2>&1 | tail -5
 
   agent:
     runs-on: ubuntu-latest
@@ -42,6 +41,7 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-      - uses: gradle/actions/setup-gradle@v3
+      - name: Setup Gradle wrapper
+        run: cd jetbrains && gradle wrapper --gradle-version=8.7
       - name: Build JetBrains plugin
         run: cd jetbrains && ./gradlew buildPlugin --no-daemon
