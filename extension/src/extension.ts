@@ -29,13 +29,25 @@ import {
   setActiveIssueCommand,
   showIssueCommand,
 } from "./commands/issue-commands";
+import { DocsClient } from "./docs/docs-client";
+import { DocsHoverProvider } from "./docs/docs-hover";
+import { SpecWatcher } from "./docs/spec-watcher";
+import {
+  askDocsCommand,
+  linkDocToIssueCommand,
+  openDocsCommand,
+  searchDocsCommand,
+} from "./commands/docs-commands";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
   let lensClient = new LensClient(config.url, config.apiKey);
   let trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
+  let docsClient = new DocsClient(config.docsUrl, config.docsApiKey);
   const tracker = new CostTracker();
   const issueProvider = new IssueContextProvider(trackClient, lensClient);
+  const specWatcher = new SpecWatcher(docsClient);
+  context.subscriptions.push(specWatcher);
 
   // Listen for every Lens call's cost and roll it into the
   // per-issue session bucket so the sync timer has something to
@@ -80,6 +92,22 @@ export function activate(context: vscode.ExtensionContext): void {
       completionProvider,
     ),
   );
+
+  // Hover provider only registers when Docs is configured — most
+  // teams will not have a Docs instance running, and we don't want
+  // to add a no-op hover handler to every file's hover path.
+  if (docsClient.isConfigured()) {
+    const hoverProvider = new DocsHoverProvider(
+      docsClient,
+      () => TalyvorConfig.getLensConfig(),
+    );
+    context.subscriptions.push(
+      vscode.languages.registerHoverProvider(
+        { pattern: "**" },
+        hoverProvider,
+      ),
+    );
+  }
 
   context.subscriptions.push(
     vscode.commands.registerCommand("talyvor.setActiveIssue", () =>
@@ -139,6 +167,23 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("talyvor.agentFromIssue", () =>
       runStartAgentCommand(context.extensionUri, lensClient, tracker, issueProvider, true),
     ),
+    vscode.commands.registerCommand("talyvor.openDocs", () =>
+      openDocsCommand(context.extensionUri, docsClient, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.searchDocs", () =>
+      searchDocsCommand(context.extensionUri, docsClient, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.askDocs", () =>
+      askDocsCommand(context.extensionUri, docsClient, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.linkDocToIssue", () =>
+      linkDocToIssueCommand(
+        context.extensionUri,
+        docsClient,
+        TalyvorConfig.getLensConfig(),
+        issueProvider,
+      ),
+    ),
   );
 
   context.subscriptions.push(
@@ -147,6 +192,7 @@ export function activate(context: vscode.ExtensionContext): void {
       config = TalyvorConfig.getLensConfig();
       lensClient = new LensClient(config.url, config.apiKey);
       trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
+      docsClient = new DocsClient(config.docsUrl, config.docsApiKey);
       refreshStatusBar();
       // Restart sync with the (possibly new) workspaceId.
       if (config.workspaceId) {

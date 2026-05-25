@@ -11,6 +11,8 @@ export interface LensConfig {
   model: string;
   trackUrl: string;
   trackApiKey: string;
+  docsUrl: string;
+  docsApiKey: string;
   enableCompletions: boolean;
 }
 

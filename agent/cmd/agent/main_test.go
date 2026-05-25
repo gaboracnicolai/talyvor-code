@@ -494,6 +494,109 @@ func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// ─── docs subcommand ────────────────────────────────
+
+func TestDocs_SearchHitsCorrectEndpoint(t *testing.T) {
+	var gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotQuery = r.URL.RawQuery
+		_, _ = w.Write([]byte(`{"results":[{"page_id":"p1","page_title":"Auth flow","space_name":"Eng","headline":"how auth works","rank":0.85,"source":"both","url":"/spaces/s1/pages/p1"}],"total":1}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_DOCS_URL", srv.URL)
+	t.Setenv("TALYVOR_DOCS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_LENS_URL", "")
+	t.Setenv("TALYVOR_LENS_API_KEY", "")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"docs", "search", "authentication", "flow"}, &stdout, &stderr); err != nil {
+		t.Fatalf("docs search: %v", err)
+	}
+	if !strings.HasSuffix(gotPath, "/v1/workspaces/ws-1/search") {
+		t.Errorf("path = %q", gotPath)
+	}
+	if !strings.Contains(gotQuery, "authentication") {
+		t.Errorf("query missing terms: %q", gotQuery)
+	}
+	if !strings.Contains(stdout.String(), "Auth flow") {
+		t.Fatalf("output missing title: %q", stdout.String())
+	}
+}
+
+func TestDocs_AskPostsQuestion(t *testing.T) {
+	var gotMethod string
+	var gotBody struct {
+		Question string `json:"question"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		_, _ = w.Write([]byte(`{"answer":"Use refresh tokens.","sources":[{"title":"Auth","url":"/spaces/s1/pages/p1"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_DOCS_URL", srv.URL)
+	t.Setenv("TALYVOR_DOCS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"docs", "ask", "How", "does", "JWT", "refresh", "work?"}, &stdout, &stderr); err != nil {
+		t.Fatalf("docs ask: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q", gotMethod)
+	}
+	if !strings.Contains(gotBody.Question, "JWT refresh") {
+		t.Errorf("question body wrong: %q", gotBody.Question)
+	}
+	if !strings.Contains(stdout.String(), "Use refresh tokens") {
+		t.Fatalf("answer missing: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "Sources:") {
+		t.Fatalf("sources section missing: %q", stdout.String())
+	}
+}
+
+func TestDocs_GetParsesSpacePageRef(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "/v1/spaces/s1/pages/p1") {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"id":"p1","space_id":"s1","title":"Auth flow","content_text":"How it works"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_DOCS_URL", srv.URL)
+	t.Setenv("TALYVOR_DOCS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"docs", "get", "s1/p1"}, &stdout, &stderr); err != nil {
+		t.Fatalf("docs get: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Auth flow") {
+		t.Fatalf("title missing: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "How it works") {
+		t.Fatalf("content missing: %q", stdout.String())
+	}
+}
+
+func TestDocs_RequiresDocsConfig(t *testing.T) {
+	t.Setenv("TALYVOR_DOCS_URL", "")
+	t.Setenv("TALYVOR_DOCS_API_KEY", "")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"docs", "search", "anything"}, &stdout, &stderr)
+	if err == nil {
+		t.Fatal("expected docs unconfigured error")
+	}
+	if !strings.Contains(err.Error(), "docs:") {
+		t.Fatalf("expected docs: prefix, got %v", err)
+	}
+}
+
 func TestBuildAgentCompletionComment_HasExpectedShape(t *testing.T) {
 	out := buildAgentCompletionComment("add JWT auth", 3, "claude-sonnet-4-6")
 	for _, want := range []string{

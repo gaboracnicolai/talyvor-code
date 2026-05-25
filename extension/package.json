@@ -35,6 +35,16 @@
           "default": "",
           "description": "Talyvor Track API key"
         },
+        "talyvor.docsUrl": {
+          "type": "string",
+          "default": "",
+          "description": "Talyvor Docs URL (optional — enables doc hover + panel)"
+        },
+        "talyvor.docsApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Talyvor Docs API key"
+        },
         "talyvor.workspaceId": {
           "type": "string",
           "default": "",
@@ -78,7 +88,11 @@
       {"command": "talyvor.startAgentTask", "title": "Talyvor: Start Agent Task"},
       {"command": "talyvor.agentFromIssue", "title": "Talyvor: Run Agent from Active Issue"},
       {"command": "talyvor.showActiveIssue", "title": "Talyvor: Show Active Issue"},
-      {"command": "talyvor.createIssueFromCode", "title": "Talyvor: Create Track Issue from Code"}
+      {"command": "talyvor.createIssueFromCode", "title": "Talyvor: Create Track Issue from Code"},
+      {"command": "talyvor.openDocs", "title": "Talyvor: Open Docs"},
+      {"command": "talyvor.searchDocs", "title": "Talyvor: Search in Docs"},
+      {"command": "talyvor.askDocs", "title": "Talyvor: Ask Docs"},
+      {"command": "talyvor.linkDocToIssue", "title": "Talyvor: Link Docs Page to Active Issue"}
     ],
     "menus": {
       "editor/context": [
@@ -88,7 +102,9 @@
         {"command": "talyvor.generateTests", "group": "talyvor@4", "when": "editorHasSelection"},
         {"command": "talyvor.generateTestsForFile", "group": "talyvor@5"},
         {"command": "talyvor.startAgentTask", "group": "talyvor@6"},
-        {"command": "talyvor.createIssueFromCode", "group": "talyvor@7", "when": "editorHasSelection"}
+        {"command": "talyvor.createIssueFromCode", "group": "talyvor@7", "when": "editorHasSelection"},
+        {"command": "talyvor.searchDocs", "group": "talyvor@8"},
+        {"command": "talyvor.askDocs", "group": "talyvor@9", "when": "editorHasSelection"}
       ]
     },
     "keybindings": [
@@ -96,7 +112,8 @@
       {"command": "talyvor.explainCode", "key": "ctrl+shift+e", "mac": "cmd+shift+e", "when": "editorHasSelection"},
       {"command": "talyvor.fixError", "key": "ctrl+shift+f1", "mac": "cmd+shift+f1", "when": "editorTextFocus"},
       {"command": "talyvor.generateTests", "key": "ctrl+shift+t", "mac": "cmd+shift+t", "when": "editorTextFocus"},
-      {"command": "talyvor.startAgentTask", "key": "ctrl+shift+a", "mac": "cmd+shift+a"}
+      {"command": "talyvor.startAgentTask", "key": "ctrl+shift+a", "mac": "cmd+shift+a"},
+      {"command": "talyvor.searchDocs", "key": "ctrl+shift+d", "mac": "cmd+shift+d"}
     ]
   },
   "scripts": {

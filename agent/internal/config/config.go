@@ -8,13 +8,15 @@ import (
 )
 
 type Config struct {
-	LensURL      string
-	LensAPIKey   string
-	TrackURL     string
-	TrackAPIKey  string
-	WorkspaceID  string
-	ActiveIssue  string
-	Model        string
+	LensURL     string
+	LensAPIKey  string
+	TrackURL    string
+	TrackAPIKey string
+	DocsURL     string
+	DocsAPIKey  string
+	WorkspaceID string
+	ActiveIssue string
+	Model       string
 }
 
 // Load merges flag inputs with TALYVOR_* env vars. Empty flag
@@ -34,6 +36,12 @@ func Load(flags Config) Config {
 	}
 	if out.TrackAPIKey == "" {
 		out.TrackAPIKey = os.Getenv("TALYVOR_TRACK_API_KEY")
+	}
+	if out.DocsURL == "" {
+		out.DocsURL = os.Getenv("TALYVOR_DOCS_URL")
+	}
+	if out.DocsAPIKey == "" {
+		out.DocsAPIKey = os.Getenv("TALYVOR_DOCS_API_KEY")
 	}
 	if out.WorkspaceID == "" {
 		out.WorkspaceID = os.Getenv("TALYVOR_WORKSPACE_ID")

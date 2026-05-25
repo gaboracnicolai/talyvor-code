@@ -19,6 +19,7 @@ import (
 
 	"github.com/talyvor/code/internal/config"
 	diffPkg "github.com/talyvor/code/internal/diff"
+	"github.com/talyvor/code/internal/docs"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/track"
 )
@@ -49,6 +50,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		lensKey     string
 		trackURL    string
 		trackKey    string
+		docsURL     string
+		docsKey     string
 		workspaceID string
 		issue       string
 		model       string
@@ -59,6 +62,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&lensKey, "lens-key", "", "Lens API key (or TALYVOR_LENS_API_KEY)")
 	fs.StringVar(&trackURL, "track-url", "", "Track URL (or TALYVOR_TRACK_URL)")
 	fs.StringVar(&trackKey, "track-key", "", "Track API key (or TALYVOR_TRACK_API_KEY)")
+	fs.StringVar(&docsURL, "docs-url", "", "Docs URL (or TALYVOR_DOCS_URL)")
+	fs.StringVar(&docsKey, "docs-key", "", "Docs API key (or TALYVOR_DOCS_API_KEY)")
 	fs.StringVar(&workspaceID, "workspace", "", "Workspace ID (or TALYVOR_WORKSPACE_ID)")
 	fs.StringVar(&issue, "issue", "", "Active issue identifier, e.g. ENG-42 (or TALYVOR_ISSUE)")
 	fs.StringVar(&model, "model", "", "Model (default claude-haiku-4-6)")
@@ -75,6 +80,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		LensAPIKey:  lensKey,
 		TrackURL:    trackURL,
 		TrackAPIKey: trackKey,
+		DocsURL:     docsURL,
+		DocsAPIKey:  docsKey,
 		WorkspaceID: workspaceID,
 		ActiveIssue: issue,
 		Model:       model,
@@ -95,6 +102,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runTest(stdout, stderr, cfg, rest)
 	case "run":
 		return runAgent(os.Stdin, stdout, stderr, cfg, rest)
+	case "docs":
+		return runDocs(stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -113,6 +122,7 @@ COMMANDS
   chat       Start an interactive chat REPL
   test       Generate tests for a source file
   run        Run an agentic multi-file task
+  docs       Search and query Talyvor Docs
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -121,6 +131,8 @@ FLAGS
   --lens-key        Lens API key (or TALYVOR_LENS_API_KEY)
   --track-url       Track URL (or TALYVOR_TRACK_URL)
   --track-key       Track API key (or TALYVOR_TRACK_API_KEY)
+  --docs-url        Docs URL (or TALYVOR_DOCS_URL)
+  --docs-key        Docs API key (or TALYVOR_DOCS_API_KEY)
   --workspace       Workspace ID (or TALYVOR_WORKSPACE_ID)
   --issue           Active issue, e.g. ENG-42 (or TALYVOR_ISSUE)
   --model           Model (default claude-haiku-4-6)`)
@@ -501,6 +513,142 @@ func buildAgentCompletionComment(taskDesc string, filesChanged int, model string
 		"🤖 Talyvor Agent completed task: %s\nFiles changed: %d\nModel: %s",
 		taskDesc, filesChanged, model,
 	)
+}
+
+// ─── docs subcommand ────────────────────────────────
+
+// runDocs dispatches the docs sub-subcommand. The agent needs
+// docs URL + key + workspace; lens credentials are optional here
+// (docs.ask uses the docs server, not Lens directly).
+func runDocs(stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		printDocsUsage(stdout)
+		return nil
+	}
+	sub, rest := args[0], args[1:]
+	if cfg.DocsURL == "" || cfg.DocsAPIKey == "" {
+		return fmt.Errorf("docs: --docs-url and --docs-key (or TALYVOR_DOCS_URL/TALYVOR_DOCS_API_KEY) required")
+	}
+	if cfg.WorkspaceID == "" && sub != "get" {
+		return fmt.Errorf("docs: --workspace (or TALYVOR_WORKSPACE_ID) required")
+	}
+	dc := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	switch sub {
+	case "search":
+		return runDocsSearch(ctx, stdout, dc, cfg, rest)
+	case "ask":
+		return runDocsAsk(ctx, stdout, dc, cfg, rest)
+	case "get":
+		return runDocsGet(ctx, stdout, dc, rest)
+	case "help", "-h", "--help":
+		printDocsUsage(stdout)
+		return nil
+	}
+	_ = stderr
+	return fmt.Errorf("unknown docs subcommand %q", sub)
+}
+
+func printDocsUsage(w io.Writer) {
+	fmt.Fprintln(w, `talyvor-code docs — search and query Talyvor Docs
+
+USAGE
+  talyvor-code docs <subcommand> [args]
+
+SUBCOMMANDS
+  search <query>            Full-text + semantic search
+  ask <question>            Ask the docs Q&A model
+  get <spaceID/pageID>      Fetch a single page
+
+EXAMPLES
+  talyvor-code docs search "authentication flow"
+  talyvor-code docs ask "How do we handle JWT refresh tokens?"
+  talyvor-code docs get space-eng/page-abc`)
+}
+
+func runDocsSearch(ctx context.Context, stdout io.Writer, dc *docs.Client, cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("docs search: query required")
+	}
+	query := strings.Join(args, " ")
+	results, err := dc.Search(ctx, cfg.WorkspaceID, query, 10)
+	if err != nil {
+		return fmt.Errorf("docs search: %w", err)
+	}
+	if len(results) == 0 {
+		fmt.Fprintln(stdout, "(no results)")
+		return nil
+	}
+	for i, r := range results {
+		score := r.Rank
+		if score == 0 {
+			score = r.Similarity
+		}
+		fmt.Fprintf(stdout, "%2d. [%-9s] %s — %s\n", i+1, r.Source, r.PageTitle, r.SpaceName)
+		if r.Headline != "" {
+			fmt.Fprintf(stdout, "    %s\n", truncate(r.Headline, 160))
+		}
+		fmt.Fprintf(stdout, "    rank=%.2f %s\n", score, r.URL)
+	}
+	return nil
+}
+
+func runDocsAsk(ctx context.Context, stdout io.Writer, dc *docs.Client, cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("docs ask: question required")
+	}
+	question := strings.Join(args, " ")
+	res, err := dc.AskDocs(ctx, cfg.WorkspaceID, question)
+	if err != nil {
+		return fmt.Errorf("docs ask: %w", err)
+	}
+	if res == nil {
+		fmt.Fprintln(stdout, "(no answer)")
+		return nil
+	}
+	fmt.Fprintln(stdout, res.Answer)
+	if len(res.Sources) > 0 {
+		fmt.Fprintln(stdout, "\nSources:")
+		for _, s := range res.Sources {
+			fmt.Fprintf(stdout, "  • %s — %s\n", s.Title, s.URL)
+		}
+	}
+	return nil
+}
+
+func runDocsGet(ctx context.Context, stdout io.Writer, dc *docs.Client, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("docs get: <spaceID/pageID> required")
+	}
+	ref := args[0]
+	parts := strings.SplitN(ref, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("docs get: expected spaceID/pageID, got %q", ref)
+	}
+	page, err := dc.GetPage(ctx, parts[0], parts[1])
+	if err != nil {
+		return fmt.Errorf("docs get: %w", err)
+	}
+	if page == nil {
+		return fmt.Errorf("docs get: page not found")
+	}
+	fmt.Fprintf(stdout, "# %s\n\n", page.Title)
+	if page.FreshnessStatus != "" {
+		fmt.Fprintf(stdout, "Freshness: %s\n", page.FreshnessStatus)
+	}
+	if page.UpdatedAt != "" {
+		fmt.Fprintf(stdout, "Updated:   %s\n", page.UpdatedAt)
+	}
+	if page.LastVerifiedAt != "" {
+		fmt.Fprintf(stdout, "Verified:  %s\n", page.LastVerifiedAt)
+	}
+	if page.AICostUSD > 0 {
+		fmt.Fprintf(stdout, "AI cost:   $%.2f\n", page.AICostUSD)
+	}
+	fmt.Fprintln(stdout)
+	fmt.Fprintln(stdout, page.ContentText)
+	return nil
 }
 
 // PlannedFile is one entry in the planner's JSON response. The

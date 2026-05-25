@@ -18,6 +18,8 @@ export class TalyvorConfig {
       model: cfg.get<string>("model", "claude-haiku-4-6"),
       trackUrl: cfg.get<string>("trackUrl", ""),
       trackApiKey: cfg.get<string>("trackApiKey", ""),
+      docsUrl: cfg.get<string>("docsUrl", ""),
+      docsApiKey: cfg.get<string>("docsApiKey", ""),
       enableCompletions: cfg.get<boolean>("enableCompletions", true),
     };
   }
