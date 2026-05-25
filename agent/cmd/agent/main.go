@@ -29,6 +29,7 @@ import (
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
 	modelpkg "github.com/talyvor/code/internal/model"
+	"github.com/talyvor/code/internal/projectctx"
 	"github.com/talyvor/code/internal/rules"
 	"github.com/talyvor/code/internal/runner"
 	"github.com/talyvor/code/internal/shell"
@@ -122,7 +123,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 	case "serve":
 		return runServe(stdout, stderr, cfg, rest)
 	case "init":
-		return runInit(stdout, stderr)
+		return runInit(os.Stdin, stdout, stderr, cfg)
+	case "context":
+		return runContext(os.Stdin, stdout, stderr, cfg, rest)
 	case "shell", "sh":
 		return runShell(os.Stdin, stdout, stderr, cfg, rest)
 	case "models":
@@ -151,7 +154,8 @@ COMMANDS
   commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
   serve      Start the Talyvor Code MCP server
-  init       Write a starter .talyvor-rules file in the current directory
+  init       Write starter .talyvor-rules and .talyvor-context files
+  context    Show / generate / validate / edit the .talyvor-context file
   shell      Generate a shell command from a description (alias: sh)
   models     List supported AI models with their profiles
   pr         Open a GitHub pull request from the current branch
@@ -249,19 +253,15 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 		if err != nil {
 			return err
 		}
-		// Surface .talyvor-rules at the start of the prompt; the
-		// model attends to leading content more reliably than the
-		// tail. Language is derived from the included file when
-		// present.
-		if rs, _ := rules.Load("."); rs != nil {
-			prompt.WriteString(rules.PromptPrefix(rules.ForLanguage(rs, lang)))
-		}
+		// Surface .talyvor-rules + .talyvor-context at the start
+		// of the prompt; the model attends to leading content
+		// more reliably than the tail. Language is derived from
+		// the included file when present.
+		prompt.WriteString(combinedPrefix(".", "lang", lang))
 		fmt.Fprintf(&prompt, "File: %s\n```%s\n%s\n```\n\n",
 			filepath.Base(filePath), lang, body)
 	} else {
-		if rs, _ := rules.Load("."); rs != nil {
-			prompt.WriteString(rules.PromptPrefix(rules.ForLanguage(rs, "")))
-		}
+		prompt.WriteString(combinedPrefix(".", "lang", ""))
 	}
 	prompt.WriteString("Question: ")
 	prompt.WriteString(question)
@@ -292,6 +292,34 @@ func resolveAndValidate(flagValue, envValue, command string) (string, error) {
 		return "", err
 	}
 	return chosen, nil
+}
+
+// combinedPrefix loads .talyvor-rules + .talyvor-context from
+// `root` and returns the "rules first, context second" prefix
+// that every Lens call prepends to its system prompt. Empty
+// string when neither file exists.
+//
+// section selects which slice of the rules file to pull:
+//   - "lang"    → ForLanguage(languageID)
+//   - "agent"   → ForAgent
+//   - "review"  → ForReview
+//   - "testing" → ForTesting(languageID)
+//   - ""        → no rules (context only)
+func combinedPrefix(root, section, languageID string) string {
+	rs, _ := rules.Load(root)
+	var rulesPrefix string
+	switch section {
+	case "lang":
+		rulesPrefix = rules.PromptPrefix(rules.ForLanguage(rs, languageID))
+	case "agent":
+		rulesPrefix = rules.PromptPrefix(rules.ForAgent(rs))
+	case "review":
+		rulesPrefix = rules.PromptPrefix(rules.ForReview(rs))
+	case "testing":
+		rulesPrefix = rules.PromptPrefix(rules.ForTesting(rs, languageID))
+	}
+	pc, _ := projectctx.Load(root)
+	return projectctx.CombinedPrefix(rulesPrefix, pc)
 }
 
 // runChat implements an interactive REPL. Each turn appends to a
@@ -419,11 +447,11 @@ func chatSystemPrompt(issueID string) string {
 	base := "You are an expert coding assistant. When showing code, " +
 		"use markdown code fences with the language identifier. " +
 		"Be concise but complete. " + issueLine
-	rs, _ := rules.Load(".")
-	if rs == nil {
+	prefix := combinedPrefix(".", "lang", "")
+	if prefix == "" {
 		return base
 	}
-	return rules.PromptPrefix(rules.ForLanguage(rs, "")) + base
+	return prefix + base
 }
 
 // trimChatHistory caps the history at MaxChatHistory pairs.
@@ -961,10 +989,7 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 		body = "=== git diff --staged ===\n" + diff
 	}
 
-	system := reviewSystemPrompt(reviewType, prMode)
-	if rs, _ := rules.Load("."); rs != nil {
-		system = rules.PromptPrefix(rules.ForReview(rs)) + system
-	}
+	system := combinedPrefix(".", "review", "") + reviewSystemPrompt(reviewType, prMode)
 	userMsg := buildReviewUserMessage(system, body, commits, changedFiles, prMode)
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
@@ -1170,7 +1195,8 @@ func runCommit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, arg
 		return fmt.Errorf("commit: no staged changes")
 	}
 
-	system := "Generate a concise git commit message. Follow the conventional-commits format:\n" +
+	system := combinedPrefix(".", "", "") +
+		"Generate a concise git commit message. Follow the conventional-commits format:\n" +
 		"<type>(<scope>): <description>\n\n" +
 		"Types: feat, fix, docs, refactor, test, chore. Keep the subject under 72 characters. " +
 		"Return ONLY the commit message — no explanation, no markdown fences, no quotes."
@@ -1446,9 +1472,7 @@ func planPrompt(taskDesc, workspaceRoot, issueID, codebaseSummary string) string
 		"\"files\":[{\"path\":\"src/foo.go\",\"operation\":\"modify\",\"description\":\"…\"}]}. " +
 		"Valid operations are create, modify, delete. " +
 		"Use paths relative to the workspace root."
-	if rs, _ := rules.Load(workspaceRoot); rs != nil {
-		system = rules.PromptPrefix(rules.ForAgent(rs)) + system
-	}
+	system = combinedPrefix(workspaceRoot, "agent", "") + system
 	out := fmt.Sprintf("%s\n\nTask: %s\nWorkspace: %s\nActive issue: %s",
 		system, taskDesc, workspaceRoot, nonEmpty(issueID, "(none)"))
 	if strings.TrimSpace(codebaseSummary) != "" {
@@ -1511,9 +1535,7 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 	}
 
 	var user strings.Builder
-	if rs, _ := rules.Load(root); rs != nil {
-		user.WriteString(rules.PromptPrefix(rules.ForAgent(rs)))
-	}
+	user.WriteString(combinedPrefix(root, "agent", ""))
 	user.WriteString("You are an expert software engineer. Make the specified change to this file. ")
 	user.WriteString("Return ONLY the complete new file content. No explanations, no markdown fences. ")
 	user.WriteString("The file must be syntactically correct.\n\n")
@@ -1666,9 +1688,7 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	}
 
 	system := testSystemPrompt(languageID, framework)
-	if rs, _ := rules.Load("."); rs != nil {
-		system = rules.PromptPrefix(rules.ForTesting(rs, languageID)) + system
-	}
+	system = combinedPrefix(".", "testing", languageID) + system
 	user := fmt.Sprintf(
 		"Generate tests for this %s file:\nFile: %s\n```%s\n%s\n```",
 		languageID, filepath.Base(sourcePath), languageID, string(body),
@@ -2331,9 +2351,15 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	}
 	osName := shell.DetectOS()
 
+	// Prepend any .talyvor-context to the description so the model
+	// knows which stack the shell command targets (e.g. "list
+	// containers" → docker vs podman). Rules don't apply to shell
+	// commands, so we pass section="" — context-only prefix.
+	descWithCtx := combinedPrefix(".", "", "") + description
+
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	ctx := context.Background()
-	command, cost, err := shell.Generate(ctx, lc, &cfg, description, shellName, osName, chosenModel)
+	command, cost, err := shell.Generate(ctx, lc, &cfg, descWithCtx, shellName, osName, chosenModel)
 	if err != nil {
 		return fmt.Errorf("shell: %w", err)
 	}
@@ -2429,20 +2455,215 @@ func runWithFixLoop(ctx context.Context, stdin io.Reader, stdout, stderr io.Writ
 
 // ─── init subcommand ───────────────────────────────
 
-// runInit writes a starter `.talyvor-rules` to the current
-// directory. Refuses to overwrite an existing file so a stray
-// `init` doesn't blow away the team's curated rules.
-func runInit(stdout, stderr io.Writer) error {
+// runInit writes starter `.talyvor-rules` and `.talyvor-context`
+// files in the current directory. Both refuse to overwrite an
+// existing file so a stray `init` doesn't blow away the team's
+// curated config. For context, we prompt whether to auto-
+// generate from the codebase via Lens; the user can decline to
+// get a placeholder example instead.
+func runInit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error {
+	// ── .talyvor-rules ──
 	if _, err := os.Stat(rules.RulesFileName); err == nil {
 		fmt.Fprintln(stdout, "Already initialized. Edit "+rules.RulesFileName+" to customize.")
+	} else {
+		if err := os.WriteFile(rules.RulesFileName, []byte(rules.Example), 0o644); err != nil {
+			return fmt.Errorf("init: %w", err)
+		}
+		fmt.Fprintf(stdout, "Created %s — customize for your project.\n", rules.RulesFileName)
+	}
+
+	// ── .talyvor-context ──
+	if _, err := os.Stat(projectctx.ContextFileName); err == nil {
+		fmt.Fprintln(stdout, "Already initialized. Edit "+projectctx.ContextFileName+" to customize.")
 		return nil
 	}
-	if err := os.WriteFile(rules.RulesFileName, []byte(rules.Example), 0o644); err != nil {
-		return fmt.Errorf("init: %w", err)
+	prompt := "Generate project context from codebase? [Y/n] "
+	answer := strings.ToLower(strings.TrimSpace(readLine(stdin, stdout, prompt)))
+	if answer == "" || answer == "y" || answer == "yes" {
+		if err := generateAndWriteContext(stdout, stderr, cfg); err != nil {
+			fmt.Fprintf(stderr, "! context generation failed (%v) — wrote placeholder instead\n", err)
+			if werr := os.WriteFile(projectctx.ContextFileName, []byte(projectctx.Example), 0o644); werr != nil {
+				return werr
+			}
+			fmt.Fprintf(stdout, "Created %s (placeholder) — fill in your project details.\n",
+				projectctx.ContextFileName)
+		}
+	} else {
+		if err := os.WriteFile(projectctx.ContextFileName, []byte(projectctx.Example), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Created %s (placeholder) — fill in your project details.\n",
+			projectctx.ContextFileName)
 	}
-	fmt.Fprintf(stdout, "Created %s — customize for your project.\n", rules.RulesFileName)
-	_ = stderr
 	return nil
+}
+
+// generateAndWriteContext calls Lens to synthesise the context
+// then writes it. Surfaced as a helper so the failure path can
+// fall back to the placeholder.
+func generateAndWriteContext(stdout, stderr io.Writer, cfg config.Config) error {
+	if cfg.LensURL == "" || cfg.LensAPIKey == "" {
+		return errors.New("Lens not configured")
+	}
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fmt.Fprintln(stdout, "▸ Generating .talyvor-context from codebase…")
+	pc, err := projectctx.GenerateContext(ctx, ".", lc, &cfg)
+	if err != nil {
+		return err
+	}
+	body, err := pc.ToJSON()
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(projectctx.ContextFileName, append(body, '\n'), 0o644); err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "Created %s.\n", projectctx.ContextFileName)
+	if warns := pc.Validate(); len(warns) > 0 {
+		fmt.Fprintln(stderr, "Validation notes:")
+		for _, w := range warns {
+			fmt.Fprintf(stderr, "  - %s\n", w)
+		}
+	}
+	return nil
+}
+
+// readLine prints `prompt` and reads one line from stdin. Used
+// by runInit for the Y/n confirmation.
+func readLine(stdin io.Reader, stdout io.Writer, prompt string) string {
+	fmt.Fprint(stdout, prompt)
+	reader := bufio.NewReader(stdin)
+	ans, _ := reader.ReadString('\n')
+	return ans
+}
+
+// ─── context subcommand ────────────────────────────
+
+func runContext(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	if len(args) == 0 {
+		printContextUsage(stdout)
+		return nil
+	}
+	sub := args[0]
+	switch sub {
+	case "show":
+		return runContextShow(stdout)
+	case "generate":
+		return runContextGenerate(stdin, stdout, stderr, cfg)
+	case "validate":
+		return runContextValidate(stdout, stderr)
+	case "edit":
+		return runContextEdit(stderr)
+	case "help", "-h", "--help":
+		printContextUsage(stdout)
+		return nil
+	}
+	return fmt.Errorf("unknown context subcommand %q (try `talyvor-code context help`)", sub)
+}
+
+func printContextUsage(w io.Writer) {
+	fmt.Fprintln(w, `talyvor-code context — manage the .talyvor-context project file
+
+USAGE
+  talyvor-code context <subcommand>
+
+SUBCOMMANDS
+  show       Show the current project context (loads from .talyvor-context)
+  generate   Generate a fresh context from the codebase via Lens
+  validate   Print warnings about the current .talyvor-context
+  edit       Open .talyvor-context in $EDITOR`)
+}
+
+func runContextShow(stdout io.Writer) error {
+	pc, err := projectctx.Load(".")
+	if err != nil {
+		return err
+	}
+	if pc == nil {
+		fmt.Fprintln(stdout, "No .talyvor-context found. Run `talyvor-code init` to create one.")
+		return nil
+	}
+	fmt.Fprintf(stdout, "Source: %s\n\n", pc.FilePath)
+	fmt.Fprintln(stdout, pc.ToPromptSection())
+	if warns := pc.Validate(); len(warns) > 0 {
+		fmt.Fprintln(stdout, "Notes:")
+		for _, w := range warns {
+			fmt.Fprintf(stdout, "  - %s\n", w)
+		}
+	}
+	return nil
+}
+
+func runContextGenerate(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error {
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	fmt.Fprintln(stdout, "▸ Generating .talyvor-context from codebase…")
+	pc, err := projectctx.GenerateContext(ctx, ".", lc, &cfg)
+	if err != nil {
+		return fmt.Errorf("context generate: %w", err)
+	}
+	body, err := pc.ToJSON()
+	if err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, string(body))
+	answer := strings.ToLower(strings.TrimSpace(readLine(stdin, stdout, "\nSave to .talyvor-context? [Y/n] ")))
+	if answer == "" || answer == "y" || answer == "yes" {
+		if err := os.WriteFile(projectctx.ContextFileName, append(body, '\n'), 0o644); err != nil {
+			return err
+		}
+		fmt.Fprintf(stdout, "Wrote %s.\n", projectctx.ContextFileName)
+		if warns := pc.Validate(); len(warns) > 0 {
+			fmt.Fprintln(stderr, "Validation notes:")
+			for _, w := range warns {
+				fmt.Fprintf(stderr, "  - %s\n", w)
+			}
+		}
+	} else {
+		fmt.Fprintln(stdout, "Not saved.")
+	}
+	return nil
+}
+
+func runContextValidate(stdout, stderr io.Writer) error {
+	pc, err := projectctx.Load(".")
+	if err != nil {
+		return err
+	}
+	if pc == nil {
+		return fmt.Errorf("context validate: no .talyvor-context found")
+	}
+	warns := pc.Validate()
+	if len(warns) == 0 {
+		fmt.Fprintln(stdout, "✅ Context file is valid.")
+		return nil
+	}
+	fmt.Fprintf(stderr, "Validation notes for %s:\n", pc.FilePath)
+	for _, w := range warns {
+		fmt.Fprintf(stderr, "  - %s\n", w)
+	}
+	return nil
+}
+
+func runContextEdit(stderr io.Writer) error {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
+	if _, err := os.Stat(projectctx.ContextFileName); err != nil {
+		return fmt.Errorf("context edit: %s not found (run `talyvor-code init`)", projectctx.ContextFileName)
+	}
+	cmd := exec.Command(editor, projectctx.ContextFileName)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
 }
 
 // ─── serve subcommand ──────────────────────────────

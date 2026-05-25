@@ -14,6 +14,8 @@ import { CostTracker, estimateCostUSD } from "./cost-tracker";
 import type { IssueContextProvider } from "../track/issue-context";
 import type { RulesLoader } from "../rules/rules-loader";
 import { forLanguage, promptPrefix } from "../rules/rules-pure";
+import type { ContextLoader } from "../context/context-loader";
+import { combinedPrefix } from "../context/context-pure";
 import {
   buildCompletionPrompt,
   getCodeContext,
@@ -50,6 +52,7 @@ export class TalyvorCompletionProvider
     private tracker: CostTracker,
     private issueContext?: IssueContextProvider,
     private rulesLoader?: RulesLoader,
+    private contextLoader?: ContextLoader,
   ) {}
 
   // setOnUpdate lets the host (extension.ts) refresh the status bar
@@ -132,12 +135,15 @@ export class TalyvorCompletionProvider
     const ctx = getCodeContext(document, position);
     const userPrompt = buildCompletionPrompt(ctx);
     const issueCtx = this.issueContext?.getIssueContext() ?? "";
-    // Rules ride at the start of the system prompt — models attend
-    // to leading content more reliably than the tail.
+    // Rules + project context ride at the start of the system
+    // prompt — models attend to leading content more reliably
+    // than the tail. Rules first (HOW to write), context second
+    // (WHAT the project is).
     const rulesPrefix = promptPrefix(
       forLanguage(this.rulesLoader?.get(), document.languageId),
     );
-    const systemPrompt = rulesPrefix
+    const prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+    const systemPrompt = prefix
       + (issueCtx
         ? `${SYSTEM_PROMPT}\n\nActive issue context:\n${issueCtx}`
         : SYSTEM_PROMPT);

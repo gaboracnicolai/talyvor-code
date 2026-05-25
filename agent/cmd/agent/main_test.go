@@ -881,22 +881,45 @@ func TestShell_RequiresDescription(t *testing.T) {
 
 // ─── init subcommand ───────────────────────────────
 
-func TestInit_CreatesRulesFile(t *testing.T) {
+// TestInit_CreatesRulesAndPlaceholderContext drives the no-Lens
+// path through `init`: stdin answers "n" to the auto-generate
+// prompt, so we expect both .talyvor-rules and a placeholder
+// .talyvor-context to land on disk.
+func TestInit_CreatesRulesAndPlaceholderContext(t *testing.T) {
 	dir := t.TempDir()
 	chdirT(t, dir)
+	// init reads from os.Stdin directly via the dispatch — we
+	// replace it for the duration of the test.
+	origStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	defer func() { os.Stdin = origStdin }()
+	_, _ = w.WriteString("n\n")
+	_ = w.Close()
+
 	var stdout, stderr bytes.Buffer
 	if err := run([]string{"init"}, &stdout, &stderr); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Created .talyvor-rules") {
-		t.Fatalf("expected creation message, got %q", stdout.String())
+		t.Fatalf("expected rules creation message: %q", stdout.String())
 	}
-	body, err := os.ReadFile(filepath.Join(dir, ".talyvor-rules"))
+	if !strings.Contains(stdout.String(), "Created .talyvor-context") {
+		t.Fatalf("expected context creation message: %q", stdout.String())
+	}
+	rules, err := os.ReadFile(filepath.Join(dir, ".talyvor-rules"))
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatalf("read rules: %v", err)
 	}
-	if !strings.Contains(string(body), "[general]") {
-		t.Fatalf("expected [general] section in output: %q", string(body))
+	if !strings.Contains(string(rules), "[general]") {
+		t.Fatalf("rules body wrong: %q", string(rules))
+	}
+	ctx, err := os.ReadFile(filepath.Join(dir, ".talyvor-context"))
+	if err != nil {
+		t.Fatalf("read context: %v", err)
+	}
+	if !strings.Contains(string(ctx), "\"name\"") {
+		t.Fatalf("context body wrong: %q", string(ctx))
 	}
 }
 
@@ -907,16 +930,130 @@ func TestInit_RefusesToOverwriteExistingRules(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, ".talyvor-rules"), []byte(existing), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
+	// Pipe "n" so the context prompt doesn't try to generate.
+	origStdin := os.Stdin
+	r, w, _ := os.Pipe()
+	os.Stdin = r
+	defer func() { os.Stdin = origStdin }()
+	_, _ = w.WriteString("n\n")
+	_ = w.Close()
+
 	var stdout, stderr bytes.Buffer
 	if err := run([]string{"init"}, &stdout, &stderr); err != nil {
 		t.Fatalf("init: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "Already initialized") {
-		t.Fatalf("expected already-initialized message, got %q", stdout.String())
+		t.Fatalf("expected already-initialized message: %q", stdout.String())
 	}
 	body, _ := os.ReadFile(filepath.Join(dir, ".talyvor-rules"))
 	if string(body) != existing {
-		t.Fatalf("existing file was overwritten:\n%s", string(body))
+		t.Fatalf("existing rules overwritten:\n%s", string(body))
+	}
+}
+
+// ─── context subcommand ────────────────────────────
+
+func TestContext_ShowReportsMissingFile(t *testing.T) {
+	chdirT(t, t.TempDir())
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"context", "show"}, &stdout, &stderr); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "No .talyvor-context") {
+		t.Fatalf("expected missing-file note: %q", stdout.String())
+	}
+}
+
+func TestContext_ShowRendersLoadedContext(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	body := `{"name":"X","description":"long enough description over 20","stack":["Go"]}`
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-context"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"context", "show"}, &stdout, &stderr); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+	for _, want := range []string{"Project context", "Name: X", "Stack: Go"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("missing %q in output:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestContext_ValidateFlagsBadFile(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-context"), []byte(`{"name":""}`), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"context", "validate"}, &stdout, &stderr); err != nil {
+		t.Fatalf("context validate: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "name is required") {
+		t.Fatalf("expected name warning: %q", stderr.String())
+	}
+}
+
+func TestContext_ValidatePassesForGoodFile(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	body := `{"name":"X","description":"long enough description over 20","stack":["Go"]}`
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-context"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"context", "validate"}, &stdout, &stderr); err != nil {
+		t.Fatalf("context validate: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Context file is valid") {
+		t.Fatalf("expected valid message: %q", stdout.String())
+	}
+}
+
+// TestAsk_IncludesContextInPrompt confirms .talyvor-context is
+// auto-prepended to the user-message body, ahead of the file
+// content and the question.
+func TestAsk_IncludesContextInPrompt(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	ctxBody := `{"name":"AcmeApp","description":"A long enough description here","stack":["Go","Postgres"]}`
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-context"), []byte(ctxBody), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var gotContent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &body)
+		if msgs, ok := body["messages"].([]any); ok && len(msgs) > 0 {
+			if m, ok := msgs[0].(map[string]any); ok {
+				gotContent, _ = m["content"].(string)
+			}
+		}
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "what stack?"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	for _, want := range []string{"Project context", "Name: AcmeApp", "Stack: Go, Postgres"} {
+		if !strings.Contains(gotContent, want) {
+			t.Errorf("prompt missing %q:\n%s", want, gotContent)
+		}
 	}
 }
 

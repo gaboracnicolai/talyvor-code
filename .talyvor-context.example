@@ -1,0 +1,21 @@
+{
+  "name": "MyApp",
+  "description": "B2B e-commerce platform serving enterprise customers",
+  "stack": ["Go", "PostgreSQL", "Redis", "React", "TypeScript"],
+  "architecture": "Microservices with gRPC internal communication",
+  "conventions": {
+    "database": "Use pgx driver, never database/sql",
+    "errors": "Always wrap errors with fmt.Errorf('context: %w', err)",
+    "testing": "Table-driven tests, use testify/assert",
+    "api": "RESTful JSON API, OpenAPI spec in docs/api/"
+  },
+  "key_files": [
+    "cmd/server/main.go",
+    "internal/api/router.go",
+    "internal/db/db.go"
+  ],
+  "links": {
+    "docs": "https://docs.myapp.com",
+    "jira": "https://myapp.atlassian.net"
+  }
+}

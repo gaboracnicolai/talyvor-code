@@ -10,6 +10,8 @@ import { CostTracker, estimateCostUSD, formatDuration } from "../providers/cost-
 import type { IssueContextProvider } from "../track/issue-context";
 import type { RulesLoader } from "../rules/rules-loader";
 import { forLanguage, promptPrefix } from "../rules/rules-pure";
+import type { ContextLoader } from "../context/context-loader";
+import { combinedPrefix } from "../context/context-pure";
 import {
   buildSystemPrompt,
   escapeHTML,
@@ -53,6 +55,7 @@ export class ChatPanel {
     config: LensConfig,
     issueContext?: IssueContextProvider,
     rulesLoader?: RulesLoader,
+    contextLoader?: ContextLoader,
   ): void {
     const column =
       vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -72,7 +75,7 @@ export class ChatPanel {
       },
     );
     void column;
-    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext, rulesLoader);
+    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext, rulesLoader, contextLoader);
   }
 
   // sendPrompt is the entry point context-menu commands use to
@@ -86,8 +89,9 @@ export class ChatPanel {
     prompt: string,
     issueContext?: IssueContextProvider,
     rulesLoader?: RulesLoader,
+    contextLoader?: ContextLoader,
   ): Promise<void> {
-    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext, rulesLoader);
+    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext, rulesLoader, contextLoader);
     await ChatPanel.currentPanel?.sendMessage(prompt);
   }
 
@@ -98,6 +102,7 @@ export class ChatPanel {
     private config: LensConfig,
     private readonly issueContext?: IssueContextProvider,
     private readonly rulesLoader?: RulesLoader,
+    private readonly contextLoader?: ContextLoader,
   ) {
     this.panel = panel;
     this.panel.webview.html = this.renderHTML();
@@ -193,12 +198,14 @@ export class ChatPanel {
     this.post({ type: "thinking" });
 
     try {
-      // Project rules ride at the very start of the system prompt
-      // so the model attends to them before its baseline behaviour.
+      // Rules + project context ride at the very start of the
+      // system prompt — rules first (HOW to write), context
+      // second (WHAT the project is). Both are optional.
       const rulesPrefix = promptPrefix(
         forLanguage(this.rulesLoader?.get(), ""),
       );
-      const systemContent = rulesPrefix
+      const prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+      const systemContent = prefix
         + buildSystemPrompt(
           this.config.activeIssue,
           this.issueContext?.getIssueContext() ?? "",

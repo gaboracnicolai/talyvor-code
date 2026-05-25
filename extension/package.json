@@ -101,7 +101,8 @@
       {"command": "talyvor.generateShellCommand", "title": "Talyvor: Generate Shell Command"},
       {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"},
       {"command": "talyvor.reviewPR", "title": "Talyvor: Review Current PR"},
-      {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"}
+      {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"},
+      {"command": "talyvor.generateContext", "title": "Talyvor: Generate Project Context"}
     ],
     "menus": {
       "editor/context": [

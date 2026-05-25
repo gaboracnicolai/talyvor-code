@@ -33,6 +33,8 @@ import { DocsClient } from "./docs/docs-client";
 import { DocsHoverProvider } from "./docs/docs-hover";
 import { SpecWatcher } from "./docs/spec-watcher";
 import { RulesLoader } from "./rules/rules-loader";
+import { ContextLoader } from "./context/context-loader";
+import { generateContextCommand } from "./commands/context-command";
 import {
   askDocsCommand,
   linkDocToIssueCommand,
@@ -53,7 +55,9 @@ export function activate(context: vscode.ExtensionContext): void {
   const specWatcher = new SpecWatcher(docsClient);
   const rulesLoader = new RulesLoader();
   void rulesLoader.initialize();
-  context.subscriptions.push(specWatcher, rulesLoader);
+  const contextLoader = new ContextLoader();
+  void contextLoader.initialize();
+  context.subscriptions.push(specWatcher, rulesLoader, contextLoader);
 
   // Listen for every Lens call's cost and roll it into the
   // per-issue session bucket so the sync timer has something to
@@ -91,6 +95,7 @@ export function activate(context: vscode.ExtensionContext): void {
     tracker,
     issueProvider,
     rulesLoader,
+    contextLoader,
   );
   completionProvider.setOnUpdate(refreshStatusBar);
   context.subscriptions.push(
@@ -140,7 +145,11 @@ export function activate(context: vscode.ExtensionContext): void {
         TalyvorConfig.getLensConfig(),
         issueProvider,
         rulesLoader,
+        contextLoader,
       ),
+    ),
+    vscode.commands.registerCommand("talyvor.generateContext", () =>
+      generateContextCommand(lensClient, tracker, TalyvorConfig.getLensConfig()),
     ),
     vscode.commands.registerCommand("talyvor.explainCode", () =>
       runContextPrompt(
@@ -150,10 +159,11 @@ export function activate(context: vscode.ExtensionContext): void {
         issueProvider,
         "Explain this code:",
         rulesLoader,
+        contextLoader,
       ),
     ),
     vscode.commands.registerCommand("talyvor.fixError", () =>
-      runFixErrorCommand(context.extensionUri, lensClient, tracker, issueProvider, rulesLoader),
+      runFixErrorCommand(context.extensionUri, lensClient, tracker, issueProvider, rulesLoader, contextLoader),
     ),
     vscode.commands.registerCommand("talyvor.refactorCode", () =>
       runContextPrompt(
@@ -163,6 +173,7 @@ export function activate(context: vscode.ExtensionContext): void {
         issueProvider,
         "Refactor this code to be cleaner and more maintainable:",
         rulesLoader,
+        contextLoader,
       ),
     ),
     vscode.commands.registerCommand("talyvor.generateTests", () =>
@@ -416,6 +427,7 @@ async function runContextPrompt(
   provider: IssueContextProvider,
   instruction: string,
   rulesLoader?: RulesLoader,
+  contextLoader?: ContextLoader,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -438,6 +450,7 @@ async function runContextPrompt(
     prompt,
     provider,
     rulesLoader,
+    contextLoader,
   );
 }
 
@@ -556,6 +569,7 @@ async function runFixErrorCommand(
   tracker: CostTracker,
   provider: IssueContextProvider,
   rulesLoader?: RulesLoader,
+  contextLoader?: ContextLoader,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -587,5 +601,6 @@ async function runFixErrorCommand(
     prompt,
     provider,
     rulesLoader,
+    contextLoader,
   );
 }
