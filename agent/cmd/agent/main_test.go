@@ -495,6 +495,47 @@ func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// ─── init subcommand ───────────────────────────────
+
+func TestInit_CreatesRulesFile(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"init"}, &stdout, &stderr); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Created .talyvor-rules") {
+		t.Fatalf("expected creation message, got %q", stdout.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".talyvor-rules"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if !strings.Contains(string(body), "[general]") {
+		t.Fatalf("expected [general] section in output: %q", string(body))
+	}
+}
+
+func TestInit_RefusesToOverwriteExistingRules(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	existing := "[general]\nKeep me\n"
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-rules"), []byte(existing), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"init"}, &stdout, &stderr); err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Already initialized") {
+		t.Fatalf("expected already-initialized message, got %q", stdout.String())
+	}
+	body, _ := os.ReadFile(filepath.Join(dir, ".talyvor-rules"))
+	if string(body) != existing {
+		t.Fatalf("existing file was overwritten:\n%s", string(body))
+	}
+}
+
 // ─── review subcommand ─────────────────────────────
 
 func TestReview_NoStagedChangesErrors(t *testing.T) {

@@ -12,6 +12,8 @@ import type { LensClient } from "../lens/client";
 import type { TalyvorConfig } from "../config";
 import { CostTracker, estimateCostUSD } from "./cost-tracker";
 import type { IssueContextProvider } from "../track/issue-context";
+import type { RulesLoader } from "../rules/rules-loader";
+import { forLanguage, promptPrefix } from "../rules/rules-pure";
 import {
   buildCompletionPrompt,
   getCodeContext,
@@ -47,6 +49,7 @@ export class TalyvorCompletionProvider
     private config: ConfigSupplier,
     private tracker: CostTracker,
     private issueContext?: IssueContextProvider,
+    private rulesLoader?: RulesLoader,
   ) {}
 
   // setOnUpdate lets the host (extension.ts) refresh the status bar
@@ -129,9 +132,15 @@ export class TalyvorCompletionProvider
     const ctx = getCodeContext(document, position);
     const userPrompt = buildCompletionPrompt(ctx);
     const issueCtx = this.issueContext?.getIssueContext() ?? "";
-    const systemPrompt = issueCtx
-      ? `${SYSTEM_PROMPT}\n\nActive issue context:\n${issueCtx}`
-      : SYSTEM_PROMPT;
+    // Rules ride at the start of the system prompt — models attend
+    // to leading content more reliably than the tail.
+    const rulesPrefix = promptPrefix(
+      forLanguage(this.rulesLoader?.get(), document.languageId),
+    );
+    const systemPrompt = rulesPrefix
+      + (issueCtx
+        ? `${SYSTEM_PROMPT}\n\nActive issue context:\n${issueCtx}`
+        : SYSTEM_PROMPT);
 
     const res = await this.lens.completeWithUsage(
       [

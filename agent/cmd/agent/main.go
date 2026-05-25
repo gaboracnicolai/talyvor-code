@@ -26,6 +26,7 @@ import (
 	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
+	"github.com/talyvor/code/internal/rules"
 	"github.com/talyvor/code/internal/track"
 )
 
@@ -115,6 +116,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runCommit(os.Stdin, stdout, stderr, cfg, rest)
 	case "serve":
 		return runServe(stdout, stderr, cfg, rest)
+	case "init":
+		return runInit(stdout, stderr)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -137,6 +140,7 @@ COMMANDS
   commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
   serve      Start the Talyvor Code MCP server
+  init       Write a starter .talyvor-rules file in the current directory
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -225,8 +229,19 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 		if err != nil {
 			return err
 		}
+		// Surface .talyvor-rules at the start of the prompt; the
+		// model attends to leading content more reliably than the
+		// tail. Language is derived from the included file when
+		// present.
+		if rs, _ := rules.Load("."); rs != nil {
+			prompt.WriteString(rules.PromptPrefix(rules.ForLanguage(rs, lang)))
+		}
 		fmt.Fprintf(&prompt, "File: %s\n```%s\n%s\n```\n\n",
 			filepath.Base(filePath), lang, body)
+	} else {
+		if rs, _ := rules.Load("."); rs != nil {
+			prompt.WriteString(rules.PromptPrefix(rules.ForLanguage(rs, "")))
+		}
 	}
 	prompt.WriteString("Question: ")
 	prompt.WriteString(question)
@@ -348,15 +363,21 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 // chatSystemPrompt mirrors the extension's buildSystemPrompt so
 // both surfaces feel the same. Kept short — the model already
 // knows it's a coding assistant; the active-issue line is the
-// load-bearing part.
+// load-bearing part. Project rules (if any) ride at the very
+// start of the system prompt where models attend most reliably.
 func chatSystemPrompt(issueID string) string {
 	issueLine := "No active issue is set."
 	if issueID != "" {
 		issueLine = "The active issue is " + issueID + "."
 	}
-	return "You are an expert coding assistant. When showing code, " +
+	base := "You are an expert coding assistant. When showing code, " +
 		"use markdown code fences with the language identifier. " +
 		"Be concise but complete. " + issueLine
+	rs, _ := rules.Load(".")
+	if rs == nil {
+		return base
+	}
+	return rules.PromptPrefix(rules.ForLanguage(rs, "")) + base
 }
 
 // trimChatHistory caps the history at MaxChatHistory pairs.
@@ -618,6 +639,9 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	}
 
 	system := reviewSystemPrompt(reviewType)
+	if rs, _ := rules.Load("."); rs != nil {
+		system = rules.PromptPrefix(rules.ForReview(rs)) + system
+	}
 	user := system + "\n\nReview this code:\n\n" + body
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
@@ -960,6 +984,9 @@ func planPrompt(taskDesc, workspaceRoot, issueID, codebaseSummary string) string
 		"\"files\":[{\"path\":\"src/foo.go\",\"operation\":\"modify\",\"description\":\"…\"}]}. " +
 		"Valid operations are create, modify, delete. " +
 		"Use paths relative to the workspace root."
+	if rs, _ := rules.Load(workspaceRoot); rs != nil {
+		system = rules.PromptPrefix(rules.ForAgent(rs)) + system
+	}
 	out := fmt.Sprintf("%s\n\nTask: %s\nWorkspace: %s\nActive issue: %s",
 		system, taskDesc, workspaceRoot, nonEmpty(issueID, "(none)"))
 	if strings.TrimSpace(codebaseSummary) != "" {
@@ -1022,6 +1049,9 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 	}
 
 	var user strings.Builder
+	if rs, _ := rules.Load(root); rs != nil {
+		user.WriteString(rules.PromptPrefix(rules.ForAgent(rs)))
+	}
 	user.WriteString("You are an expert software engineer. Make the specified change to this file. ")
 	user.WriteString("Return ONLY the complete new file content. No explanations, no markdown fences. ")
 	user.WriteString("The file must be syntactically correct.\n\n")
@@ -1167,6 +1197,9 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	}
 
 	system := testSystemPrompt(languageID, framework)
+	if rs, _ := rules.Load("."); rs != nil {
+		system = rules.PromptPrefix(rules.ForTesting(rs, languageID)) + system
+	}
 	user := fmt.Sprintf(
 		"Generate tests for this %s file:\nFile: %s\n```%s\n%s\n```",
 		languageID, filepath.Base(sourcePath), languageID, string(body),
@@ -1442,6 +1475,24 @@ func nonEmpty(s, fallback string) string {
 		return fallback
 	}
 	return s
+}
+
+// ─── init subcommand ───────────────────────────────
+
+// runInit writes a starter `.talyvor-rules` to the current
+// directory. Refuses to overwrite an existing file so a stray
+// `init` doesn't blow away the team's curated rules.
+func runInit(stdout, stderr io.Writer) error {
+	if _, err := os.Stat(rules.RulesFileName); err == nil {
+		fmt.Fprintln(stdout, "Already initialized. Edit "+rules.RulesFileName+" to customize.")
+		return nil
+	}
+	if err := os.WriteFile(rules.RulesFileName, []byte(rules.Example), 0o644); err != nil {
+		return fmt.Errorf("init: %w", err)
+	}
+	fmt.Fprintf(stdout, "Created %s — customize for your project.\n", rules.RulesFileName)
+	_ = stderr
+	return nil
 }
 
 // ─── serve subcommand ──────────────────────────────

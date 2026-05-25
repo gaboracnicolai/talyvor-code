@@ -8,6 +8,8 @@ import type { LensClient } from "../lens/client";
 import type { LensConfig, Message } from "../lens/types";
 import { CostTracker, estimateCostUSD, formatDuration } from "../providers/cost-tracker";
 import type { IssueContextProvider } from "../track/issue-context";
+import type { RulesLoader } from "../rules/rules-loader";
+import { forLanguage, promptPrefix } from "../rules/rules-pure";
 import {
   buildSystemPrompt,
   escapeHTML,
@@ -50,6 +52,7 @@ export class ChatPanel {
     tracker: CostTracker,
     config: LensConfig,
     issueContext?: IssueContextProvider,
+    rulesLoader?: RulesLoader,
   ): void {
     const column =
       vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -69,7 +72,7 @@ export class ChatPanel {
       },
     );
     void column;
-    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext);
+    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext, rulesLoader);
   }
 
   // sendPrompt is the entry point context-menu commands use to
@@ -82,8 +85,9 @@ export class ChatPanel {
     config: LensConfig,
     prompt: string,
     issueContext?: IssueContextProvider,
+    rulesLoader?: RulesLoader,
   ): Promise<void> {
-    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext);
+    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext, rulesLoader);
     await ChatPanel.currentPanel?.sendMessage(prompt);
   }
 
@@ -93,6 +97,7 @@ export class ChatPanel {
     private readonly tracker: CostTracker,
     private config: LensConfig,
     private readonly issueContext?: IssueContextProvider,
+    private readonly rulesLoader?: RulesLoader,
   ) {
     this.panel = panel;
     this.panel.webview.html = this.renderHTML();
@@ -188,14 +193,18 @@ export class ChatPanel {
     this.post({ type: "thinking" });
 
     try {
+      // Project rules ride at the very start of the system prompt
+      // so the model attends to them before its baseline behaviour.
+      const rulesPrefix = promptPrefix(
+        forLanguage(this.rulesLoader?.get(), ""),
+      );
+      const systemContent = rulesPrefix
+        + buildSystemPrompt(
+          this.config.activeIssue,
+          this.issueContext?.getIssueContext() ?? "",
+        );
       const messages: Message[] = [
-        {
-          role: "system",
-          content: buildSystemPrompt(
-            this.config.activeIssue,
-            this.issueContext?.getIssueContext() ?? "",
-          ),
-        },
+        { role: "system", content: systemContent },
         ...this.history,
       ];
       const res = await this.lens.completeWithUsage(

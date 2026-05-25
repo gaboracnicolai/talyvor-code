@@ -1,0 +1,41 @@
+[general]
+Write clean, idiomatic code.
+Prefer explicit error handling over silent failures.
+Add comments for complex logic, not obvious code.
+Follow the principle of least surprise.
+
+[go]
+Use table-driven tests with descriptive test names.
+Return errors as the last return value.
+Use context.Context for cancellation in long operations.
+Prefer interfaces over concrete types in function params.
+
+[typescript]
+Use strict TypeScript — no 'any' types without comment.
+Prefer functional patterns (map/filter/reduce).
+Use async/await over Promise chains.
+Export types alongside implementations.
+
+[python]
+Follow PEP 8 style guide.
+Use type hints for all function signatures.
+Write docstrings for public functions.
+Prefer list comprehensions for simple transforms.
+
+[testing]
+Write tests before implementation (TDD).
+Aim for 80% code coverage minimum.
+Test edge cases: empty inputs, nulls, large values.
+Use descriptive test names: "TestHandleAuth_ReturnsError_WhenTokenExpired"
+
+[agent]
+Before making changes, explain what you plan to do.
+Make small, atomic changes. One concern per commit.
+Never delete code without understanding why it exists.
+Check for existing tests before writing new ones.
+
+[review]
+Flag any hardcoded secrets, credentials, or tokens.
+Check for SQL injection, XSS, and CSRF vulnerabilities.
+Identify missing error handling.
+Note performance bottlenecks (N+1 queries, missing indexes).
