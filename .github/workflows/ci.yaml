@@ -2,6 +2,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -18,6 +19,15 @@ jobs:
       - run: cd extension && npm install
       - run: cd extension && npm run compile
       - run: cd extension && npx tsc --noEmit
+      # Run the node-based smoke tests so the per-phase
+      # assertions don't regress.
+      - name: Run extension smoke tests
+        run: |
+          cd extension
+          for f in out/test/*.test.js; do
+            echo "── $f"
+            node "$f"
+          done
 
   agent:
     runs-on: ubuntu-latest
@@ -30,3 +40,39 @@ jobs:
           go-version: "1.25"
       - run: cd agent && go vet ./...
       - run: cd agent && go test -race -count=1 ./...
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    needs: [extension, agent]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+      - name: Build binaries
+        run: |
+          cd agent
+          mkdir -p bin
+          VERSION=${GITHUB_REF#refs/tags/}
+          LDFLAGS="-w -s -X main.version=${VERSION}"
+          GOOS=darwin  GOARCH=arm64 go build -trimpath \
+            -ldflags="${LDFLAGS}" \
+            -o bin/talyvor-code-darwin-arm64 ./cmd/agent
+          GOOS=darwin  GOARCH=amd64 go build -trimpath \
+            -ldflags="${LDFLAGS}" \
+            -o bin/talyvor-code-darwin-amd64 ./cmd/agent
+          GOOS=linux   GOARCH=amd64 go build -trimpath \
+            -ldflags="${LDFLAGS}" \
+            -o bin/talyvor-code-linux-amd64 ./cmd/agent
+          GOOS=windows GOARCH=amd64 go build -trimpath \
+            -ldflags="${LDFLAGS}" \
+            -o bin/talyvor-code-windows-amd64.exe ./cmd/agent
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agent/bin/*

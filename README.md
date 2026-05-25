@@ -4,19 +4,28 @@
 
 Two surfaces ship from this repository:
 
-| Surface | Path | Status |
-| ------- | ---- | ------ |
-| VS Code extension (TypeScript) | `extension/` | Phase 1: scaffold + Lens/Track clients + status bar |
-| CLI agent (Go) | `agent/` | Phase 1: command shell + `check`/`version` |
-
-Phase 1 wires the connective tissue. Phase 2 ships completions + chat.
+| Surface | Path | What it gives you |
+| --- | --- | --- |
+| VS Code extension (TypeScript) | `extension/` | Inline completions, chat, test generation, agentic mode, docs hover, status bar, dashboard |
+| CLI agent (Go) | `agent/` | `ask`, `chat`, `test`, `run`, `review`, `commit`, `docs`, `serve` (MCP) |
 
 ## Why Talyvor Code?
 
-Every AI call carries an `X-Talyvor-Issue` header. Lens credits the
-spend to that issue; Track surfaces the running total on the issue
-page. No more guessing whether a single feature cost $0.50 or $50 to
-ship — the answer's right there.
+| Feature | GitHub Copilot | Cursor | Talyvor Code |
+| --- | --- | --- | --- |
+| Inline completions | ✅ | ✅ | ✅ |
+| Chat panel | ✅ | ✅ | ✅ |
+| Test generation | ✅ | ✅ | ✅ |
+| Agentic mode | ⚠️ | ✅ | ✅ |
+| **Cost per issue** | ❌ | ❌ | ✅ |
+| **Self-hosted** | ❌ | ❌ | ✅ |
+| **Any LLM provider** | ❌ | ⚠️ | ✅ |
+| **Track integration** | ❌ | ❌ | ✅ |
+| **Docs integration** | ❌ | ❌ | ✅ |
+| **MCP server** | ❌ | ❌ | ✅ |
+| **CLI agent** | ❌ | ❌ | ✅ |
+| **Code review** | ❌ | ❌ | ✅ |
+| **AI commit messages** | ❌ | ❌ | ✅ |
 
 ## VS Code extension
 
@@ -28,52 +37,171 @@ npm install
 npm run compile
 ```
 
-Open the `extension/` folder in VS Code and press F5 to launch a
-development host.
+Open the `extension/` folder in VS Code and press F5 to launch a development host. To produce a distributable `.vsix`:
+
+```bash
+cd extension
+npx vsce package
+# → talyvor-code-0.1.0.vsix — install via "Extensions: Install from VSIX…"
+```
 
 ### Configure
 
-Open VS Code settings (⌘/Ctrl + ,) and search for "talyvor":
+Open VS Code settings (⌘/Ctrl + `,`) and search for **talyvor**:
 
 | Setting | Purpose |
-| ------- | ------- |
-| `talyvor.lensUrl` | e.g. `http://localhost:8080` |
+| --- | --- |
+| `talyvor.lensUrl` | Your Lens URL (e.g. `http://localhost:8080`) |
 | `talyvor.lensApiKey` | Lens API key |
 | `talyvor.trackUrl` | (optional) Track base URL for issue lookup |
 | `talyvor.trackApiKey` | (optional) Track API key |
+| `talyvor.docsUrl` | (optional) Talyvor Docs URL — enables hover + panel |
+| `talyvor.docsApiKey` | (optional) Talyvor Docs API key |
 | `talyvor.workspaceId` | Your Talyvor workspace ID |
 | `talyvor.activeIssue` | e.g. `ENG-42` — settable via Command Palette |
 | `talyvor.model` | Default model (haiku, sonnet, gpt-4o, ...) |
+| `talyvor.enableCompletions` | Toggle inline completions |
 
 ### Commands
 
-- **Talyvor: Test Lens Connection** — pings `/healthz` and reports the version.
-- **Talyvor: Set Active Issue** — quick input that validates against Track if reachable.
-- **Talyvor: Show AI Cost Dashboard** — webview showing the active issue's cumulative spend.
+| Command | Shortcut | Description |
+| --- | --- | --- |
+| Open Chat | ⌘/Ctrl + Shift + L | AI chat panel with code-block insert |
+| Explain Code | ⌘/Ctrl + Shift + E | Explain the selection |
+| Fix Error | ⌘/Ctrl + Shift + F1 | Fix the diagnostic under the cursor |
+| Generate Tests | ⌘/Ctrl + Shift + T | Generate tests for selection or file |
+| Start Agent | ⌘/Ctrl + Shift + A | Multi-file agentic task |
+| Search Docs | ⌘/Ctrl + Shift + D | Search Talyvor Docs inline |
+| Set Active Issue | Palette | QuickPick across recent Track issues |
+| Show Cost Dashboard | Palette | Per-issue, per-feature spend breakdown |
+| Run Agent from Issue | Palette | Seed an agentic task from the active issue |
+| Ask Docs | Palette / context menu | Q&A grounded in your docs |
 
-The status-bar item shows the current state:
-`$(warning) Talyvor: Not configured` → `$(sparkle) Talyvor | No issue` → `$(sparkle) Talyvor | ENG-42`.
+The status-bar item cycles through `$(warning) Talyvor: Setup required` → `$(sparkle) Talyvor | $0.00` → `$(sparkle) ENG-42 | $0.03` and triggers a Track cost sync every 5 minutes.
 
 ## CLI agent
 
+### Install
+
 ```bash
-cd agent
-make build              # → bin/talyvor-code
-./bin/talyvor-code check --workspace ws-1 --lens-url http://localhost:8080 --lens-key tlv_xxx
+curl -sSL https://raw.githubusercontent.com/gaboracnicolai/talyvor-code/main/install.sh | bash
 ```
 
-Configuration also reads from env vars:
+Or build from source:
+
+```bash
+cd agent && go install ./cmd/agent
+```
+
+### Configure
+
+```bash
+export TALYVOR_LENS_URL=http://your-lens:8080
+export TALYVOR_LENS_API_KEY=tlv_...
+export TALYVOR_WORKSPACE_ID=ws-1
+export TALYVOR_ISSUE=ENG-42
+# optional:
+export TALYVOR_TRACK_URL=http://your-track:3000
+export TALYVOR_TRACK_API_KEY=tlv_track_...
+export TALYVOR_DOCS_URL=http://your-docs:4000
+export TALYVOR_DOCS_API_KEY=tlv_docs_...
+```
+
+A reference file lives at [`.env.example`](.env.example).
+
+### Commands
+
+```bash
+# Ask a question about code (one-shot)
+talyvor-code ask "What does this function do?"
+
+# Interactive chat REPL with /issue, /clear, /model
+talyvor-code chat --issue ENG-42
+
+# Generate tests for a source file
+talyvor-code test src/auth.go
+
+# Run an agentic multi-file task with --dry-run / --yes / --issue
+talyvor-code run --dry-run "Add error handling to all API endpoints"
+
+# Code review (general | security | performance) — staged diff by default
+talyvor-code review --type security src/
+
+# Conventional commit message from staged changes
+talyvor-code commit --issue ENG-42 --push
+
+# Search / ask / fetch Talyvor Docs
+talyvor-code docs search "authentication flow"
+talyvor-code docs ask   "How do we handle JWT refresh tokens?"
+talyvor-code docs get   space-eng/page-abc
+
+# Start the MCP server (binds 0.0.0.0:7777 by default)
+talyvor-code serve --port 7777 --root .
+```
+
+### CLI flags
 
 | Env var | Flag |
-| ------- | ---- |
+| --- | --- |
 | `TALYVOR_LENS_URL` | `--lens-url` |
 | `TALYVOR_LENS_API_KEY` | `--lens-key` |
 | `TALYVOR_TRACK_URL` | `--track-url` |
 | `TALYVOR_TRACK_API_KEY` | `--track-key` |
+| `TALYVOR_DOCS_URL` | `--docs-url` |
+| `TALYVOR_DOCS_API_KEY` | `--docs-key` |
 | `TALYVOR_WORKSPACE_ID` | `--workspace` |
 | `TALYVOR_ISSUE` | `--issue` |
+| `TALYVOR_MODEL` | `--model` |
 
-`ask` and `chat` land in Phase 2.
+## MCP integration
+
+Talyvor Code ships an MCP server (`talyvor-code serve`) so Claude Code, Cursor agents, and other MCP-aware clients can plug into your coding context. Add to your client's MCP config:
+
+```json
+{
+  "mcpServers": {
+    "talyvor-code": {
+      "url": "http://localhost:7777/mcp"
+    }
+  }
+}
+```
+
+**Available tools:**
+
+| Tool | What it does |
+| --- | --- |
+| `ask_code` | Question about the codebase, grounded in files you pick |
+| `generate_tests` | Generate unit tests for a file |
+| `review_code` | Markdown review with critical/warning counts |
+| `get_active_issue` | Fetch the active Track issue |
+| `search_codebase` | Path/filename relevance search |
+| `read_file` | Read a file (with optional `lines: "10-50"`) |
+| `search_docs` | Full-text + semantic search in Talyvor Docs |
+| `ask_docs` | Docs Q&A with sources |
+| `get_codebase_summary` | Languages, file/line counts, branch, repo |
+| `generate_commit_message` | Conventional commit from a staged diff |
+
+Tools degrade gracefully when their backing service is unconfigured — `get_active_issue` returns `{"configured": false, "reason": "track not configured"}` instead of erroring.
+
+## Architecture
+
+```
+┌──────────────────┐   ┌────────────────────────┐   ┌─────────────────┐
+│  VS Code         │   │  CLI agent              │   │  MCP clients     │
+│  extension       │   │  talyvor-code           │   │  (Claude Code…)  │
+└────────┬─────────┘   └────────────┬────────────┘   └────────┬─────────┘
+         │                          │                         │
+         │                          │       /mcp + /mcp/sse   │
+         │                          └──────────────►──────────┘
+         │                          │
+         ▼                          ▼
+┌───────────────────────────────────────────────────────────────────────┐
+│  Talyvor Lens  ◄── all AI calls (X-Talyvor-Issue header)             │
+│  Talyvor Track ◄── active issue lookup + cost sync + agent comments  │
+│  Talyvor Docs  ◄── search / ask / page lookup                        │
+└───────────────────────────────────────────────────────────────────────┘
+```
 
 ## Gates
 
@@ -82,4 +210,10 @@ cd extension && npm run compile && npx tsc --noEmit
 cd agent && go vet ./... && go test -race -count=1 ./...
 ```
 
-Both gates run on every PR via `.github/workflows/ci.yaml`.
+Both gates run on every PR via [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml). Tagged builds (`v*`) trigger the release job, which cross-compiles `talyvor-code` for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, and `windows/amd64`, then attaches the binaries to a GitHub release.
+
+## The moat
+
+Every AI call carries an `X-Talyvor-Issue` header. Lens credits the spend to that issue; Track surfaces the running total on the issue page. When you implement `ENG-42`, every completion, every test, every agentic task, every code review — all of it — gets rolled up to that issue.
+
+No other coding assistant does this.
