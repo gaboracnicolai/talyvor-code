@@ -1,5 +1,4 @@
 name: CI
-
 on:
   push:
     branches: [main]
@@ -9,8 +8,6 @@ on:
 jobs:
   extension:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -26,8 +23,6 @@ jobs:
 
   agent:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -36,5 +31,6 @@ jobs:
         with:
           go-version: "1.25"
           cache: true
+          cache-dependency-path: agent/go.sum
       - run: cd agent && go vet ./...
       - run: cd agent && go test -race -count=1 ./...
