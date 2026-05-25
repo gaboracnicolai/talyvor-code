@@ -50,8 +50,12 @@ func Load(flags Config) Config {
 		out.ActiveIssue = os.Getenv("TALYVOR_ISSUE")
 	}
 	if out.Model == "" {
-		out.Model = "claude-haiku-4-6"
+		out.Model = os.Getenv("TALYVOR_MODEL")
 	}
+	// Note: no hard default applied here. Each command resolves
+	// its own default via internal/model.ResolveModel, which
+	// honours --model first, then TALYVOR_MODEL, then the
+	// per-command DefaultForCommand pick.
 	return out
 }
 

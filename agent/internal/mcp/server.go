@@ -30,6 +30,7 @@ import (
 	"github.com/talyvor/code/internal/docs"
 	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/lens"
+	modelpkg "github.com/talyvor/code/internal/model"
 	"github.com/talyvor/code/internal/track"
 )
 
@@ -480,7 +481,7 @@ func (s *Server) toolAskCode(ctx context.Context, raw json.RawMessage) (any, int
 	}
 	usage, err := s.lensClient.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		"claude-sonnet-4-6", "mcp-ask-code", s.config.WorkspaceID, a.IssueID,
+		modelpkg.DefaultForCommand("chat"), "mcp-ask-code", s.config.WorkspaceID, a.IssueID,
 	)
 	if err != nil {
 		return nil, rpcErrInternal, "lens: " + err.Error()
@@ -524,7 +525,7 @@ func (s *Server) toolGenerateTests(ctx context.Context, raw json.RawMessage) (an
 	)
 	usage, err := s.lensClient.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		"claude-sonnet-4-6", "mcp-generate-tests", s.config.WorkspaceID, a.IssueID,
+		modelpkg.DefaultForCommand("test"), "mcp-generate-tests", s.config.WorkspaceID, a.IssueID,
 	)
 	if err != nil {
 		return nil, rpcErrInternal, "lens: " + err.Error()
@@ -557,7 +558,7 @@ func (s *Server) toolReviewCode(ctx context.Context, raw json.RawMessage) (any, 
 	prompt := mcpReviewPrompt(a.ReviewType) + "\n\nReview this code:\n\n" + body
 	usage, err := s.lensClient.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		"claude-sonnet-4-6", "mcp-review", s.config.WorkspaceID, a.IssueID,
+		modelpkg.DefaultForCommand("review"), "mcp-review", s.config.WorkspaceID, a.IssueID,
 	)
 	if err != nil {
 		return nil, rpcErrInternal, "lens: " + err.Error()
@@ -910,7 +911,7 @@ func (s *Server) toolGenerateCommitMessage(ctx context.Context, raw json.RawMess
 		"=== staged diff ===\n" + diff
 	usage, err := s.lensClient.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		"claude-haiku-4-6", "mcp-commit", s.config.WorkspaceID, a.IssueID,
+		modelpkg.DefaultForCommand("commit"), "mcp-commit", s.config.WorkspaceID, a.IssueID,
 	)
 	if err != nil {
 		return nil, rpcErrInternal, "lens: " + err.Error()

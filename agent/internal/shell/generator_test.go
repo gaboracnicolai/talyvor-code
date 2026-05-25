@@ -157,7 +157,7 @@ func TestSuggestFix_CallsLensWithErrorContext(t *testing.T) {
 
 	lc := lens.New(srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
-	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "ls: unknown option --bogus", "bash", "macOS")
+	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "ls: unknown option --bogus", "bash", "macOS", "")
 	if err != nil {
 		t.Fatalf("SuggestFix: %v", err)
 	}
@@ -178,7 +178,7 @@ func TestSuggestFix_StripsFencesAndBackticks(t *testing.T) {
 	defer srv.Close()
 	lc := lens.New(srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
-	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "err", "bash", "macOS")
+	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "err", "bash", "macOS", "")
 	if err != nil {
 		t.Fatalf("SuggestFix: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestGenerate_CallsLensWithHaiku(t *testing.T) {
 
 	lc := lens.New(srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
-	cmd, cost, err := Generate(context.Background(), lc, cfg, "kill process on port 8080", "zsh", "macOS")
+	cmd, cost, err := Generate(context.Background(), lc, cfg, "kill process on port 8080", "zsh", "macOS", "")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestGenerate_StripsFencesAndDescriptions(t *testing.T) {
 	defer srv.Close()
 	lc := lens.New(srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
-	cmd, _, err := Generate(context.Background(), lc, cfg, "list containers", "bash", "macOS")
+	cmd, _, err := Generate(context.Background(), lc, cfg, "list containers", "bash", "macOS", "")
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

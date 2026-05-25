@@ -26,6 +26,7 @@ import (
 	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
+	modelpkg "github.com/talyvor/code/internal/model"
 	"github.com/talyvor/code/internal/rules"
 	"github.com/talyvor/code/internal/shell"
 	"github.com/talyvor/code/internal/track"
@@ -121,6 +122,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runInit(stdout, stderr)
 	case "shell", "sh":
 		return runShell(os.Stdin, stdout, stderr, cfg, rest)
+	case "models":
+		return runModels(stdout)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -145,6 +148,7 @@ COMMANDS
   serve      Start the Talyvor Code MCP server
   init       Write a starter .talyvor-rules file in the current directory
   shell      Generate a shell command from a description (alias: sh)
+  models     List supported AI models with their profiles
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -203,12 +207,14 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 		filePath  string
 		lineRange string
 		issue     string
+		modelOpt  string
 	)
 	fs := flag.NewFlagSet("ask", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	fs.StringVar(&filePath, "file", "", "Path to file to include as context")
 	fs.StringVar(&lineRange, "lines", "", "Line range, e.g. 10-50 (requires --file)")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this call")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -220,6 +226,10 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 
 	if issue != "" {
 		cfg.ActiveIssue = issue
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "ask")
+	if err != nil {
+		return err
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -254,7 +264,7 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	out, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: prompt.String()}},
-		cfg.Model, "ask", cfg.WorkspaceID, cfg.ActiveIssue)
+		chosenModel, "ask", cfg.WorkspaceID, cfg.ActiveIssue)
 	if err != nil {
 		return err
 	}
@@ -262,8 +272,20 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	// Cost-attribution summary on stderr — keeps stdout clean
 	// for pipes.
 	fmt.Fprintf(os.Stderr, "issue=%s model=%s chars=%d\n",
-		nonEmpty(cfg.ActiveIssue, "(none)"), cfg.Model, len(out))
+		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(out))
 	return nil
+}
+
+// resolveAndValidate is the small helper every subcommand uses:
+// resolve via the priority order (flag → env/cfg.Model → command
+// default) and validate against the catalogue. Returns a clean
+// error for invalid IDs so the user sees the valid list.
+func resolveAndValidate(flagValue, envValue, command string) (string, error) {
+	chosen := modelpkg.ResolveModel(flagValue, envValue, command)
+	if err := modelpkg.Validate(chosen); err != nil {
+		return "", err
+	}
+	return chosen, nil
 }
 
 // runChat implements an interactive REPL. Each turn appends to a
@@ -278,9 +300,13 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	chosenModel, err := resolveAndValidate("", cfg.Model, "chat")
+	if err != nil {
+		return err
+	}
 	fmt.Fprintf(stdout, "Talyvor Code Chat (issue: %s, model: %s)\n",
-		nonEmpty(cfg.ActiveIssue, "(none)"), cfg.Model)
-	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/file <path>" to attach a file.`)
+		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel)
+	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/model <id>" to swap model, "/file <path>" to attach a file.`)
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	history := []lens.Message{}
@@ -317,6 +343,16 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 				nonEmpty(cfg.ActiveIssue, "(none)"))
 			continue
 		}
+		if strings.HasPrefix(line, "/model ") {
+			newModel := strings.TrimSpace(strings.TrimPrefix(line, "/model"))
+			if err := modelpkg.Validate(newModel); err != nil {
+				fmt.Fprintf(stderr, "! %v\n", err)
+				continue
+			}
+			chosenModel = newModel
+			fmt.Fprintf(stdout, "Model: %s\n", chosenModel)
+			continue
+		}
 		if strings.HasPrefix(line, "/file ") {
 			path := strings.TrimSpace(strings.TrimPrefix(line, "/file"))
 			body, _, err := readFileSlice(path, "")
@@ -349,7 +385,7 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		}, history...)
 
 		ctx := context.Background()
-		reply, err := lc.Complete(ctx, messages, cfg.Model, "chat",
+		reply, err := lc.Complete(ctx, messages, chosenModel, "chat",
 			cfg.WorkspaceID, cfg.ActiveIssue)
 		if err != nil {
 			fmt.Fprintf(stderr, "! %v\n", err)
@@ -358,8 +394,8 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		history = append(history, lens.Message{Role: "assistant", Content: reply})
 		history = trimChatHistory(history)
 		fmt.Fprintln(stdout, reply)
-		fmt.Fprintf(stderr, "(issue=%s chars=%d)\n",
-			nonEmpty(cfg.ActiveIssue, "(none)"), len(reply))
+		fmt.Fprintf(stderr, "(issue=%s model=%s chars=%d)\n",
+			nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(reply))
 	}
 	return scanner.Err()
 }
@@ -405,10 +441,10 @@ func trimChatHistory(in []lens.Message) []lens.Message {
 // hard ceiling keeps runaway tasks contained.
 const MaxAgentFiles = 20
 
-// agentModel pins Sonnet for both planning and per-file execution.
-// Haiku is too brittle for multi-file refactors; cost goes up, but
-// so does the chance the diff actually applies cleanly.
-const agentModel = "claude-sonnet-4-6"
+// Model selection for the agent now flows through
+// modelpkg.ResolveModel(--model, $TALYVOR_MODEL, "run"). Haiku is
+// too brittle for multi-file refactors by default; the resolver
+// picks Sonnet unless the user opts otherwise.
 
 // runAgent implements the agentic flow:
 //   1. Ask Lens for a JSON plan listing files to touch.
@@ -422,15 +458,17 @@ const agentModel = "claude-sonnet-4-6"
 // with a bytes.Buffer instead of needing a real TTY.
 func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
-		dryRun bool
-		yes    bool
-		issue  string
+		dryRun   bool
+		yes      bool
+		issue    string
+		modelOpt string
 	)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.BoolVar(&dryRun, "dry-run", false, "Show plan + diffs without writing")
 	fs.BoolVar(&yes, "yes", false, "Auto-approve all changes")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this task")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -442,6 +480,10 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 
 	if issue != "" {
 		cfg.ActiveIssue = issue
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "run")
+	if err != nil {
+		return err
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -475,7 +517,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fmt.Fprintln(stdout, "▸ Planning…")
 	planText, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: planPrompt(taskDesc, workspaceRoot, cfg.ActiveIssue, codebaseSummary)}},
-		agentModel, "agent-plan", cfg.WorkspaceID, cfg.ActiveIssue,
+		chosenModel, "agent-plan", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return fmt.Errorf("plan: %w", err)
@@ -529,7 +571,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	applied, skipped := 0, 0
 	for i, pf := range plan.Files {
 		fmt.Fprintf(stdout, "\n▸ Generating %d/%d: %s\n", i+1, len(plan.Files), pf.Path)
-		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot)
+		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot, chosenModel)
 		if err != nil {
 			fmt.Fprintf(stderr, "! %s: %v\n", pf.Path, err)
 			skipped++
@@ -565,7 +607,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	}
 
 	fmt.Fprintf(stdout, "\nApplied %d/%d changes (skipped %d)\n", applied, len(plan.Files), skipped)
-	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", agentModel,
+	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", chosenModel,
 		nonEmpty(cfg.ActiveIssue, "(none)"))
 
 	// Best-effort Track comment so the issue trail captures the
@@ -574,7 +616,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	if applied > 0 && cfg.ActiveIssue != "" {
 		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
 		if tc.IsConfigured() {
-			comment := buildAgentCompletionComment(taskDesc, applied, agentModel)
+			comment := buildAgentCompletionComment(taskDesc, applied, chosenModel)
 			cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer ccancel()
 			if err := tc.AddComment(cctx, cfg.WorkspaceID, cfg.ActiveIssue, comment); err != nil {
@@ -597,26 +639,34 @@ func buildAgentCompletionComment(taskDesc string, filesChanged int, model string
 
 // ─── review subcommand ─────────────────────────────
 
-const reviewModel = "claude-sonnet-4-6"
+// Model selection for review flows through modelpkg.ResolveModel
+// — defaults to Sonnet, but --model lets the user opt in to Opus
+// for higher-stakes review or Haiku for a quick pass.
 
 // runReview drives the code-review flow: read the staged diff
 // (or supplied files), build a structured prompt, call Lens, and
-// print the reply. Uses Sonnet because review quality matters
-// more than latency.
+// print the reply. Defaults to Sonnet (quality matters) but the
+// user can override via --model.
 func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
 		reviewType string
 		issue      string
+		modelOpt   string
 	)
 	fs := flag.NewFlagSet("review", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&reviewType, "type", "general", "Review type: general|security|performance")
 	fs.StringVar(&issue, "issue", "", "Override active issue")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if issue != "" {
 		cfg.ActiveIssue = issue
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "review")
+	if err != nil {
+		return err
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -653,13 +703,13 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	defer cancel()
 	out, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: user}},
-		reviewModel, "code-review", cfg.WorkspaceID, cfg.ActiveIssue,
+		chosenModel, "code-review", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return fmt.Errorf("review: %w", err)
 	}
 	fmt.Fprintln(stdout, strings.TrimSpace(out))
-	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", reviewModel, nonEmpty(cfg.ActiveIssue, "(none)"))
+	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", chosenModel, nonEmpty(cfg.ActiveIssue, "(none)"))
 	return nil
 }
 
@@ -682,22 +732,30 @@ func reviewSystemPrompt(reviewType string) string {
 
 // ─── commit subcommand ─────────────────────────────
 
-const commitModel = "claude-haiku-4-6"
+// Model selection for commit flows through modelpkg.ResolveModel —
+// defaults to Haiku because the subject is short and speed beats
+// nuance, but --model lets a team upgrade to Sonnet if their
+// commit-message standards demand it.
 
 // runCommit generates a conventional commit message from the
 // staged diff and confirms with the user before running `git
-// commit`. Uses Haiku — the output is short and speed matters
-// more than nuance for a one-line subject.
+// commit`.
 func runCommit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
 		issue    string
 		doPush   bool
+		modelOpt string
 	)
 	fs := flag.NewFlagSet("commit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&issue, "issue", "", "Prepend issue ID to message (e.g. ENG-42:)")
 	fs.BoolVar(&doPush, "push", false, "Push after a successful commit")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "commit")
+	if err != nil {
 		return err
 	}
 	if err := cfg.Validate(); err != nil {
@@ -722,7 +780,7 @@ func runCommit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, arg
 	defer cancel()
 	raw, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: system + "\n\n=== staged diff ===\n" + diff}},
-		commitModel, "code-commit", cfg.WorkspaceID, cfg.ActiveIssue,
+		chosenModel, "code-commit", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return fmt.Errorf("commit: %w", err)
@@ -1034,7 +1092,7 @@ type FileChange struct {
 // file. For modify operations we include the existing content so
 // the model has the full context; for create we just describe
 // what should land at the path.
-func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root string) (*FileChange, error) {
+func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root, model string) (*FileChange, error) {
 	change := &FileChange{Path: pf.Path, Operation: pf.Operation}
 	abs := pf.Path
 	if !isAbs(abs) {
@@ -1067,7 +1125,7 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 
 	reply, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: user.String()}},
-		agentModel, "agent-execute", cfg.WorkspaceID, cfg.ActiveIssue,
+		model, "agent-execute", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return nil, err
@@ -1143,12 +1201,13 @@ func jsonDecode(data []byte, v any) error {
 	return jsonPkg.Unmarshal(data, v)
 }
 
-// testGenModel pins Sonnet for test generation. Quality matters
-// more than latency here — a wrong test is worse than no test.
-const testGenModel = "claude-sonnet-4-6"
+// Model selection for `test` flows through modelpkg.ResolveModel —
+// defaults to Sonnet (quality matters; a wrong test is worse than
+// no test) but `--model` lets users opt in to Opus for high-stakes
+// suites or Haiku for a fast scaffold.
 
 // runTest implements the `test` subcommand. Usage:
-//   talyvor-code test [--output path] [--framework jest] [--issue ENG-42] <file>
+//   talyvor-code test [--output path] [--framework jest] [--issue ENG-42] [--model id] <file>
 //
 // Reads the source file, infers the language from its extension,
 // asks Lens for tests with the matching system prompt, then
@@ -1160,12 +1219,14 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 		outputPath string
 		framework  string
 		issue      string
+		modelOpt   string
 	)
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&outputPath, "output", "", "Output file path (default: auto-detect; use '-' for stdout)")
 	fs.StringVar(&framework, "framework", "", "Framework hint (jest/pytest/go-testing/...)")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this call")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1177,6 +1238,10 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 
 	if issue != "" {
 		cfg.ActiveIssue = issue
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "test")
+	if err != nil {
+		return err
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -1213,7 +1278,7 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	reply, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: system + "\n\n" + user}},
-		testGenModel, "test-gen", cfg.WorkspaceID, cfg.ActiveIssue,
+		chosenModel, "test-gen", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return err
@@ -1224,7 +1289,7 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	if outputPath == "-" {
 		fmt.Fprintln(stdout, clean)
 		fmt.Fprintf(stderr, "Generated %d lines of tests (model=%s issue=%s)\n",
-			lineCount(clean), testGenModel,
+			lineCount(clean), chosenModel,
 			nonEmpty(cfg.ActiveIssue, "(none)"))
 		return nil
 	}
@@ -1238,7 +1303,7 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	fmt.Fprintf(stdout, "Generated %d lines of tests → %s\n",
 		lineCount(clean), target)
 	fmt.Fprintf(stderr, "(model=%s issue=%s)\n",
-		testGenModel, nonEmpty(cfg.ActiveIssue, "(none)"))
+		chosenModel, nonEmpty(cfg.ActiveIssue, "(none)"))
 	return nil
 }
 
@@ -1481,6 +1546,39 @@ func nonEmpty(s, fallback string) string {
 	return s
 }
 
+// ─── models subcommand ─────────────────────────────
+
+// runModels prints the supported model catalogue as a padded
+// table. We compute column widths up front so the output stays
+// readable when new models with longer IDs land.
+func runModels(stdout io.Writer) error {
+	rows := modelpkg.ListModels()
+	idW, prW, spW, ctW := len("Model"), len("Provider"), len("Speed"), len("Cost")
+	for _, m := range rows {
+		if len(m.ID) > idW {
+			idW = len(m.ID)
+		}
+		if len(m.Provider) > prW {
+			prW = len(m.Provider)
+		}
+		if len(m.SpeedTier) > spW {
+			spW = len(m.SpeedTier)
+		}
+		if len(m.CostTier) > ctW {
+			ctW = len(m.CostTier)
+		}
+	}
+	fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  Best for\n",
+		idW, "Model", prW, "Provider", spW, "Speed", ctW, "Cost")
+	fmt.Fprintln(stdout, strings.Repeat("─", idW+prW+spW+ctW+12))
+	for _, m := range rows {
+		fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  %s\n",
+			idW, m.ID, prW, m.Provider, spW, m.SpeedTier, ctW, m.CostTier,
+			strings.Join(m.BestFor, ", "))
+	}
+	return nil
+}
+
 // ─── shell subcommand ──────────────────────────────
 
 // maxShellFixAttempts caps the recovery loop. After three tries
@@ -1500,6 +1598,7 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		runIt    bool
 		shellArg string
 		issue    string
+		modelOpt string
 	)
 	fs := flag.NewFlagSet("shell", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1507,6 +1606,7 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fs.BoolVar(&runIt, "run", false, "Execute the command after confirmation")
 	fs.StringVar(&shellArg, "shell", "", "Shell type: bash|zsh|fish|powershell (default: auto)")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this call")
+	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -1518,6 +1618,10 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 
 	if issue != "" {
 		cfg.ActiveIssue = issue
+	}
+	chosenModel, err := resolveAndValidate(modelOpt, cfg.Model, "shell")
+	if err != nil {
+		return err
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
@@ -1531,7 +1635,7 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	ctx := context.Background()
-	command, cost, err := shell.Generate(ctx, lc, &cfg, description, shellName, osName)
+	command, cost, err := shell.Generate(ctx, lc, &cfg, description, shellName, osName, chosenModel)
 	if err != nil {
 		return fmt.Errorf("shell: %w", err)
 	}
@@ -1539,7 +1643,7 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	fmt.Fprintf(stderr, "(cost: $%.4f)\n", cost)
 
 	if explain {
-		exp, expCost, err := shell.Explain(ctx, lc, &cfg, command, shellName, osName)
+		exp, expCost, err := shell.Explain(ctx, lc, &cfg, command, shellName, osName, chosenModel)
 		if err != nil {
 			fmt.Fprintf(stderr, "! explain: %v\n", err)
 		} else {
@@ -1555,14 +1659,14 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		return nil
 	}
 
-	return runWithFixLoop(ctx, stdin, stdout, stderr, lc, &cfg, command, shellName, osName)
+	return runWithFixLoop(ctx, stdin, stdout, stderr, lc, &cfg, command, shellName, osName, chosenModel)
 }
 
 // runWithFixLoop executes the command, and on failure asks the
 // model to suggest a fix and offers to retry. Capped at
 // maxShellFixAttempts so a stubbornly-broken command doesn't
 // spiral.
-func runWithFixLoop(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, lc *lens.Client, cfg *config.Config, command, shellName, osName string) error {
+func runWithFixLoop(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, lc *lens.Client, cfg *config.Config, command, shellName, osName, model string) error {
 	reader := bufio.NewReader(stdin)
 	current := command
 	for attempt := 0; attempt < maxShellFixAttempts; attempt++ {
@@ -1611,7 +1715,7 @@ func runWithFixLoop(ctx context.Context, stdin io.Reader, stdout, stderr io.Writ
 		if fixAns != "y" && fixAns != "yes" {
 			return nil
 		}
-		fixed, err := shell.SuggestFix(ctx, lc, cfg, current, errOut, shellName, osName)
+		fixed, err := shell.SuggestFix(ctx, lc, cfg, current, errOut, shellName, osName, model)
 		if err != nil {
 			return fmt.Errorf("shell: fix: %w", err)
 		}

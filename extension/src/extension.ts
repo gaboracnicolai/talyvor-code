@@ -40,6 +40,7 @@ import {
   searchDocsCommand,
 } from "./commands/docs-commands";
 import { generateShellCommand } from "./commands/shell-command";
+import { selectModelCommand } from "./commands/model-selector";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -194,6 +195,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("talyvor.generateShellCommand", () =>
       generateShellCommand(lensClient, tracker, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.selectModel", () =>
+      selectModelCommand(),
     ),
   );
 

@@ -495,6 +495,81 @@ func TestRun_AgentSkipsTrackCommentWhenUnconfigured(t *testing.T) {
 	}
 }
 
+// ─── models subcommand ─────────────────────────────
+
+func TestModels_PrintsTable(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"models"}, &stdout, &stderr); err != nil {
+		t.Fatalf("models: %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"claude-haiku-4-6", "claude-sonnet-4-6", "claude-opus-4-6",
+		"gpt-4o", "gpt-4o-mini", "mistral-large",
+		"Provider", "Speed", "Cost",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// ─── --model flag wiring ───────────────────────────
+
+func TestAsk_ModelFlagPicksTheRequestedModel(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_MODEL", "")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "--model", "gpt-4o", "what's up?"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if gotBody["model"] != "gpt-4o" {
+		t.Fatalf("expected gpt-4o, got %v", gotBody["model"])
+	}
+}
+
+func TestAsk_InvalidModelErrors(t *testing.T) {
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_MODEL", "")
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"ask", "--model", "no-such-model", "anything"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "unknown model") {
+		t.Fatalf("expected unknown-model error, got %v", err)
+	}
+}
+
+func TestEnvModelOverridesDefault(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_MODEL", "claude-opus-4-6")
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "say hi"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	if gotBody["model"] != "claude-opus-4-6" {
+		t.Fatalf("env model should win, got %v", gotBody["model"])
+	}
+}
+
 // ─── shell subcommand ──────────────────────────────
 
 // shellLensServer is a tiny fake Lens that captures every

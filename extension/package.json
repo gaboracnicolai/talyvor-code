@@ -93,7 +93,8 @@
       {"command": "talyvor.searchDocs", "title": "Talyvor: Search in Docs"},
       {"command": "talyvor.askDocs", "title": "Talyvor: Ask Docs"},
       {"command": "talyvor.linkDocToIssue", "title": "Talyvor: Link Docs Page to Active Issue"},
-      {"command": "talyvor.generateShellCommand", "title": "Talyvor: Generate Shell Command"}
+      {"command": "talyvor.generateShellCommand", "title": "Talyvor: Generate Shell Command"},
+      {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"}
     ],
     "menus": {
       "editor/context": [

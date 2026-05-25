@@ -6,6 +6,7 @@
 import * as vscode from "vscode";
 import type { LensConfig } from "../lens/types";
 import type { IssueContextProvider } from "./issue-context";
+import { getModel } from "../model/models-pure";
 
 export class TalyvorStatusBar implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
@@ -51,7 +52,11 @@ export class TalyvorStatusBar implements vscode.Disposable {
     const cost = `$${this.lastSessionCost.toFixed(2)}`;
     if (!cfg.activeIssue) {
       this.item.text = `$(sparkle) Talyvor | ${cost}`;
-      this.item.tooltip = `Session cost: ${cost} (${this.lastTokens.toLocaleString()} tokens). Click to set an active issue.`;
+      this.item.tooltip = [
+        `Session cost: ${cost} (${this.lastTokens.toLocaleString()} tokens)`,
+        `Model: ${modelLabel(cfg.model)}`,
+        "Click to set an active issue.",
+      ].join("\n");
       this.item.command = "talyvor.setActiveIssue";
       return;
     }
@@ -65,7 +70,8 @@ export class TalyvorStatusBar implements vscode.Disposable {
     // accept the small coupling so the tooltip can show a title.
     const parts = [`Active issue: ${cfg.activeIssue}`];
     parts.push(`Session cost: ${costStr} (${this.lastTokens.toLocaleString()} tokens)`);
-    parts.push("Click to change issue");
+    parts.push(`Model: ${modelLabel(cfg.model)}`);
+    parts.push("Click to change issue · `Talyvor: Select AI Model` to change model");
     return parts.join("\n");
   }
 
@@ -110,4 +116,12 @@ export class TalyvorStatusBar implements vscode.Disposable {
     this.stopCostSync();
     this.item.dispose();
   }
+}
+
+// modelLabel returns the human-friendly name for a model ID, or
+// the ID itself when we don't recognise it (custom proxy models
+// configured by an admin land in the fallback case).
+function modelLabel(id: string): string {
+  const profile = getModel(id);
+  return profile ? profile.displayName : id || "(default)";
 }

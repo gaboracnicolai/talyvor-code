@@ -28,10 +28,10 @@ import (
 	"github.com/talyvor/code/internal/lens"
 )
 
-// Model pinned to Haiku — shell commands are short, the user is
-// at a TTY waiting for them, and we'd rather burn a tiny model
-// than a slow one.
-const Model = "claude-haiku-4-6"
+// DefaultModel is the historical Haiku pin. Kept exported so the
+// MCP server and other in-process callers have a stable default;
+// the CLI passes its resolved model via the function arguments.
+const DefaultModel = "claude-haiku-4-6"
 
 // DetectShell extracts the shell binary name from $SHELL. Returns
 // "bash" when nothing usable is in the environment so callers
@@ -192,15 +192,18 @@ func stripGenerated(s string) string {
 }
 
 // Generate asks Lens for a shell command. Returns the cleaned
-// command, the estimated USD cost, and any error. Empty
-// description is treated as an error so we don't burn a Lens
-// call on a no-op.
-func Generate(ctx context.Context, lc *lens.Client, cfg *config.Config, description, shell, osName string) (string, float64, error) {
+// command, the estimated USD cost, and any error. Empty model
+// falls back to DefaultModel so callers that don't care about
+// per-call routing keep the historic behaviour.
+func Generate(ctx context.Context, lc *lens.Client, cfg *config.Config, description, shell, osName, model string) (string, float64, error) {
 	if strings.TrimSpace(description) == "" {
 		return "", 0, errors.New("shell: description is required")
 	}
 	if lc == nil || !lc.IsConfigured() {
 		return "", 0, errors.New("shell: lens not configured")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = DefaultModel
 	}
 	prompt := BuildShellPrompt(description, shell, osName)
 	wsID := ""
@@ -211,7 +214,7 @@ func Generate(ctx context.Context, lc *lens.Client, cfg *config.Config, descript
 	}
 	usage, err := lc.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		Model, "shell", wsID, issue,
+		model, "shell", wsID, issue,
 	)
 	if err != nil {
 		return "", 0, err
@@ -220,11 +223,14 @@ func Generate(ctx context.Context, lc *lens.Client, cfg *config.Config, descript
 }
 
 // Explain asks Lens for a short, one-sentence-per-part
-// breakdown of the supplied command. Uses Haiku since the
-// description is short and we want fast turnaround at the TTY.
-func Explain(ctx context.Context, lc *lens.Client, cfg *config.Config, command, shell, osName string) (string, float64, error) {
+// breakdown of the supplied command. Empty model falls back to
+// DefaultModel.
+func Explain(ctx context.Context, lc *lens.Client, cfg *config.Config, command, shell, osName, model string) (string, float64, error) {
 	if lc == nil || !lc.IsConfigured() {
 		return "", 0, errors.New("shell: lens not configured")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = DefaultModel
 	}
 	prompt := fmt.Sprintf(`Explain this %s command briefly — one sentence per part. The user is on %s.
 
@@ -236,7 +242,7 @@ Command: %s`, shell, osName, command)
 	}
 	usage, err := lc.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		Model, "shell-explain", wsID, issue,
+		model, "shell-explain", wsID, issue,
 	)
 	if err != nil {
 		return "", 0, err
@@ -246,10 +252,14 @@ Command: %s`, shell, osName, command)
 
 // SuggestFix asks Lens to repair a command that just failed,
 // given the original command + the error output. Returns ONLY
-// the corrected command (stripped of fences/preambles).
-func SuggestFix(ctx context.Context, lc *lens.Client, cfg *config.Config, originalCommand, errorOutput, shell, osName string) (string, error) {
+// the corrected command (stripped of fences/preambles). Empty
+// model falls back to DefaultModel.
+func SuggestFix(ctx context.Context, lc *lens.Client, cfg *config.Config, originalCommand, errorOutput, shell, osName, model string) (string, error) {
 	if lc == nil || !lc.IsConfigured() {
 		return "", errors.New("shell: lens not configured")
+	}
+	if strings.TrimSpace(model) == "" {
+		model = DefaultModel
 	}
 	prompt := fmt.Sprintf(`A shell command failed. Suggest a fix.
 
@@ -267,7 +277,7 @@ Return ONLY the corrected command — no prose, no fences.`,
 	}
 	usage, err := lc.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
-		Model, "shell-fix", wsID, issue,
+		model, "shell-fix", wsID, issue,
 	)
 	if err != nil {
 		return "", err
