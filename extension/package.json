@@ -1,0 +1,86 @@
+{
+  "name": "talyvor-code",
+  "displayName": "Talyvor Code",
+  "description": "AI coding assistant powered by Talyvor Lens — track AI costs per issue",
+  "version": "0.1.0",
+  "publisher": "talyvor",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": ["AI", "Programming Languages", "Other"],
+  "keywords": ["ai", "copilot", "coding assistant", "talyvor", "lens"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "Talyvor Code",
+      "properties": {
+        "talyvor.lensUrl": {
+          "type": "string",
+          "default": "http://localhost:8080",
+          "description": "Talyvor Lens URL"
+        },
+        "talyvor.lensApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Talyvor Lens API key"
+        },
+        "talyvor.trackUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Talyvor Track URL"
+        },
+        "talyvor.trackApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Talyvor Track API key"
+        },
+        "talyvor.workspaceId": {
+          "type": "string",
+          "default": "",
+          "description": "Talyvor workspace ID"
+        },
+        "talyvor.activeIssue": {
+          "type": "string",
+          "default": "",
+          "description": "Active Track issue (e.g. ENG-42)"
+        },
+        "talyvor.model": {
+          "type": "string",
+          "default": "claude-haiku-4-6",
+          "enum": [
+            "claude-haiku-4-6",
+            "claude-sonnet-4-6",
+            "gpt-4o",
+            "gpt-4o-mini",
+            "mistral-large",
+            "llama-3.1-70b"
+          ],
+          "description": "AI model for code completions"
+        },
+        "talyvor.enableCompletions": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable inline code completions"
+        }
+      }
+    },
+    "commands": [
+      {"command": "talyvor.setActiveIssue", "title": "Talyvor: Set Active Issue"},
+      {"command": "talyvor.showCostDashboard", "title": "Talyvor: Show AI Cost Dashboard"},
+      {"command": "talyvor.testConnection", "title": "Talyvor: Test Lens Connection"},
+      {"command": "talyvor.openChat", "title": "Talyvor: Open AI Chat"}
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.4.0"
+  }
+}
