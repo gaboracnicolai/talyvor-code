@@ -177,6 +177,62 @@ func PushBranch(branch string) error {
 	return err
 }
 
+// GetPRDiff returns the diff between HEAD and the merge base
+// with baseBranch — i.e. everything this branch added since it
+// forked. Matches what GitHub shows in the PR "Files changed"
+// tab. Empty string when the branch has no commits ahead.
+func GetPRDiff(baseBranch string) (string, error) {
+	if strings.TrimSpace(baseBranch) == "" {
+		return "", errors.New("git: base branch is required")
+	}
+	return run("git", "diff", baseBranch+"...HEAD")
+}
+
+// GetChangedFiles returns the file paths touched on this branch
+// relative to baseBranch's fork point. One path per slice entry,
+// no extra whitespace.
+func GetChangedFiles(baseBranch string) ([]string, error) {
+	if strings.TrimSpace(baseBranch) == "" {
+		return nil, errors.New("git: base branch is required")
+	}
+	out, err := run("git", "diff", "--name-only", baseBranch+"...HEAD")
+	if err != nil {
+		return nil, err
+	}
+	return splitLinesTrim(out), nil
+}
+
+// GetCommitMessages returns the commit subject lines on this
+// branch since it forked from baseBranch, newest first (git
+// log's natural order). Useful for surfacing intent in the
+// review prompt.
+func GetCommitMessages(baseBranch string) ([]string, error) {
+	if strings.TrimSpace(baseBranch) == "" {
+		return nil, errors.New("git: base branch is required")
+	}
+	out, err := run("git", "log", baseBranch+"..HEAD", "--format=%s")
+	if err != nil {
+		return nil, err
+	}
+	return splitLinesTrim(out), nil
+}
+
+// splitLinesTrim splits on newlines and drops empty entries.
+// Used by the diff-helper trio so callers don't have to filter
+// trailing newlines themselves.
+func splitLinesTrim(s string) []string {
+	raw := strings.Split(s, "\n")
+	out := make([]string, 0, len(raw))
+	for _, line := range raw {
+		t := strings.TrimSpace(line)
+		if t == "" {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // run executes a command and returns its combined stdout/stderr.
 // On non-zero exit it wraps the stderr text so the caller can
 // surface a useful error to the user.

@@ -263,6 +263,108 @@ func TestGetDiffStats_SummarisesChanges(t *testing.T) {
 	}
 }
 
+// ─── PR-style diff helpers ─────────────────────────
+
+// initBaseAndFeature stages a repo with one commit on `main`
+// and a feature branch with one extra commit. Returns the repo
+// dir + the feature-branch name.
+func initBaseAndFeature(t *testing.T) (string, string) {
+	t.Helper()
+	dir := initTempRepo(t)
+	chdir(t, dir)
+	// Base commit on main.
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	for _, args := range [][]string{
+		{"add", "base.txt"},
+		{"commit", "-q", "-m", "chore: base"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// Feature branch with an extra commit.
+	if out, err := exec.Command("git", "checkout", "-q", "-b", "feature/x").CombinedOutput(); err != nil {
+		t.Fatalf("checkout: %v\n%s", err, out)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.txt"), []byte("new file body\n"), 0o644); err != nil {
+		t.Fatalf("write new: %v", err)
+	}
+	for _, args := range [][]string{
+		{"add", "new.txt"},
+		{"commit", "-q", "-m", "feat: add new file"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	return dir, "feature/x"
+}
+
+func TestGetPRDiff_ReturnsCommittedChangesVsBase(t *testing.T) {
+	_, _ = initBaseAndFeature(t)
+	diff, err := GetPRDiff("main")
+	if err != nil {
+		t.Fatalf("GetPRDiff: %v", err)
+	}
+	if !strings.Contains(diff, "new.txt") {
+		t.Fatalf("expected diff to mention new.txt: %q", diff)
+	}
+	if !strings.Contains(diff, "new file body") {
+		t.Fatalf("expected diff to include body: %q", diff)
+	}
+	if strings.Contains(diff, "base.txt") {
+		t.Fatalf("diff should not include base commit's file: %q", diff)
+	}
+}
+
+func TestGetChangedFiles_ReturnsFeatureBranchFiles(t *testing.T) {
+	_, _ = initBaseAndFeature(t)
+	files, err := GetChangedFiles("main")
+	if err != nil {
+		t.Fatalf("GetChangedFiles: %v", err)
+	}
+	if len(files) != 1 || files[0] != "new.txt" {
+		t.Fatalf("files = %+v, want [new.txt]", files)
+	}
+}
+
+func TestGetCommitMessages_ReturnsFeatureSubjects(t *testing.T) {
+	_, _ = initBaseAndFeature(t)
+	msgs, err := GetCommitMessages("main")
+	if err != nil {
+		t.Fatalf("GetCommitMessages: %v", err)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected 1 commit on feature, got %+v", msgs)
+	}
+	if msgs[0] != "feat: add new file" {
+		t.Fatalf("subject = %q, want feat: add new file", msgs[0])
+	}
+}
+
+func TestGetPRDiff_EmptyOnSameBranch(t *testing.T) {
+	dir := initTempRepo(t)
+	chdir(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("a\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	for _, args := range [][]string{{"add", "a.txt"}, {"commit", "-q", "-m", "init"}} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	// Diff against ourselves should be empty (no commits ahead).
+	diff, err := GetPRDiff("main")
+	if err != nil {
+		t.Fatalf("GetPRDiff: %v", err)
+	}
+	if strings.TrimSpace(diff) != "" {
+		t.Fatalf("expected empty diff, got %q", diff)
+	}
+}
+
 func TestCommit_CreatesCommit(t *testing.T) {
 	dir := initTempRepo(t)
 	chdir(t, dir)

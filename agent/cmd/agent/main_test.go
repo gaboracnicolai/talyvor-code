@@ -978,6 +978,148 @@ func TestReview_OnExplicitFilesHitsSonnet(t *testing.T) {
 	}
 }
 
+// ─── review --pr / --output ─────────────────────────
+
+// initBaseAndFeatureRepo materialises a repo with one base
+// commit and one feature-branch commit so review --pr has
+// something to look at. Returns the repo dir.
+func initBaseAndFeatureRepo(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, dir, "add", "base.txt")
+	runGit(t, dir, "commit", "-q", "-m", "chore: base")
+	runGit(t, dir, "checkout", "-q", "-b", "feature/x")
+	if err := os.WriteFile(filepath.Join(dir, "feat.txt"), []byte("feature body\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, dir, "add", "feat.txt")
+	runGit(t, dir, "commit", "-q", "-m", "feat: add feat.txt")
+	return dir
+}
+
+func TestReview_PRSendsPRDiffAndPromptStructure(t *testing.T) {
+	dir := initBaseAndFeatureRepo(t)
+	chdirT(t, dir)
+
+	var gotBody map[string]any
+	var promptContent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &gotBody)
+		if msgs, ok := gotBody["messages"].([]any); ok && len(msgs) > 0 {
+			if m, ok := msgs[0].(map[string]any); ok {
+				promptContent, _ = m["content"].(string)
+			}
+		}
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"## PR Summary\nAdds feat.txt.\n## Review\n### 🔴 Critical Issues\nNone.\n### 🟡 Warnings\n- minor\n### 💡 Suggestions\n- consider X\n### ✅ Good Patterns\n- tidy structure\n## Verdict\nAPPROVE"}]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"review", "--pr"}, &stdout, &stderr); err != nil {
+		t.Fatalf("review --pr: %v", err)
+	}
+	// The diff body should mention feat.txt (PR scope) and NOT
+	// base.txt (base commit before the fork).
+	if !strings.Contains(promptContent, "feat.txt") {
+		t.Fatalf("prompt missing feat.txt:\n%s", promptContent)
+	}
+	if strings.Contains(promptContent, "base.txt") {
+		t.Fatalf("prompt should not include base file: present in:\n%s", promptContent)
+	}
+	// Prompt must include the PR-specific scaffolding so the
+	// model produces the structured review.
+	for _, want := range []string{"PR Summary", "Verdict", "Good Patterns"} {
+		if !strings.Contains(promptContent, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+	// Lens called with feature=pr-review.
+	if gotBody["model"] != "claude-sonnet-4-6" {
+		t.Errorf("expected sonnet, got %v", gotBody["model"])
+	}
+	if !strings.Contains(stderr.String(), "feature=pr-review") {
+		t.Fatalf("stderr should report feature=pr-review: %q", stderr.String())
+	}
+	// Verdict + review surfaces on stdout.
+	if !strings.Contains(stdout.String(), "## PR Summary") {
+		t.Fatalf("review not surfaced: %q", stdout.String())
+	}
+}
+
+func TestReview_OutputJSONIncludesVerdictAndCounts(t *testing.T) {
+	dir := initBaseAndFeatureRepo(t)
+	chdirT(t, dir)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"## PR Summary\nA short description.\n\n## Review\n\n### 🔴 Critical Issues\n- SQL injection\n- Hardcoded token\n\n### 🟡 Warnings\n- N+1 query\n\n### 💡 Suggestions\n- Rename helper\n\n### ✅ Good Patterns\n- Solid error handling\n\n## Verdict\nREQUEST CHANGES"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"review", "--pr", "--output", "json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("review --pr --output json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, stdout.String())
+	}
+	if got["verdict"] != "REQUEST CHANGES" {
+		t.Errorf("verdict = %v", got["verdict"])
+	}
+	if got["critical_count"].(float64) != 2 {
+		t.Errorf("critical_count = %v", got["critical_count"])
+	}
+	if got["warning_count"].(float64) != 1 {
+		t.Errorf("warning_count = %v", got["warning_count"])
+	}
+	if !strings.Contains(got["summary"].(string), "short description") {
+		t.Errorf("summary = %v", got["summary"])
+	}
+	if !strings.Contains(got["full_review"].(string), "Solid error handling") {
+		t.Errorf("full_review missing body")
+	}
+}
+
+func TestReview_PRWithNoCommitsAhead(t *testing.T) {
+	// Repo with only the base commit — switching to main means
+	// HEAD == main and the PR diff is empty.
+	dir := t.TempDir()
+	runGit(t, dir, "init", "-q", "-b", "main")
+	runGit(t, dir, "config", "user.email", "t@example.com")
+	runGit(t, dir, "config", "user.name", "Test")
+	runGit(t, dir, "config", "commit.gpgsign", "false")
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	runGit(t, dir, "add", "f.txt")
+	runGit(t, dir, "commit", "-q", "-m", "init")
+	chdirT(t, dir)
+	t.Setenv("TALYVOR_LENS_URL", "http://localhost:9999")
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	err := run([]string{"review", "--pr"}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "no commits ahead") {
+		t.Fatalf("expected 'no commits ahead' error, got %v", err)
+	}
+}
+
 // ─── commit subcommand ─────────────────────────────
 
 func TestCommit_NoStagedChangesErrors(t *testing.T) {

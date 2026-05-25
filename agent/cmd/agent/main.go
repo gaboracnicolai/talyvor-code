@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"context"
 	jsonPkg "encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -887,12 +888,22 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 		reviewType string
 		issue      string
 		modelOpt   string
+		prMode     bool
+		baseFlag   string
+		ghPost     bool
+		output     string
+		tokenFlag  string
 	)
 	fs := flag.NewFlagSet("review", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&reviewType, "type", "general", "Review type: general|security|performance")
 	fs.StringVar(&issue, "issue", "", "Override active issue")
 	fs.StringVar(&modelOpt, "model", "", "Override AI model (see `talyvor-code models`)")
+	fs.BoolVar(&prMode, "pr", false, "Review the current PR diff (vs base branch)")
+	fs.StringVar(&baseFlag, "base", "", "Base branch for --pr (default: auto-detect)")
+	fs.BoolVar(&ghPost, "github", false, "Post review as a GitHub PR comment (requires GITHUB_TOKEN)")
+	fs.StringVar(&output, "output", "text", "Output format: text|markdown|json")
+	fs.StringVar(&tokenFlag, "token", "", "GitHub token (or GITHUB_TOKEN env) for --github")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -908,8 +919,31 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	}
 	files := fs.Args()
 
-	var body string
+	var (
+		body         string
+		commits      []string
+		changedFiles []string
+	)
 	switch {
+	case prMode:
+		base := baseFlag
+		if base == "" {
+			def, err := gitpkg.GetDefaultBranch()
+			if err != nil {
+				return fmt.Errorf("review: %w (pass --base)", err)
+			}
+			base = def
+		}
+		diff, err := gitpkg.GetPRDiff(base)
+		if err != nil {
+			return fmt.Errorf("review: %w", err)
+		}
+		if strings.TrimSpace(diff) == "" {
+			return fmt.Errorf("review: no commits ahead of %s — nothing to review", base)
+		}
+		changedFiles, _ = gitpkg.GetChangedFiles(base)
+		commits, _ = gitpkg.GetCommitMessages(base)
+		body = github.TruncateDiff(diff, github.MaxDiffChars)
 	case len(files) > 0:
 		ctx, err := codebase.ReadFilesForContext(files, codebase.DefaultMaxTotalBytes)
 		if err != nil {
@@ -927,24 +961,142 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 		body = "=== git diff --staged ===\n" + diff
 	}
 
-	system := reviewSystemPrompt(reviewType)
+	system := reviewSystemPrompt(reviewType, prMode)
 	if rs, _ := rules.Load("."); rs != nil {
 		system = rules.PromptPrefix(rules.ForReview(rs)) + system
 	}
-	user := system + "\n\nReview this code:\n\n" + body
+	userMsg := buildReviewUserMessage(system, body, commits, changedFiles, prMode)
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
+	feature := "code-review"
+	if prMode {
+		feature = "pr-review"
+	}
 	out, err := lc.Complete(ctx,
-		[]lens.Message{{Role: "user", Content: user}},
-		chosenModel, "code-review", cfg.WorkspaceID, cfg.ActiveIssue,
+		[]lens.Message{{Role: "user", Content: userMsg}},
+		chosenModel, feature, cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return fmt.Errorf("review: %w", err)
 	}
-	fmt.Fprintln(stdout, strings.TrimSpace(out))
-	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", chosenModel, nonEmpty(cfg.ActiveIssue, "(none)"))
+	review := strings.TrimSpace(out)
+
+	switch strings.ToLower(output) {
+	case "json":
+		critical, warning := github.CountFindings(review)
+		payload, _ := jsonPkg.MarshalIndent(map[string]any{
+			"verdict":        github.ExtractVerdict(review),
+			"critical_count": critical,
+			"warning_count":  warning,
+			"summary":        firstSection(review, "## PR Summary"),
+			"full_review":    review,
+		}, "", "  ")
+		fmt.Fprintln(stdout, string(payload))
+	default:
+		fmt.Fprintln(stdout, review)
+	}
+	fmt.Fprintf(stderr, "(model=%s issue=%s feature=%s)\n",
+		chosenModel, nonEmpty(cfg.ActiveIssue, "(none)"), feature)
+
+	// Optional GitHub posting — needs a token, a GitHub remote, and
+	// an open PR for the current branch. Each step degrades
+	// gracefully with a clear message rather than a hard error.
+	if ghPost {
+		if err := postReviewToGitHub(ctx, stderr, review, tokenFlag); err != nil {
+			fmt.Fprintf(stderr, "! github post: %v\n", err)
+		}
+	}
+	return nil
+}
+
+// buildReviewUserMessage assembles the user-side message body.
+// For PR mode we include commit subjects + the file list to give
+// the model intent context the diff alone misses.
+func buildReviewUserMessage(system, body string, commits, files []string, prMode bool) string {
+	var b strings.Builder
+	b.WriteString(system)
+	b.WriteString("\n\n")
+	if prMode {
+		b.WriteString("Review this pull request:\n\n")
+		if len(commits) > 0 {
+			b.WriteString("Commits:\n")
+			for _, c := range commits {
+				fmt.Fprintf(&b, "  - %s\n", c)
+			}
+			b.WriteString("\n")
+		}
+		if len(files) > 0 {
+			b.WriteString("Files changed:\n")
+			for _, f := range files {
+				fmt.Fprintf(&b, "  - %s\n", f)
+			}
+			b.WriteString("\n")
+		}
+		b.WriteString("Diff:\n")
+		b.WriteString(body)
+	} else {
+		b.WriteString("Review this code:\n\n")
+		b.WriteString(body)
+	}
+	return b.String()
+}
+
+// firstSection extracts the body under the supplied heading up
+// to the next heading. Used to surface the "## PR Summary" block
+// in the JSON output without re-parsing the full review.
+func firstSection(review, heading string) string {
+	lines := strings.Split(review, "\n")
+	out := []string{}
+	in := false
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if !in {
+			if strings.EqualFold(trim, heading) {
+				in = true
+			}
+			continue
+		}
+		if strings.HasPrefix(trim, "## ") || strings.HasPrefix(trim, "# ") {
+			break
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
+}
+
+// postReviewToGitHub resolves owner/repo/branch from the local
+// git state, looks up the open PR, and posts the review body as
+// a COMMENT-event PR review.
+func postReviewToGitHub(ctx context.Context, stderr io.Writer, review, tokenFlag string) error {
+	token := nonEmpty(tokenFlag, os.Getenv("GITHUB_TOKEN"))
+	if token == "" {
+		return errors.New("GITHUB_TOKEN required (set the env var or pass --token)")
+	}
+	remote, err := gitpkg.GetRemoteURL()
+	if err != nil {
+		return err
+	}
+	if !gitpkg.IsGitHub(remote) {
+		return errors.New("not a GitHub repository — skipping post")
+	}
+	owner, repo, err := github.ParseRepoFromURL(remote)
+	if err != nil {
+		return err
+	}
+	branch, err := gitpkg.GetCurrentBranch()
+	if err != nil {
+		return err
+	}
+	num, err := github.GetOpenPR(ctx, token, owner, repo, branch)
+	if err != nil {
+		return err
+	}
+	if err := github.PostPRReview(ctx, token, owner, repo, num, review); err != nil {
+		return err
+	}
+	fmt.Fprintf(stderr, "✅ Posted review to PR #%d\n", num)
 	return nil
 }
 
@@ -952,13 +1104,26 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 // "type" knob shifts emphasis without overhauling the framing —
 // security/performance reviews still benefit from the same
 // "Issues Found / Critical / Warnings / Suggestions" skeleton.
-func reviewSystemPrompt(reviewType string) string {
+// In --pr mode we switch to the richer PR review skeleton with a
+// summary block + a verdict line the JSON path parses.
+func reviewSystemPrompt(reviewType string, prMode bool) string {
 	focus := "Bugs and logic errors, security vulnerabilities, performance issues, code quality, and maintainability."
 	switch strings.ToLower(reviewType) {
 	case "security":
 		focus = "Authentication & authorization gaps, input validation, injection (SQL/command/template), unsafe deserialization, secret handling, CSRF/XSS, dependency CVEs, and data leakage."
 	case "performance":
 		focus = "Algorithmic complexity, N+1 queries, memory allocations on hot paths, blocking I/O, lock contention, and unnecessary computation in render paths."
+	}
+	if prMode {
+		return "You are an expert code reviewer performing a pull-request review. Analyze the diff carefully and focus on: " + focus + "\n\n" +
+			"Structure your review as Markdown with these sections:\n\n" +
+			"## PR Summary\n<2-3 sentence summary of what this PR does>\n\n" +
+			"## Review\n\n" +
+			"### 🔴 Critical Issues\n<blocking issues that must be fixed>\n\n" +
+			"### 🟡 Warnings\n<non-blocking issues worth addressing>\n\n" +
+			"### 💡 Suggestions\n<optional improvements>\n\n" +
+			"### ✅ Good Patterns\n<things done well — always include at least one>\n\n" +
+			"## Verdict\nAPPROVE / REQUEST CHANGES / NEEDS DISCUSSION"
 	}
 	return "You are an expert code reviewer. Focus on: " + focus + "\n\n" +
 		"Format your response as Markdown with these sections:\n" +

@@ -41,6 +41,7 @@ import {
 } from "./commands/docs-commands";
 import { generateShellCommand } from "./commands/shell-command";
 import { selectModelCommand } from "./commands/model-selector";
+import { reviewPRCommand, reviewSelectionCommand } from "./commands/pr-review";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -198,6 +199,18 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("talyvor.selectModel", () =>
       selectModelCommand(),
+    ),
+    vscode.commands.registerCommand("talyvor.reviewPR", () =>
+      reviewPRCommand(lensClient, tracker, TalyvorConfig.getLensConfig(), issueProvider),
+    ),
+    vscode.commands.registerCommand("talyvor.reviewSelection", () =>
+      reviewSelectionCommand(
+        context.extensionUri,
+        lensClient,
+        tracker,
+        TalyvorConfig.getLensConfig(),
+        issueProvider,
+      ),
     ),
   );
 

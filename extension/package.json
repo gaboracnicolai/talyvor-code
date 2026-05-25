@@ -99,7 +99,9 @@
       {"command": "talyvor.askDocs", "title": "Talyvor: Ask Docs"},
       {"command": "talyvor.linkDocToIssue", "title": "Talyvor: Link Docs Page to Active Issue"},
       {"command": "talyvor.generateShellCommand", "title": "Talyvor: Generate Shell Command"},
-      {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"}
+      {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"},
+      {"command": "talyvor.reviewPR", "title": "Talyvor: Review Current PR"},
+      {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"}
     ],
     "menus": {
       "editor/context": [
@@ -111,7 +113,8 @@
         {"command": "talyvor.startAgentTask", "group": "talyvor@6"},
         {"command": "talyvor.createIssueFromCode", "group": "talyvor@7", "when": "editorHasSelection"},
         {"command": "talyvor.searchDocs", "group": "talyvor@8"},
-        {"command": "talyvor.askDocs", "group": "talyvor@9", "when": "editorHasSelection"}
+        {"command": "talyvor.askDocs", "group": "talyvor@9", "when": "editorHasSelection"},
+        {"command": "talyvor.reviewSelection", "group": "talyvor@10", "when": "editorHasSelection"}
       ]
     },
     "keybindings": [
