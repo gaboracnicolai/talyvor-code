@@ -1,0 +1,24 @@
+{
+  "auth": {
+    "name": "Authentication",
+    "includes": ["internal/auth/**", "cmd/auth/**"],
+    "excludes": ["**/*_test.go"],
+    "focus": "JWT authentication and session management"
+  },
+  "api": {
+    "name": "API Layer",
+    "includes": ["internal/api/**", "internal/handlers/**"],
+    "focus": "REST API endpoints and middleware"
+  },
+  "database": {
+    "name": "Database Layer",
+    "includes": ["internal/db/**", "migrations/**"],
+    "focus": "PostgreSQL queries and schema migrations"
+  },
+  "frontend": {
+    "name": "Frontend",
+    "includes": ["frontend/src/**"],
+    "excludes": ["frontend/src/**/*.test.*"],
+    "focus": "React components and TypeScript"
+  }
+}

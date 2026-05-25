@@ -102,7 +102,8 @@
       {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"},
       {"command": "talyvor.reviewPR", "title": "Talyvor: Review Current PR"},
       {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"},
-      {"command": "talyvor.generateContext", "title": "Talyvor: Generate Project Context"}
+      {"command": "talyvor.generateContext", "title": "Talyvor: Generate Project Context"},
+      {"command": "talyvor.setScope", "title": "Talyvor: Set Context Scope"}
     ],
     "menus": {
       "editor/context": [

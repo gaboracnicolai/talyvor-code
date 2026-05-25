@@ -16,6 +16,8 @@ import type { RulesLoader } from "../rules/rules-loader";
 import { forLanguage, promptPrefix } from "../rules/rules-pure";
 import type { ContextLoader } from "../context/context-loader";
 import { combinedPrefix } from "../context/context-pure";
+import type { ScopeManager } from "../scope/scope-manager";
+import { toPromptSection as scopePromptSection } from "../scope/scope-pure";
 import {
   buildCompletionPrompt,
   getCodeContext,
@@ -53,6 +55,7 @@ export class TalyvorCompletionProvider
     private issueContext?: IssueContextProvider,
     private rulesLoader?: RulesLoader,
     private contextLoader?: ContextLoader,
+    private scopeManager?: ScopeManager,
   ) {}
 
   // setOnUpdate lets the host (extension.ts) refresh the status bar
@@ -135,14 +138,18 @@ export class TalyvorCompletionProvider
     const ctx = getCodeContext(document, position);
     const userPrompt = buildCompletionPrompt(ctx);
     const issueCtx = this.issueContext?.getIssueContext() ?? "";
-    // Rules + project context ride at the start of the system
-    // prompt — models attend to leading content more reliably
-    // than the tail. Rules first (HOW to write), context second
-    // (WHAT the project is).
+    // Rules → context → scope, then the task-specific system
+    // prompt. Models attend to leading content more reliably
+    // than the tail.
     const rulesPrefix = promptPrefix(
       forLanguage(this.rulesLoader?.get(), document.languageId),
     );
-    const prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+    let prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+    const scopeSection = scopePromptSection(
+      this.scopeManager?.getActive(),
+      this.scopeManager?.activeName(),
+    );
+    if (scopeSection) prefix += scopeSection + "\n";
     const systemPrompt = prefix
       + (issueCtx
         ? `${SYSTEM_PROMPT}\n\nActive issue context:\n${issueCtx}`

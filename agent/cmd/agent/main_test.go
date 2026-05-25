@@ -951,6 +951,131 @@ func TestInit_RefusesToOverwriteExistingRules(t *testing.T) {
 	}
 }
 
+// ─── scope subcommand ──────────────────────────────
+
+const sampleScopesJSON = `{
+  "auth": {
+    "name": "Authentication",
+    "includes": ["internal/auth/**"],
+    "excludes": ["**/*_test.go"],
+    "focus": "JWT auth and session management"
+  },
+  "api": {
+    "name": "API Layer",
+    "includes": ["internal/api/**"],
+    "focus": "REST endpoints"
+  }
+}`
+
+func TestScope_ListShowsCatalogue(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-scopes"), []byte(sampleScopesJSON), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"scope", "list"}, &stdout, &stderr); err != nil {
+		t.Fatalf("scope list: %v", err)
+	}
+	for _, want := range []string{"auth", "Authentication", "api", "API Layer"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("missing %q in output:\n%s", want, stdout.String())
+		}
+	}
+}
+
+func TestScope_UsePersistsActiveScope(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-scopes"), []byte(sampleScopesJSON), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"scope", "use", "auth"}, &stdout, &stderr); err != nil {
+		t.Fatalf("scope use: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Scope set to: auth") {
+		t.Fatalf("expected confirmation: %q", stdout.String())
+	}
+	body, err := os.ReadFile(filepath.Join(dir, ".talyvor-active-scope"))
+	if err != nil {
+		t.Fatalf("read active-scope: %v", err)
+	}
+	if strings.TrimSpace(string(body)) != "auth" {
+		t.Fatalf("active-scope body = %q, want auth", string(body))
+	}
+
+	// `scope list` now marks auth as active.
+	var listOut bytes.Buffer
+	if err := run([]string{"scope", "list"}, &listOut, &stderr); err != nil {
+		t.Fatalf("scope list: %v", err)
+	}
+	if !strings.Contains(listOut.String(), "* auth") {
+		t.Fatalf("list should mark auth active: %q", listOut.String())
+	}
+}
+
+func TestScope_ClearRemovesActiveFile(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-scopes"), []byte(sampleScopesJSON), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-active-scope"), []byte("auth\n"), 0o644); err != nil {
+		t.Fatalf("write active: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"scope", "clear"}, &stdout, &stderr); err != nil {
+		t.Fatalf("scope clear: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "Scope cleared") {
+		t.Fatalf("expected cleared message: %q", stdout.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".talyvor-active-scope")); err == nil {
+		t.Fatal("active-scope file should be gone")
+	}
+}
+
+// TestAsk_PromptIncludesActiveScope confirms .talyvor-scopes is
+// auto-prepended to the user-message body (after rules + context).
+func TestAsk_PromptIncludesActiveScope(t *testing.T) {
+	dir := t.TempDir()
+	chdirT(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-scopes"), []byte(sampleScopesJSON), 0o644); err != nil {
+		t.Fatalf("write scopes: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".talyvor-active-scope"), []byte("auth\n"), 0o644); err != nil {
+		t.Fatalf("write active: %v", err)
+	}
+
+	var gotContent string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		buf, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(buf, &body)
+		if msgs, ok := body["messages"].([]any); ok && len(msgs) > 0 {
+			if m, ok := msgs[0].(map[string]any); ok {
+				gotContent, _ = m["content"].(string)
+			}
+		}
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}]}`))
+	}))
+	defer srv.Close()
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"ask", "what does auth do?"}, &stdout, &stderr); err != nil {
+		t.Fatalf("ask: %v", err)
+	}
+	for _, want := range []string{"Active scope: Authentication", "Focus: JWT auth", "internal/auth/**"} {
+		if !strings.Contains(gotContent, want) {
+			t.Errorf("prompt missing %q:\n%s", want, gotContent)
+		}
+	}
+}
+
 // ─── context subcommand ────────────────────────────
 
 func TestContext_ShowReportsMissingFile(t *testing.T) {

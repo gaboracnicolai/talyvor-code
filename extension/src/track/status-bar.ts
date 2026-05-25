@@ -6,6 +6,7 @@
 import * as vscode from "vscode";
 import type { LensConfig } from "../lens/types";
 import type { IssueContextProvider } from "./issue-context";
+import type { ScopeManager } from "../scope/scope-manager";
 import { getModel } from "../model/models-pure";
 
 export class TalyvorStatusBar implements vscode.Disposable {
@@ -15,6 +16,7 @@ export class TalyvorStatusBar implements vscode.Disposable {
   private lastConfig: LensConfig | undefined;
   private lastSessionCost = 0;
   private lastTokens = 0;
+  private scopeManager: ScopeManager | undefined;
 
   constructor(context: vscode.ExtensionContext) {
     this.item = vscode.window.createStatusBarItem(
@@ -35,6 +37,15 @@ export class TalyvorStatusBar implements vscode.Disposable {
     this.render();
   }
 
+  // bindScopeManager wires a ScopeManager whose active state
+  // gets rendered between issue and cost in the bar. Calls
+  // render() once and again on every scope change.
+  bindScopeManager(manager: ScopeManager): vscode.Disposable {
+    this.scopeManager = manager;
+    this.render();
+    return manager.onChange(() => this.render());
+  }
+
   private render(): void {
     const cfg = this.lastConfig;
     if (!cfg || !cfg.url || !cfg.apiKey) {
@@ -50,28 +61,39 @@ export class TalyvorStatusBar implements vscode.Disposable {
       return;
     }
     const cost = `$${this.lastSessionCost.toFixed(2)}`;
+    const scopeName = this.scopeManager?.activeName() ?? "";
+    const scopeChip = scopeName ? ` | $(filter) ${scopeName}` : "";
     if (!cfg.activeIssue) {
-      this.item.text = `$(sparkle) Talyvor | ${cost}`;
+      this.item.text = `$(sparkle) Talyvor${scopeChip} | ${cost}`;
       this.item.tooltip = [
         `Session cost: ${cost} (${this.lastTokens.toLocaleString()} tokens)`,
         `Model: ${modelLabel(cfg.model)}`,
+        scopeName ? `Scope: ${this.scopeDescription(scopeName)}` : "Scope: (all files)",
         "Click to set an active issue.",
       ].join("\n");
       this.item.command = "talyvor.setActiveIssue";
       return;
     }
-    this.item.text = `$(sparkle) ${cfg.activeIssue} | ${cost}`;
-    this.item.tooltip = this.buildIssueTooltip(cfg, cost);
+    this.item.text = `$(sparkle) ${cfg.activeIssue}${scopeChip} | ${cost}`;
+    this.item.tooltip = this.buildIssueTooltip(cfg, cost, scopeName);
     this.item.command = "talyvor.setActiveIssue";
   }
 
-  private buildIssueTooltip(cfg: LensConfig, costStr: string): string {
+  private scopeDescription(key: string): string {
+    const s = this.scopeManager?.get(key);
+    if (!s) return key;
+    const display = s.name.trim() || key;
+    return s.focus.trim() ? `${display} — ${s.focus.trim()}` : display;
+  }
+
+  private buildIssueTooltip(cfg: LensConfig, costStr: string, scopeName: string): string {
     // The provider is what holds the current issue object; we
     // accept the small coupling so the tooltip can show a title.
     const parts = [`Active issue: ${cfg.activeIssue}`];
     parts.push(`Session cost: ${costStr} (${this.lastTokens.toLocaleString()} tokens)`);
     parts.push(`Model: ${modelLabel(cfg.model)}`);
-    parts.push("Click to change issue · `Talyvor: Select AI Model` to change model");
+    parts.push(scopeName ? `Scope: ${this.scopeDescription(scopeName)}` : "Scope: (all files)");
+    parts.push("Click to change issue · `Talyvor: Set Context Scope` to change scope · `Talyvor: Select AI Model` to change model");
     return parts.join("\n");
   }
 

@@ -35,6 +35,8 @@ import { SpecWatcher } from "./docs/spec-watcher";
 import { RulesLoader } from "./rules/rules-loader";
 import { ContextLoader } from "./context/context-loader";
 import { generateContextCommand } from "./commands/context-command";
+import { ScopeManager } from "./scope/scope-manager";
+import { setScopeCommand } from "./commands/scope-command";
 import {
   askDocsCommand,
   linkDocToIssueCommand,
@@ -57,7 +59,9 @@ export function activate(context: vscode.ExtensionContext): void {
   void rulesLoader.initialize();
   const contextLoader = new ContextLoader();
   void contextLoader.initialize();
-  context.subscriptions.push(specWatcher, rulesLoader, contextLoader);
+  const scopeManager = new ScopeManager();
+  void scopeManager.initialize();
+  context.subscriptions.push(specWatcher, rulesLoader, contextLoader, scopeManager);
 
   // Listen for every Lens call's cost and roll it into the
   // per-issue session bucket so the sync timer has something to
@@ -73,7 +77,10 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   refreshStatusBar();
   issueProvider.onUpdate(refreshStatusBar);
-  context.subscriptions.push(tracker.onRecord(refreshStatusBar));
+  context.subscriptions.push(
+    tracker.onRecord(refreshStatusBar),
+    statusBar.bindScopeManager(scopeManager),
+  );
 
   // Resolve the persisted active issue on startup so prompts pick
   // up the title/description without waiting for the first
@@ -96,6 +103,7 @@ export function activate(context: vscode.ExtensionContext): void {
     issueProvider,
     rulesLoader,
     contextLoader,
+    scopeManager,
   );
   completionProvider.setOnUpdate(refreshStatusBar);
   context.subscriptions.push(
@@ -146,10 +154,14 @@ export function activate(context: vscode.ExtensionContext): void {
         issueProvider,
         rulesLoader,
         contextLoader,
+        scopeManager,
       ),
     ),
     vscode.commands.registerCommand("talyvor.generateContext", () =>
       generateContextCommand(lensClient, tracker, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.setScope", () =>
+      setScopeCommand(scopeManager),
     ),
     vscode.commands.registerCommand("talyvor.explainCode", () =>
       runContextPrompt(
@@ -160,10 +172,11 @@ export function activate(context: vscode.ExtensionContext): void {
         "Explain this code:",
         rulesLoader,
         contextLoader,
+        scopeManager,
       ),
     ),
     vscode.commands.registerCommand("talyvor.fixError", () =>
-      runFixErrorCommand(context.extensionUri, lensClient, tracker, issueProvider, rulesLoader, contextLoader),
+      runFixErrorCommand(context.extensionUri, lensClient, tracker, issueProvider, rulesLoader, contextLoader, scopeManager),
     ),
     vscode.commands.registerCommand("talyvor.refactorCode", () =>
       runContextPrompt(
@@ -174,6 +187,7 @@ export function activate(context: vscode.ExtensionContext): void {
         "Refactor this code to be cleaner and more maintainable:",
         rulesLoader,
         contextLoader,
+        scopeManager,
       ),
     ),
     vscode.commands.registerCommand("talyvor.generateTests", () =>
@@ -428,6 +442,7 @@ async function runContextPrompt(
   instruction: string,
   rulesLoader?: RulesLoader,
   contextLoader?: ContextLoader,
+  scopeManager?: ScopeManager,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -451,6 +466,7 @@ async function runContextPrompt(
     provider,
     rulesLoader,
     contextLoader,
+    scopeManager,
   );
 }
 
@@ -570,6 +586,7 @@ async function runFixErrorCommand(
   provider: IssueContextProvider,
   rulesLoader?: RulesLoader,
   contextLoader?: ContextLoader,
+  scopeManager?: ScopeManager,
 ): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor) {
@@ -602,5 +619,6 @@ async function runFixErrorCommand(
     provider,
     rulesLoader,
     contextLoader,
+    scopeManager,
   );
 }

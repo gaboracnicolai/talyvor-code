@@ -32,6 +32,7 @@ import (
 	"github.com/talyvor/code/internal/projectctx"
 	"github.com/talyvor/code/internal/rules"
 	"github.com/talyvor/code/internal/runner"
+	"github.com/talyvor/code/internal/scope"
 	"github.com/talyvor/code/internal/shell"
 	"github.com/talyvor/code/internal/track"
 )
@@ -126,6 +127,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runInit(os.Stdin, stdout, stderr, cfg)
 	case "context":
 		return runContext(os.Stdin, stdout, stderr, cfg, rest)
+	case "scope":
+		return runScope(os.Stdin, stdout, stderr, rest)
 	case "shell", "sh":
 		return runShell(os.Stdin, stdout, stderr, cfg, rest)
 	case "models":
@@ -156,6 +159,7 @@ COMMANDS
   serve      Start the Talyvor Code MCP server
   init       Write starter .talyvor-rules and .talyvor-context files
   context    Show / generate / validate / edit the .talyvor-context file
+  scope      List / use / clear / show / add .talyvor-scopes entries
   shell      Generate a shell command from a description (alias: sh)
   models     List supported AI models with their profiles
   pr         Open a GitHub pull request from the current branch
@@ -294,17 +298,18 @@ func resolveAndValidate(flagValue, envValue, command string) (string, error) {
 	return chosen, nil
 }
 
-// combinedPrefix loads .talyvor-rules + .talyvor-context from
-// `root` and returns the "rules first, context second" prefix
-// that every Lens call prepends to its system prompt. Empty
-// string when neither file exists.
+// combinedPrefix loads .talyvor-rules + .talyvor-context +
+// .talyvor-scopes / .talyvor-active-scope from `root` and
+// returns the "rules → context → scope" prefix that every Lens
+// call prepends to its system prompt. Empty string when none of
+// the three sources have anything to contribute.
 //
 // section selects which slice of the rules file to pull:
 //   - "lang"    → ForLanguage(languageID)
 //   - "agent"   → ForAgent
 //   - "review"  → ForReview
 //   - "testing" → ForTesting(languageID)
-//   - ""        → no rules (context only)
+//   - ""        → no rules (context/scope only)
 func combinedPrefix(root, section, languageID string) string {
 	rs, _ := rules.Load(root)
 	var rulesPrefix string
@@ -319,7 +324,25 @@ func combinedPrefix(root, section, languageID string) string {
 		rulesPrefix = rules.PromptPrefix(rules.ForTesting(rs, languageID))
 	}
 	pc, _ := projectctx.Load(root)
-	return projectctx.CombinedPrefix(rulesPrefix, pc)
+	prefix := projectctx.CombinedPrefix(rulesPrefix, pc)
+	if scopeSection := activeScopeSection(root); scopeSection != "" {
+		prefix = prefix + scopeSection + "\n"
+	}
+	return prefix
+}
+
+// activeScopeSection loads the scope manager and returns the
+// active scope's prompt section (or "") so combinedPrefix can
+// append it without duplicating the manager-creation boilerplate.
+func activeScopeSection(root string) string {
+	sm := scope.NewManager(root)
+	if err := sm.Load(); err != nil {
+		return ""
+	}
+	if err := sm.LoadActive(); err != nil {
+		return ""
+	}
+	return sm.ToPromptSection()
 }
 
 // runChat implements an interactive REPL. Each turn appends to a
@@ -2649,6 +2672,162 @@ func runContextValidate(stdout, stderr io.Writer) error {
 		fmt.Fprintf(stderr, "  - %s\n", w)
 	}
 	return nil
+}
+
+// ─── scope subcommand ──────────────────────────────
+
+func runScope(stdin io.Reader, stdout, stderr io.Writer, args []string) error {
+	if len(args) == 0 {
+		printScopeUsage(stdout)
+		return nil
+	}
+	sub, rest := args[0], args[1:]
+	sm := scope.NewManager(".")
+	if err := sm.Load(); err != nil {
+		return fmt.Errorf("scope: %w", err)
+	}
+	if err := sm.LoadActive(); err != nil {
+		return fmt.Errorf("scope: %w", err)
+	}
+	switch sub {
+	case "list":
+		return runScopeList(stdout, sm)
+	case "use":
+		if len(rest) == 0 {
+			return errors.New("scope use: name required (e.g. `talyvor-code scope use auth`)")
+		}
+		return runScopeUse(stdout, sm, rest[0])
+	case "clear":
+		return runScopeClear(stdout, sm)
+	case "show":
+		return runScopeShow(stdout, sm)
+	case "add":
+		return runScopeAdd(stdin, stdout, stderr, sm)
+	case "help", "-h", "--help":
+		printScopeUsage(stdout)
+		return nil
+	}
+	return fmt.Errorf("unknown scope subcommand %q (try `talyvor-code scope help`)", sub)
+}
+
+func printScopeUsage(w io.Writer) {
+	fmt.Fprintln(w, `talyvor-code scope — manage the .talyvor-scopes catalogue
+
+USAGE
+  talyvor-code scope <subcommand> [args]
+
+SUBCOMMANDS
+  list            List all defined scopes (active marked with *)
+  use <name>      Activate a scope (persists across CLI runs)
+  clear           Drop the active scope
+  show            Show the active scope details
+  add             Add a new scope interactively`)
+}
+
+func runScopeList(stdout io.Writer, sm *scope.ScopeManager) error {
+	names := sm.List()
+	if len(names) == 0 {
+		fmt.Fprintln(stdout, "No scopes defined. Run `talyvor-code scope add` to create one.")
+		return nil
+	}
+	active := sm.ActiveName()
+	fmt.Fprintln(stdout, "Available scopes:")
+	for _, key := range names {
+		s, _ := sm.Get(key)
+		marker := "  "
+		if key == active {
+			marker = "* "
+		}
+		display := s.Name
+		if strings.TrimSpace(display) == "" {
+			display = key
+		}
+		if key == active {
+			fmt.Fprintf(stdout, "%s%s — %s (active)\n", marker, key, display)
+		} else {
+			fmt.Fprintf(stdout, "%s%s — %s\n", marker, key, display)
+		}
+	}
+	return nil
+}
+
+func runScopeUse(stdout io.Writer, sm *scope.ScopeManager, key string) error {
+	if err := sm.SetActive(key); err != nil {
+		return err
+	}
+	s, _ := sm.Get(key)
+	display := s.Name
+	if strings.TrimSpace(display) == "" {
+		display = key
+	}
+	fmt.Fprintf(stdout, "✅ Scope set to: %s — %s\n", key, display)
+	if strings.TrimSpace(s.Focus) != "" {
+		fmt.Fprintf(stdout, "   Focus: %s\n", s.Focus)
+	}
+	if len(s.Includes) > 0 {
+		fmt.Fprintf(stdout, "   Includes: %s\n", strings.Join(s.Includes, ", "))
+	}
+	if len(s.Excludes) > 0 {
+		fmt.Fprintf(stdout, "   Excludes: %s\n", strings.Join(s.Excludes, ", "))
+	}
+	return nil
+}
+
+func runScopeClear(stdout io.Writer, sm *scope.ScopeManager) error {
+	if err := sm.ClearActive(); err != nil {
+		return err
+	}
+	fmt.Fprintln(stdout, "Scope cleared. All files in context.")
+	return nil
+}
+
+func runScopeShow(stdout io.Writer, sm *scope.ScopeManager) error {
+	active := sm.GetActive()
+	if active == nil {
+		fmt.Fprintln(stdout, "No active scope.")
+		return nil
+	}
+	fmt.Fprintln(stdout, sm.ToPromptSection())
+	return nil
+}
+
+func runScopeAdd(stdin io.Reader, stdout, stderr io.Writer, sm *scope.ScopeManager) error {
+	key := strings.TrimSpace(readLine(stdin, stdout, "Scope key (alphanumeric + hyphens): "))
+	if key == "" {
+		return errors.New("scope add: key required")
+	}
+	name := strings.TrimSpace(readLine(stdin, stdout, "Display name: "))
+	focus := strings.TrimSpace(readLine(stdin, stdout, "Focus / description: "))
+	includesRaw := strings.TrimSpace(readLine(stdin, stdout, "Include patterns (comma-separated, e.g. internal/auth/**): "))
+	excludesRaw := strings.TrimSpace(readLine(stdin, stdout, "Exclude patterns (optional): "))
+	s := scope.Scope{
+		Name:     name,
+		Focus:    focus,
+		Includes: splitAndTrim(includesRaw, ","),
+		Excludes: splitAndTrim(excludesRaw, ","),
+	}
+	if err := sm.AddScope(key, s); err != nil {
+		fmt.Fprintf(stderr, "! %v\n", err)
+		return err
+	}
+	fmt.Fprintf(stdout, "Added scope %q. Activate with `talyvor-code scope use %s`.\n", key, key)
+	return nil
+}
+
+// splitAndTrim splits `s` on sep, trims each chunk, drops empties.
+func splitAndTrim(s, sep string) []string {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	parts := strings.Split(s, sep)
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		t := strings.TrimSpace(p)
+		if t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 func runContextEdit(stderr io.Writer) error {

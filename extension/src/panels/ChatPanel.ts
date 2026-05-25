@@ -12,6 +12,8 @@ import type { RulesLoader } from "../rules/rules-loader";
 import { forLanguage, promptPrefix } from "../rules/rules-pure";
 import type { ContextLoader } from "../context/context-loader";
 import { combinedPrefix } from "../context/context-pure";
+import type { ScopeManager } from "../scope/scope-manager";
+import { toPromptSection as scopePromptSection } from "../scope/scope-pure";
 import {
   buildSystemPrompt,
   escapeHTML,
@@ -56,6 +58,7 @@ export class ChatPanel {
     issueContext?: IssueContextProvider,
     rulesLoader?: RulesLoader,
     contextLoader?: ContextLoader,
+    scopeManager?: ScopeManager,
   ): void {
     const column =
       vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.One;
@@ -75,7 +78,7 @@ export class ChatPanel {
       },
     );
     void column;
-    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext, rulesLoader, contextLoader);
+    ChatPanel.currentPanel = new ChatPanel(panel, lens, tracker, config, issueContext, rulesLoader, contextLoader, scopeManager);
   }
 
   // sendPrompt is the entry point context-menu commands use to
@@ -90,8 +93,9 @@ export class ChatPanel {
     issueContext?: IssueContextProvider,
     rulesLoader?: RulesLoader,
     contextLoader?: ContextLoader,
+    scopeManager?: ScopeManager,
   ): Promise<void> {
-    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext, rulesLoader, contextLoader);
+    ChatPanel.createOrShow(extensionUri, lens, tracker, config, issueContext, rulesLoader, contextLoader, scopeManager);
     await ChatPanel.currentPanel?.sendMessage(prompt);
   }
 
@@ -103,6 +107,7 @@ export class ChatPanel {
     private readonly issueContext?: IssueContextProvider,
     private readonly rulesLoader?: RulesLoader,
     private readonly contextLoader?: ContextLoader,
+    private readonly scopeManager?: ScopeManager,
   ) {
     this.panel = panel;
     this.panel.webview.html = this.renderHTML();
@@ -198,13 +203,17 @@ export class ChatPanel {
     this.post({ type: "thinking" });
 
     try {
-      // Rules + project context ride at the very start of the
-      // system prompt — rules first (HOW to write), context
-      // second (WHAT the project is). Both are optional.
+      // Rules → context → scope, then chat's baseline system
+      // prompt. All three sources are optional.
       const rulesPrefix = promptPrefix(
         forLanguage(this.rulesLoader?.get(), ""),
       );
-      const prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+      let prefix = combinedPrefix(rulesPrefix, this.contextLoader?.get());
+      const scopeSection = scopePromptSection(
+        this.scopeManager?.getActive(),
+        this.scopeManager?.activeName(),
+      );
+      if (scopeSection) prefix += scopeSection + "\n";
       const systemContent = prefix
         + buildSystemPrompt(
           this.config.activeIssue,
