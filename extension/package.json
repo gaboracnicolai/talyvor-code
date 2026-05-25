@@ -74,7 +74,9 @@
       {"command": "talyvor.fixError", "title": "Talyvor: Fix Error"},
       {"command": "talyvor.refactorCode", "title": "Talyvor: Refactor Code"},
       {"command": "talyvor.generateTests", "title": "Talyvor: Generate Tests"},
-      {"command": "talyvor.generateTestsForFile", "title": "Talyvor: Generate Tests for File"}
+      {"command": "talyvor.generateTestsForFile", "title": "Talyvor: Generate Tests for File"},
+      {"command": "talyvor.startAgentTask", "title": "Talyvor: Start Agent Task"},
+      {"command": "talyvor.agentFromIssue", "title": "Talyvor: Run Agent from Active Issue"}
     ],
     "menus": {
       "editor/context": [
@@ -82,14 +84,16 @@
         {"command": "talyvor.fixError", "group": "talyvor@2"},
         {"command": "talyvor.refactorCode", "group": "talyvor@3", "when": "editorHasSelection"},
         {"command": "talyvor.generateTests", "group": "talyvor@4", "when": "editorHasSelection"},
-        {"command": "talyvor.generateTestsForFile", "group": "talyvor@5"}
+        {"command": "talyvor.generateTestsForFile", "group": "talyvor@5"},
+        {"command": "talyvor.startAgentTask", "group": "talyvor@6"}
       ]
     },
     "keybindings": [
       {"command": "talyvor.openChat", "key": "ctrl+shift+l", "mac": "cmd+shift+l"},
       {"command": "talyvor.explainCode", "key": "ctrl+shift+e", "mac": "cmd+shift+e", "when": "editorHasSelection"},
       {"command": "talyvor.fixError", "key": "ctrl+shift+f1", "mac": "cmd+shift+f1", "when": "editorTextFocus"},
-      {"command": "talyvor.generateTests", "key": "ctrl+shift+t", "mac": "cmd+shift+t", "when": "editorTextFocus"}
+      {"command": "talyvor.generateTests", "key": "ctrl+shift+t", "mac": "cmd+shift+t", "when": "editorTextFocus"},
+      {"command": "talyvor.startAgentTask", "key": "ctrl+shift+a", "mac": "cmd+shift+a"}
     ]
   },
   "scripts": {

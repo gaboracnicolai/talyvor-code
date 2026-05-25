@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"context"
+	jsonPkg "encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/talyvor/code/internal/config"
+	diffPkg "github.com/talyvor/code/internal/diff"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/track"
 )
@@ -90,6 +92,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runChat(os.Stdin, stdout, stderr, cfg)
 	case "test":
 		return runTest(stdout, stderr, cfg, rest)
+	case "run":
+		return runAgent(os.Stdin, stdout, stderr, cfg, rest)
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return nil
@@ -107,6 +111,7 @@ COMMANDS
   ask        Ask a single question about code
   chat       Start an interactive chat REPL
   test       Generate tests for a source file
+  run        Run an agentic multi-file task
   check      Probe Lens and report whether everything is wired up
   version    Print the agent version
 
@@ -341,6 +346,306 @@ func trimChatHistory(in []lens.Message) []lens.Message {
 		overflow++
 	}
 	return in[overflow:]
+}
+
+// MaxAgentFiles caps a single task at 20 files. Beyond that the
+// model usually loses the plot and the user loses oversight — a
+// hard ceiling keeps runaway tasks contained.
+const MaxAgentFiles = 20
+
+// agentModel pins Sonnet for both planning and per-file execution.
+// Haiku is too brittle for multi-file refactors; cost goes up, but
+// so does the chance the diff actually applies cleanly.
+const agentModel = "claude-sonnet-4-6"
+
+// runAgent implements the agentic flow:
+//   1. Ask Lens for a JSON plan listing files to touch.
+//   2. For each file, ask Lens for the complete new content.
+//   3. Render a unified diff for human review.
+//   4. With --yes apply automatically; with --dry-run stop after
+//      the diff render; otherwise prompt per file.
+//   5. Apply approved changes, print summary.
+//
+// `stdin` is split out so tests can drive the per-file prompts
+// with a bytes.Buffer instead of needing a real TTY.
+func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
+	var (
+		dryRun bool
+		yes    bool
+		issue  string
+	)
+	fs := flag.NewFlagSet("run", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.BoolVar(&dryRun, "dry-run", false, "Show plan + diffs without writing")
+	fs.BoolVar(&yes, "yes", false, "Auto-approve all changes")
+	fs.StringVar(&issue, "issue", "", "Override active issue for this task")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	tail := fs.Args()
+	if len(tail) == 0 {
+		return fmt.Errorf("run: task description required")
+	}
+	taskDesc := strings.Join(tail, " ")
+
+	if issue != "" {
+		cfg.ActiveIssue = issue
+	}
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	workspaceRoot, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	ctx := context.Background()
+
+	// ── Phase 1: plan ──
+	fmt.Fprintln(stdout, "▸ Planning…")
+	planText, err := lc.Complete(ctx,
+		[]lens.Message{{Role: "user", Content: planPrompt(taskDesc, workspaceRoot, cfg.ActiveIssue)}},
+		agentModel, "agent-plan", cfg.WorkspaceID, cfg.ActiveIssue,
+	)
+	if err != nil {
+		return fmt.Errorf("plan: %w", err)
+	}
+	plan, err := parsePlan(planText)
+	if err != nil {
+		return fmt.Errorf("plan: %w (raw response: %s)", err, truncate(planText, 200))
+	}
+	if len(plan.Files) == 0 {
+		return fmt.Errorf("plan: model returned no files to change")
+	}
+	if len(plan.Files) > MaxAgentFiles {
+		return fmt.Errorf("plan: %d files exceeds MaxAgentFiles (%d)", len(plan.Files), MaxAgentFiles)
+	}
+
+	fmt.Fprintln(stdout, "Plan:")
+	for _, step := range plan.Plan {
+		fmt.Fprintf(stdout, "  • %s\n", step)
+	}
+	fmt.Fprintf(stdout, "Files (%d):\n", len(plan.Files))
+	for _, f := range plan.Files {
+		fmt.Fprintf(stdout, "  · [%s] %s — %s\n", f.Operation, f.Path, f.Description)
+	}
+
+	// ── Phase 2: execute (per file) ──
+	reader := bufio.NewReader(stdin)
+	applied, skipped := 0, 0
+	for i, pf := range plan.Files {
+		fmt.Fprintf(stdout, "\n▸ Generating %d/%d: %s\n", i+1, len(plan.Files), pf.Path)
+		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot)
+		if err != nil {
+			fmt.Fprintf(stderr, "! %s: %v\n", pf.Path, err)
+			skipped++
+			continue
+		}
+		d := GenerateUnifiedDiffWrap(change.OriginalContent, change.NewContent, change.Path)
+		if d == "" {
+			fmt.Fprintf(stdout, "  (no change)\n")
+			continue
+		}
+		fmt.Fprintln(stdout, d)
+
+		if dryRun {
+			continue
+		}
+		approve := yes
+		if !approve {
+			fmt.Fprintf(stdout, "Apply this change? [y/N] ")
+			ans, _ := reader.ReadString('\n')
+			ans = strings.ToLower(strings.TrimSpace(ans))
+			approve = ans == "y" || ans == "yes"
+		}
+		if !approve {
+			skipped++
+			continue
+		}
+		if err := writeChange(workspaceRoot, change); err != nil {
+			fmt.Fprintf(stderr, "! write %s: %v\n", change.Path, err)
+			skipped++
+			continue
+		}
+		applied++
+	}
+
+	fmt.Fprintf(stdout, "\nApplied %d/%d changes (skipped %d)\n", applied, len(plan.Files), skipped)
+	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", agentModel,
+		nonEmpty(cfg.ActiveIssue, "(none)"))
+	return nil
+}
+
+// PlannedFile is one entry in the planner's JSON response. The
+// fields mirror the prompt's contract verbatim so a hand-written
+// plan slots in just as well as a model-generated one.
+type PlannedFile struct {
+	Path        string `json:"path"`
+	Operation   string `json:"operation"` // create | modify | delete
+	Description string `json:"description"`
+}
+
+type Plan struct {
+	Plan  []string      `json:"plan"`
+	Files []PlannedFile `json:"files"`
+}
+
+// planPrompt is the user message that follows the planner system
+// prompt. We keep both in one string so the model never sees a
+// stale "active issue" line from a cached system block.
+func planPrompt(taskDesc, workspaceRoot, issueID string) string {
+	system := "You are an expert software engineer agent. " +
+		"Given a task description, create a detailed plan. " +
+		"List the files that need to be created or modified. " +
+		"Reply with a JSON object only — no prose, no markdown fences. " +
+		"Schema: {\"plan\":[\"step 1\",\"step 2\"], " +
+		"\"files\":[{\"path\":\"src/foo.go\",\"operation\":\"modify\",\"description\":\"…\"}]}. " +
+		"Valid operations are create, modify, delete. " +
+		"Use paths relative to the workspace root."
+	return fmt.Sprintf("%s\n\nTask: %s\nWorkspace: %s\nActive issue: %s",
+		system, taskDesc, workspaceRoot, nonEmpty(issueID, "(none)"))
+}
+
+// parsePlan parses the planner's JSON reply. Strips an optional
+// markdown fence (models often add ```json … ``` despite being
+// told not to).
+func parsePlan(raw string) (Plan, error) {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(s, "```") {
+		// Drop opening fence + optional language tag.
+		if i := strings.Index(s, "\n"); i >= 0 {
+			s = s[i+1:]
+		}
+		// Drop trailing fence if present.
+		if j := strings.LastIndex(s, "```"); j >= 0 {
+			s = strings.TrimRight(s[:j], "\n")
+		}
+	}
+	var p Plan
+	if err := jsonDecode([]byte(s), &p); err != nil {
+		return Plan{}, fmt.Errorf("invalid plan json: %w", err)
+	}
+	return p, nil
+}
+
+// FileChange is the per-file payload the executor produces.
+// OriginalContent is empty for new files; NewContent is always set.
+type FileChange struct {
+	Path            string
+	Operation       string
+	OriginalContent string
+	NewContent      string
+}
+
+// generateChange asks Lens for the complete new content for one
+// file. For modify operations we include the existing content so
+// the model has the full context; for create we just describe
+// what should land at the path.
+func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root string) (*FileChange, error) {
+	change := &FileChange{Path: pf.Path, Operation: pf.Operation}
+	abs := pf.Path
+	if !isAbs(abs) {
+		abs = filepath.Join(root, pf.Path)
+	}
+	if pf.Operation == "modify" || pf.Operation == "delete" {
+		body, err := os.ReadFile(abs)
+		if err != nil && pf.Operation == "modify" {
+			return nil, fmt.Errorf("read existing: %w", err)
+		}
+		change.OriginalContent = string(body)
+	}
+	if pf.Operation == "delete" {
+		change.NewContent = ""
+		return change, nil
+	}
+
+	var user strings.Builder
+	user.WriteString("You are an expert software engineer. Make the specified change to this file. ")
+	user.WriteString("Return ONLY the complete new file content. No explanations, no markdown fences. ")
+	user.WriteString("The file must be syntactically correct.\n\n")
+	fmt.Fprintf(&user, "Task: %s\nFile: %s\nOperation: %s\n", task, pf.Path, pf.Operation)
+	if pf.Operation == "modify" {
+		fmt.Fprintf(&user, "\nCurrent content:\n```\n%s\n```\n", change.OriginalContent)
+	}
+	fmt.Fprintf(&user, "\nChange to make: %s\n", pf.Description)
+
+	reply, err := lc.Complete(ctx,
+		[]lens.Message{{Role: "user", Content: user.String()}},
+		agentModel, "agent-execute", cfg.WorkspaceID, cfg.ActiveIssue,
+	)
+	if err != nil {
+		return nil, err
+	}
+	change.NewContent = stripFences(reply)
+	return change, nil
+}
+
+// writeChange persists one FileChange to disk. For create/modify
+// it writes the new content (creating parent dirs as needed); for
+// delete it removes the file.
+func writeChange(root string, c *FileChange) error {
+	abs := c.Path
+	if !isAbs(abs) {
+		abs = filepath.Join(root, c.Path)
+	}
+	switch c.Operation {
+	case "delete":
+		return os.Remove(abs)
+	case "create", "modify":
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(abs, []byte(c.NewContent), 0o644)
+	}
+	return fmt.Errorf("unknown operation %q", c.Operation)
+}
+
+// ─── tiny helpers ────────────────────────────────────
+
+// GenerateUnifiedDiffWrap is a thin re-export of
+// diff.GenerateUnifiedDiff with our standard 3 lines of context.
+// Kept here so the main package doesn't have to import the diff
+// package directly everywhere.
+func GenerateUnifiedDiffWrap(original, modified, filename string) string {
+	return diffPkg.GenerateUnifiedDiff(original, modified, filename, 3)
+}
+
+func isAbs(p string) bool {
+	return filepath.IsAbs(p)
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// stripFences trims the leading/trailing markdown fence the
+// executor's response sometimes carries despite the prompt's "no
+// fences" instruction.
+func stripFences(s string) string {
+	out := strings.TrimSpace(s)
+	if strings.HasPrefix(out, "```") {
+		if i := strings.Index(out, "\n"); i >= 0 {
+			out = out[i+1:]
+		}
+	}
+	if j := strings.LastIndex(out, "```"); j >= 0 && strings.TrimSpace(out[j:]) == "```" {
+		out = strings.TrimRight(out[:j], "\n")
+	}
+	if !strings.HasSuffix(out, "\n") {
+		out += "\n"
+	}
+	return out
+}
+
+// jsonDecode is a one-line wrapper to keep the encoding/json
+// import scoped to this file. Lets us swap to a tolerant parser
+// later without touching call sites.
+func jsonDecode(data []byte, v any) error {
+	return jsonPkg.Unmarshal(data, v)
 }
 
 // testGenModel pins Sonnet for test generation. Quality matters

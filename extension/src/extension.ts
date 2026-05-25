@@ -15,6 +15,7 @@ import { TalyvorCompletionProvider } from "./providers/completions";
 import { ChatPanel } from "./panels/ChatPanel";
 import { TestGenerator } from "./providers/test-generator";
 import { TestPanel } from "./panels/TestPanel";
+import { AgentPanel } from "./panels/AgentPanel";
 
 export function activate(context: vscode.ExtensionContext): void {
   let config = TalyvorConfig.getLensConfig();
@@ -90,6 +91,12 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("talyvor.generateTestsForFile", () =>
       runGenerateTestsCommand(context.extensionUri, lensClient, tracker, true),
+    ),
+    vscode.commands.registerCommand("talyvor.startAgentTask", () =>
+      runStartAgentCommand(context.extensionUri, lensClient, tracker, false),
+    ),
+    vscode.commands.registerCommand("talyvor.agentFromIssue", () =>
+      runStartAgentCommand(context.extensionUri, lensClient, tracker, true),
     ),
   );
 
@@ -322,6 +329,48 @@ async function runContextPrompt(
     TalyvorConfig.getLensConfig(),
     prompt,
   );
+}
+
+// runStartAgentCommand opens the agentic panel. When `fromIssue`
+// is true we fetch the active issue from Track and seed the
+// description with "issue title — description"; otherwise we
+// prefill with any current selection (rare but handy for
+// "refactor this hairy block").
+async function runStartAgentCommand(
+  extensionUri: vscode.Uri,
+  lens: LensClient,
+  tracker: CostTracker,
+  fromIssue: boolean,
+): Promise<void> {
+  const cfg = TalyvorConfig.getLensConfig();
+  if (!cfg.url || !cfg.apiKey) {
+    void vscode.window.showErrorMessage(
+      "Talyvor is not configured. Set talyvor.lensUrl and talyvor.lensApiKey.",
+    );
+    return;
+  }
+  let prefill = "";
+  if (fromIssue) {
+    if (!cfg.activeIssue) {
+      void vscode.window.showWarningMessage(
+        "Set an active issue first (Talyvor: Set Active Issue).",
+      );
+      return;
+    }
+    const track = new TrackClient(cfg.trackUrl, cfg.trackApiKey);
+    const issue = await track.getIssue(cfg.workspaceId, cfg.activeIssue);
+    if (issue) {
+      prefill = `${issue.title}\n\n${issue.description}`.trim();
+    } else {
+      prefill = `Implement ${cfg.activeIssue}`;
+    }
+  } else {
+    const editor = vscode.window.activeTextEditor;
+    if (editor && !editor.selection.isEmpty) {
+      prefill = editor.document.getText(editor.selection);
+    }
+  }
+  AgentPanel.createOrShow(extensionUri, lens, tracker, cfg, prefill);
 }
 
 // runGenerateTestsCommand drives the test-generation flow. When

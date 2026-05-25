@@ -287,6 +287,123 @@ func TestSuggestTestOutput(t *testing.T) {
 	}
 }
 
+// ─── run (agent) subcommand ─────────────────────────
+
+// fakeAgentLens returns a planner JSON on the first call, then
+// the per-file content on subsequent calls. Lets us drive the
+// full plan → execute flow without a real model.
+func fakeAgentLens(t *testing.T, replies []string) *httptest.Server {
+	t.Helper()
+	idx := 0
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if idx >= len(replies) {
+			t.Fatalf("fake lens: unexpected extra request (idx=%d)", idx)
+		}
+		body := replies[idx]
+		idx++
+		w.Header().Set("Content-Type", "application/json")
+		// Encode as the Anthropic content array shape the client
+		// expects. JSON-escape via the standard library so the
+		// test data can carry arbitrary characters.
+		encoded, _ := json.Marshal(body)
+		fmt.Fprintf(w, `{"content":[{"type":"text","text":%s}]}`, encoded)
+		_ = r
+	}))
+}
+
+func TestRun_DryRunShowsPlanWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	// Planner says "modify foo.txt"; executor returns new content.
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"uppercase"}]}`,
+		"HELLO\n",
+	})
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+	t.Setenv("TALYVOR_ISSUE", "ENG-42")
+
+	// chdir into temp dir so workspaceRoot lines up.
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--dry-run", "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	out := stdout.String()
+	if !strings.Contains(out, "Plan:") || !strings.Contains(out, "modify foo") {
+		t.Fatalf("plan not surfaced: %q", out)
+	}
+	if !strings.Contains(out, "-hello") || !strings.Contains(out, "+HELLO") {
+		t.Fatalf("diff not surfaced: %q", out)
+	}
+	// File must NOT have been written under --dry-run.
+	body, _ := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if string(body) != "hello\n" {
+		t.Fatalf("file modified despite --dry-run: %q", string(body))
+	}
+}
+
+func TestRun_YesAppliesAllChanges(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "foo.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	srv := fakeAgentLens(t, []string{
+		`{"plan":["modify foo"],"files":[{"path":"foo.txt","operation":"modify","description":"uppercase"}]}`,
+		"HELLO\n",
+	})
+	defer srv.Close()
+
+	t.Setenv("TALYVOR_LENS_URL", srv.URL)
+	t.Setenv("TALYVOR_LENS_API_KEY", "tlv_k")
+	t.Setenv("TALYVOR_WORKSPACE_ID", "ws-1")
+
+	prev, _ := os.Getwd()
+	t.Cleanup(func() { _ = os.Chdir(prev) })
+	if err := os.Chdir(dir); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"run", "--yes", "uppercase foo"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "foo.txt"))
+	if err != nil {
+		t.Fatalf("read result: %v", err)
+	}
+	if string(body) != "HELLO\n" {
+		t.Fatalf("file not updated, got %q", string(body))
+	}
+	if !strings.Contains(stdout.String(), "Applied 1/1 changes") {
+		t.Fatalf("summary missing: %q", stdout.String())
+	}
+}
+
+func TestParsePlan_StripsMarkdownFence(t *testing.T) {
+	raw := "```json\n{\"plan\":[\"a\"],\"files\":[{\"path\":\"x.go\",\"operation\":\"create\",\"description\":\"d\"}]}\n```"
+	p, err := parsePlan(raw)
+	if err != nil {
+		t.Fatalf("parsePlan: %v", err)
+	}
+	if len(p.Plan) != 1 || p.Plan[0] != "a" {
+		t.Fatalf("plan steps wrong: %+v", p.Plan)
+	}
+	if len(p.Files) != 1 || p.Files[0].Path != "x.go" || p.Files[0].Operation != "create" {
+		t.Fatalf("files wrong: %+v", p.Files)
+	}
+}
+
 func TestParseLineRange(t *testing.T) {
 	if a, b, ok := parseLineRange("10-50", 100); !ok || a != 10 || b != 50 {
 		t.Fatalf("10-50 → %d,%d,%v", a, b, ok)
