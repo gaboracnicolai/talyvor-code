@@ -61,6 +61,14 @@
              VS Code command-palette entries that don't need a selection. -->
         <group id="com.talyvor.code.ToolsGroup" text="Talyvor" popup="true">
             <add-to-group group-id="ToolsMenu" anchor="last"/>
+            <action id="com.talyvor.code.TestConnection"
+                    class="com.talyvor.code.actions.TestConnectionAction"
+                    text="Test Lens Connection"
+                    description="Check that Talyvor Lens is reachable"/>
+            <action id="com.talyvor.code.SelectModel"
+                    class="com.talyvor.code.actions.SelectModelAction"
+                    text="Select AI Model"
+                    description="Pick the Talyvor AI model from the shared catalogue"/>
             <action id="com.talyvor.code.GenerateShellCommand"
                     class="com.talyvor.code.actions.GenerateShellCommandAction"
                     text="Generate Shell Command"

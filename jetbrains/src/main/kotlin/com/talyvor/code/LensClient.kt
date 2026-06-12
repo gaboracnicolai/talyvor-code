@@ -240,7 +240,40 @@ class LensClient(
             callbacks.onError(e)
         }
     }
+
+    /**
+     * getStatus probes /healthz so the "Test Connection" action can give
+     * a fast yes/no without paying for a real inference round-trip.
+     * Mirrors the VS Code LensClient.getStatus — any failure is reported
+     * as unavailable rather than thrown.
+     */
+    fun getStatus(): LensStatus {
+        if (!isConfigured()) return LensStatus(available = false, version = "unknown")
+        return try {
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("${url.trimEnd('/')}/healthz"))
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            if (response.statusCode() >= 400) {
+                LensStatus(available = false, version = "unknown")
+            } else {
+                val version = try {
+                    JSONObject(response.body()).optString("version", "unknown")
+                } catch (_: Exception) {
+                    "unknown"
+                }
+                LensStatus(available = true, version = version)
+            }
+        } catch (_: Exception) {
+            LensStatus(available = false, version = "unknown")
+        }
+    }
 }
+
+/** LensStatus is the /healthz probe result surfaced by Test Connection. */
+data class LensStatus(val available: Boolean, val version: String)
 
 /**
  * StreamCallbacks bundles the three streaming sinks, mirroring the VS
