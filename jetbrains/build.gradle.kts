@@ -34,22 +34,24 @@ dependencies {
     intellijPlatform {
         intellijIdeaCommunity("2024.1")
         instrumentationTools()
+        // pluginVerifier backs the optional `verifyPlugin` task. It
+        // is inert for `buildPlugin`; folded in here from a separate
+        // trailing block so the verifier resolves when invoked.
+        pluginVerifier()
     }
     // org.json is a stable, dep-free JSON library — keeps the
     // plugin classpath small without pulling Jackson.
     implementation("org.json:json:20240303")
+
+    // JUnit 4 backs the pure-logic unit tests (model catalogue, SSE
+    // parser, …). Matches the IntelliJ Platform's bundled JUnit and
+    // runs under Gradle's default `test` task — no extra config.
+    testImplementation("junit:junit:4.13.2")
 }
 
 tasks {
     withType<PatchPluginXmlTask> {
         sinceBuild.set("241")
         untilBuild.set("251.*")
-    }
-}
-
-// Required for verifyPlugin task
-dependencies {
-    intellijPlatform {
-        pluginVerifier()
     }
 }

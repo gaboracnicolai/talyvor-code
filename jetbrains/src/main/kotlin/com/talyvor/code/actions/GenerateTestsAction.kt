@@ -11,6 +11,7 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.ui.Messages
+import com.talyvor.code.model.Models
 
 class GenerateTestsAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
@@ -39,8 +40,15 @@ class GenerateTestsAction : AnAction() {
                         mapOf("role" to "user", "content" to "$systemPrompt\n\nCode:\n```\n$selectedText\n```"),
                     ),
                     // Test generation benefits from Sonnet's
-                    // reasoning when the user hasn't picked a model.
-                    model = if (s.model.contains("haiku", ignoreCase = true)) "claude-sonnet-4-6" else s.model,
+                    // reasoning when the user is still on the cheap
+                    // Haiku default. The upgrade target comes from the
+                    // shared catalogue (Models.defaultForCommand) so the
+                    // JetBrains, VS Code, and CLI surfaces never drift.
+                    model = if (s.model.contains("haiku", ignoreCase = true)) {
+                        Models.defaultForCommand("test-gen")
+                    } else {
+                        s.model
+                    },
                     feature = "test-gen",
                     workspaceId = s.workspaceId,
                     issueId = s.activeIssue,
