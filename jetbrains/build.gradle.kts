@@ -46,3 +46,10 @@ tasks {
         untilBuild.set("251.*")
     }
 }
+
+// Required for verifyPlugin task
+dependencies {
+    intellijPlatform {
+        pluginVerifier()
+    }
+}
