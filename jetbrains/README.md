@@ -49,23 +49,30 @@ In your JetBrains IDE:
 | Active issue | e.g. `ENG-42` — every call gets attributed |
 | Model | Defaults to `claude-haiku-4-6`; pick any Lens-supported model |
 
-## Features (Phase 1)
+## Features
 
 | Surface | Action |
 | --- | --- |
 | Right-click in editor → Talyvor → **Explain Code** | Sends the selection to Lens with the `explain` feature tag |
-| Right-click in editor → Talyvor → **Generate Tests** | Picks Sonnet automatically when the user is on Haiku |
+| Right-click in editor → Talyvor → **Generate Tests** | Language-aware prompt + framework detection + output sanitising; upgrades Haiku → Sonnet via the shared model catalogue |
 | Right-click in editor → Talyvor → **Open Chat** | Reveals the `Talyvor Code` tool window |
-| Tool window → composer | Multi-turn chat with rolling history |
+| Tool window → composer | **Streaming** multi-turn chat with rolling history |
+| Tools → Talyvor → **Test Lens Connection** | Fast `/healthz` reachability check |
+| Tools → Talyvor → **Select AI Model** | Pick from the shared model catalogue |
+| Tools → Talyvor → **Generate Shell Command** | NL → single command, with an advisory safety screen (display-only) |
+
+See **[PLUGIN.md](PLUGIN.md)** for the full parity matrix, the
+pure-core / IDE-shell architecture, the test suite, and the manual
+verification steps for the UI surfaces.
 
 ## Roadmap
 
-| Phase | Scope |
-| --- | --- |
-| 2 | Inline completions via the IntelliJ completion API |
-| 3 | Streaming chat replies (mirrors the VS Code panel UX) |
-| 4 | Full agent mode (multi-file tasks with diff review) |
-| 5 | Track + Docs integration parity with the VS Code extension |
+| Phase | Scope | Status |
+| --- | --- | --- |
+| 2 | Inline completions via the IntelliJ completion API | deferred (see PLUGIN.md / issues) |
+| 3 | Streaming chat replies (mirrors the VS Code panel UX) | **done** |
+| 4 | Full agent mode (multi-file tasks with diff review) | deferred |
+| 5 | Track + Docs integration parity with the VS Code extension | deferred |
 
 ## Plugin metadata
 
