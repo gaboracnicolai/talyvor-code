@@ -48,5 +48,5 @@ jobs:
           echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
       - name: Generate Gradle wrapper
         run: cd jetbrains && gradle wrapper --gradle-version=8.7
-      - name: Build JetBrains plugin
-        run: cd jetbrains && ./gradlew buildPlugin --no-daemon
+      - name: Test + build JetBrains plugin
+        run: cd jetbrains && ./gradlew test buildPlugin --no-daemon

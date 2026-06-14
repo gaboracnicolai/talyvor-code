@@ -11,6 +11,8 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.ui.Messages
+import com.talyvor.code.model.Models
+import com.talyvor.code.testing.TestGenPure
 
 class GenerateTestsAction : AnAction() {
     override fun actionPerformed(e: AnActionEvent) {
@@ -23,34 +25,46 @@ class GenerateTestsAction : AnAction() {
         val client = com.talyvor.code.LensClient(s.lensUrl, s.lensApiKey)
         if (!requireConfigured(project, client)) return
 
-        val systemPrompt = """
-            You are an expert test engineer. Generate idiomatic
-            unit tests for the supplied code. Use the conventional
-            test framework for the language. Return ONLY the test
-            code — no prose, no markdown fences.
-        """.trimIndent()
+        // Derive the canonical language from the file extension so the
+        // prompt + framework match the source — the VS Code generator
+        // gets this for free from vscode.document.languageId.
+        val fileName = e.getData(CommonDataKeys.VIRTUAL_FILE)?.name ?: ""
+        val lang = TestGenPure.canonicalLanguageId(fileName)
+        val systemPrompt = TestGenPure.systemPromptFor(lang)
+        val userPrompt = TestGenPure.buildTestPrompt(selectedText, lang, fileName)
+        val framework = TestGenPure.frameworkFor(lang)
 
         runOnBackground(
             project,
-            "Talyvor: generating tests…",
+            "Talyvor: generating $framework tests…",
             body = {
-                client.complete(
+                val raw = client.complete(
                     messages = listOf(
-                        mapOf("role" to "user", "content" to "$systemPrompt\n\nCode:\n```\n$selectedText\n```"),
+                        mapOf("role" to "user", "content" to "$systemPrompt\n\n$userPrompt"),
                     ),
-                    // Test generation benefits from Sonnet's
-                    // reasoning when the user hasn't picked a model.
-                    model = if (s.model.contains("haiku", ignoreCase = true)) "claude-sonnet-4-6" else s.model,
+                    // Test generation benefits from Sonnet's reasoning
+                    // when the user is still on the cheap Haiku default.
+                    // The upgrade target comes from the shared catalogue
+                    // (Models.defaultForCommand) so the JetBrains, VS
+                    // Code, and CLI surfaces never drift.
+                    model = if (s.model.contains("haiku", ignoreCase = true)) {
+                        Models.defaultForCommand("test-gen")
+                    } else {
+                        s.model
+                    },
                     feature = "test-gen",
                     workspaceId = s.workspaceId,
                     issueId = s.activeIssue,
                 )
+                // Strip any preamble/fences the model adds despite the
+                // "code only" instruction so the result pastes cleanly.
+                TestGenPure.sanitiseGenerated(raw)
             },
-            onSuccess = { response ->
+            onSuccess = { tests ->
                 Messages.showMessageDialog(
                     project,
-                    response,
-                    "Talyvor Generated Tests",
+                    tests,
+                    "Talyvor Generated Tests ($framework)",
                     Messages.getInformationIcon(),
                 )
             },
