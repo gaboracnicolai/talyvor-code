@@ -137,8 +137,11 @@ talyvor-code docs search "authentication flow"
 talyvor-code docs ask   "How do we handle JWT refresh tokens?"
 talyvor-code docs get   space-eng/page-abc
 
-# Start the MCP server (binds 0.0.0.0:7777 by default)
-talyvor-code serve --port 7777 --root .
+# Start the MCP server (binds 127.0.0.1:7777 by default)
+# A bearer token is required: set TALYVOR_MCP_TOKEN, or one is
+# generated and printed to stderr on start. Use --host 0.0.0.0
+# only for deliberate LAN exposure (token still required).
+TALYVOR_MCP_TOKEN=$(openssl rand -hex 32) talyvor-code serve --port 7777 --root .
 ```
 
 ### CLI flags
@@ -175,17 +178,22 @@ Roadmap: inline completions, streaming chat, full agent mode, Track + Docs integ
 
 ## MCP integration
 
-Talyvor Code ships an MCP server (`talyvor-code serve`) so Claude Code, Cursor agents, and other MCP-aware clients can plug into your coding context. Add to your client's MCP config:
+Talyvor Code ships an MCP server (`talyvor-code serve`) so Claude Code, Cursor agents, and other MCP-aware clients can plug into your coding context. The server binds `127.0.0.1` by default and requires a bearer token on every request — set `TALYVOR_MCP_TOKEN` to a stable secret (or copy the token printed to stderr on start). Add to your client's MCP config, sending the token in the `Authorization` header:
 
 ```json
 {
   "mcpServers": {
     "talyvor-code": {
-      "url": "http://localhost:7777/mcp"
+      "url": "http://localhost:7777/mcp",
+      "headers": {
+        "Authorization": "Bearer ${TALYVOR_MCP_TOKEN}"
+      }
     }
   }
 }
 ```
+
+> Bind stays on loopback so an SSH tunnel (which forwards to `127.0.0.1`) works out of the box. `--host 0.0.0.0` exposes the server to other machines on the network — only do so deliberately; the bearer token is required either way and a warning is logged.
 
 **Available tools:**
 

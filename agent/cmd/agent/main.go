@@ -2948,13 +2948,32 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 	var (
 		port int
 		root string
+		host string
 	)
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.IntVar(&port, "port", 7777, "Port to listen on")
 	fs.StringVar(&root, "root", ".", "Codebase root to index")
+	fs.StringVar(&host, "host", "127.0.0.1", "Interface to bind. Loopback by default; use --host 0.0.0.0 for LAN exposure (bearer token still required)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+
+	// Resolve the bearer token every MCP request must present.
+	// Fail closed: honour TALYVOR_MCP_TOKEN for stable scripted /
+	// config use, else mint a random one and print it so the
+	// server is never reachable without a secret. A malicious local
+	// page or process can reach 127.0.0.1 but cannot learn this
+	// token, which is what actually closes SEC-1.
+	token := strings.TrimSpace(os.Getenv("TALYVOR_MCP_TOKEN"))
+	generated := false
+	if token == "" {
+		t, err := mcp.GenerateToken()
+		if err != nil {
+			return fmt.Errorf("serve: %w", err)
+		}
+		token = t
+		generated = true
 	}
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
@@ -2963,6 +2982,7 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 
 	server := mcp.New(lc, tc, dc, &cfg, version)
 	server.SetRoot(root)
+	server.SetAuthToken(token)
 	if err := server.IndexNow(); err != nil {
 		fmt.Fprintf(stderr, "! initial index: %v (continuing)\n", err)
 	}
@@ -2978,8 +2998,19 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 
 	mux := http.NewServeMux()
 	server.Routes(mux)
-	addr := fmt.Sprintf("0.0.0.0:%d", port)
-	fmt.Fprintf(stdout, "Talyvor Code MCP server running on :%d\n", port)
+	addr := fmt.Sprintf("%s:%d", host, port)
+	fmt.Fprintf(stdout, "Talyvor Code MCP server running on %s\n", addr)
+	if generated {
+		fmt.Fprintf(stderr, "MCP auth token (generated): %s\n", token)
+	} else {
+		fmt.Fprintln(stderr, "MCP auth token: using TALYVOR_MCP_TOKEN")
+	}
+	fmt.Fprintln(stderr, "Clients must send: Authorization: Bearer <token>")
+	if !mcp.IsLoopbackHost(host) {
+		fmt.Fprintf(stderr,
+			"⚠️  WARNING: bound to non-loopback %s — reachable by other hosts on the network. The bearer token is required, but prefer an SSH tunnel to 127.0.0.1 unless LAN exposure is intended.\n",
+			host)
+	}
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,

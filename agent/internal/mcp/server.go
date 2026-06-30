@@ -15,9 +15,13 @@ package mcp
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +62,7 @@ type Server struct {
 	config      *config.Config
 	version     string
 	root        string
+	authToken   string
 
 	mu          sync.RWMutex
 	index       *codebase.CodebaseIndex
@@ -90,6 +95,40 @@ func New(
 // Defaults to "." when unset.
 func (s *Server) SetRoot(root string) {
 	s.root = root
+}
+
+// SetAuthToken sets the bearer token every request must present.
+// The `serve` startup path always supplies a non-empty token
+// (env or generated), so an empty token here is a misconfiguration
+// — authOK fails closed in that case rather than waving requests
+// through.
+func (s *Server) SetAuthToken(token string) {
+	s.authToken = token
+}
+
+// GenerateToken returns a 32-byte cryptographically random token
+// as a 64-char hex string. Used by `serve` when TALYVOR_MCP_TOKEN
+// is unset so the server is never reachable without a secret.
+func GenerateToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("mcp: generate token: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+// IsLoopbackHost reports whether host is a loopback interface.
+// `serve` warns loudly when binding anywhere else, since a
+// non-loopback bind exposes the server to other machines (still
+// token-gated, but worth a klaxon).
+func IsLoopbackHost(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 // IndexNow blocks while a fresh codebase index is built. Used by
@@ -160,8 +199,47 @@ func (s *Server) Stop() {
 
 // Routes attaches the MCP handlers to the supplied mux.
 func (s *Server) Routes(mux *http.ServeMux) {
-	mux.HandleFunc("/mcp", s.HandleRPC)
-	mux.HandleFunc("/mcp/sse", s.HandleSSE)
+	mux.HandleFunc("/mcp", s.withAuth(s.HandleRPC))
+	mux.HandleFunc("/mcp/sse", s.withAuth(s.HandleSSE))
+}
+
+// withAuth gates a handler behind the bearer-token check. Both
+// the JSON-RPC and SSE endpoints are wrapped — the SSE handler is
+// a separate code path and must not be left open. On failure we
+// answer 401 and never invoke the inner handler (so a rejected SSE
+// request never gets the 200 + endpoint event).
+func (s *Server) withAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.authOK(r) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// authOK reports whether the request carries the configured bearer
+// token. Fails closed: an unset server token rejects everything
+// (avoids the subtle.ConstantTimeCompare("","")==1 footgun), and a
+// missing/short Authorization header never matches. The compare is
+// constant-time to deny timing oracles, mirroring Track's
+// gatewayauth.
+func (s *Server) authOK(r *http.Request) bool {
+	want := s.authToken
+	if want == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if !strings.HasPrefix(h, prefix) {
+		return false
+	}
+	got := strings.TrimPrefix(h, prefix)
+	if got == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
 }
 
 // ─── JSON-RPC envelopes ─────────────────────────────
