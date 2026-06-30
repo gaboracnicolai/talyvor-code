@@ -21,11 +21,23 @@ import (
 	"github.com/talyvor/code/internal/track"
 )
 
+// testToken is the bearer token the harness supplies on every
+// authenticated call. Auth is now mandatory (SEC-1a), so the
+// helpers thread this token through as a newly-required input —
+// the behavioural assertions themselves are unchanged.
+const testToken = "test-mcp-token"
+
 // callRPC posts a single JSON-RPC call and returns the parsed
 // response envelope.
 func callRPC(t *testing.T, srv *httptest.Server, body string) rpcResponse {
 	t.Helper()
-	resp, err := http.Post(srv.URL+"/mcp", "application/json", strings.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/mcp", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
@@ -65,6 +77,7 @@ func newServerForTest(t *testing.T, lensSrv *httptest.Server, trackC *track.Clie
 		lc = lens.New(lensSrv.URL, "tlv_k")
 	}
 	s := New(lc, trackC, docsC, cfg, "test-0.1")
+	s.SetAuthToken(testToken)
 	mux := http.NewServeMux()
 	s.Routes(mux)
 	httpSrv := httptest.NewServer(mux)
@@ -396,6 +409,7 @@ func TestSearchDocs_UnconfiguredReturnsConfiguredFalse(t *testing.T) {
 func TestSSE_ReturnsEndpointEvent(t *testing.T) {
 	_, srv := newServerForTest(t, nil, nil, nil)
 	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req = req.WithContext(ctx)
@@ -419,6 +433,99 @@ func TestSSE_ReturnsEndpointEvent(t *testing.T) {
 	dataLine, _ := br.ReadString('\n')
 	if !strings.Contains(dataLine, `"uri":"/mcp"`) {
 		t.Fatalf("data = %q", dataLine)
+	}
+}
+
+// ─── auth (SEC-1a) ─────────────────────────────────
+
+// TestRPC_NoToken_Returns401 proves an unauthenticated POST to
+// /mcp is rejected before any tool runs — the core of SEC-1a.
+func TestRPC_NoToken_Returns401(t *testing.T) {
+	_, srv := newServerForTest(t, nil, nil, nil)
+	resp, err := http.Post(srv.URL+"/mcp", "application/json",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestRPC_WrongToken_Returns401 proves a non-matching bearer is
+// rejected (constant-time compare, no partial-match acceptance).
+func TestRPC_WrongToken_Returns401(t *testing.T) {
+	_, srv := newServerForTest(t, nil, nil, nil)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/mcp",
+		strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+	req.Header.Set("Authorization", "Bearer not-the-token")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("post: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestSSE_NoToken_Returns401 proves the streaming endpoint shares
+// the gate — it's a separate handler and easy to leave open.
+func TestSSE_NoToken_Returns401(t *testing.T) {
+	_, srv := newServerForTest(t, nil, nil, nil)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/mcp/sse", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req = req.WithContext(ctx)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// TestGenerateToken_UniqueAndHex covers the fail-closed token
+// generator: non-empty, 64 hex chars (32 bytes), unique per call.
+func TestGenerateToken_UniqueAndHex(t *testing.T) {
+	a, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	b, err := GenerateToken()
+	if err != nil {
+		t.Fatalf("GenerateToken: %v", err)
+	}
+	if a == b {
+		t.Fatal("two tokens should differ")
+	}
+	if len(a) != 64 {
+		t.Fatalf("token len = %d, want 64", len(a))
+	}
+	for _, c := range a {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			t.Fatalf("non-hex char %q in token", c)
+		}
+	}
+}
+
+// TestIsLoopbackHost drives the warning decision in runServe.
+func TestIsLoopbackHost(t *testing.T) {
+	cases := map[string]bool{
+		"127.0.0.1":   true,
+		"::1":         true,
+		"localhost":   true,
+		"0.0.0.0":     false,
+		"192.168.1.5": false,
+		"10.0.0.1":    false,
+	}
+	for host, want := range cases {
+		if got := IsLoopbackHost(host); got != want {
+			t.Errorf("IsLoopbackHost(%q) = %v, want %v", host, got, want)
+		}
 	}
 }
 
