@@ -4,6 +4,12 @@ out/
 dist/
 *.vsix
 
+# Local secrets — the CLI reads TALYVOR_* from .env. Never commit
+# a real one; .env.example is the tracked template.
+.env
+.env.*
+!.env.example
+
 # JetBrains Gradle build outputs (the wrapper jar is generated
 # by `gradle wrapper` on first build — see jetbrains/README.md).
 jetbrains/.gradle/

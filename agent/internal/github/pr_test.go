@@ -168,11 +168,11 @@ func TestCreatePR_RequiresToken(t *testing.T) {
 
 func TestSlugifyBranch_HandlesCommonInputs(t *testing.T) {
 	cases := map[string]string{
-		"Add JWT authentication":             "feat/add-jwt-authentication",
-		"Fix login bug on Safari":            "fix/fix-login-bug-on-safari",
-		"Refactor database layer":            "feat/refactor-database-layer",
-		"Bug: race condition in scheduler":   "fix/bug-race-condition-in-scheduler",
-		"Hotfix payment regression":          "fix/hotfix-payment-regression",
+		"Add JWT authentication":           "feat/add-jwt-authentication",
+		"Fix login bug on Safari":          "fix/fix-login-bug-on-safari",
+		"Refactor database layer":          "feat/refactor-database-layer",
+		"Bug: race condition in scheduler": "fix/bug-race-condition-in-scheduler",
+		"Hotfix payment regression":        "fix/hotfix-payment-regression",
 	}
 	for in, want := range cases {
 		if got := SlugifyBranch(in); got != want {

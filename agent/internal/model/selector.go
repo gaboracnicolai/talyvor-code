@@ -137,9 +137,9 @@ func DefaultForCommand(command string) string {
 
 // ResolveModel applies the documented priority:
 //
-//	1. --model flag value (if non-empty)
-//	2. TALYVOR_MODEL env / config value (if non-empty)
-//	3. DefaultForCommand(command)
+//  1. --model flag value (if non-empty)
+//  2. TALYVOR_MODEL env / config value (if non-empty)
+//  3. DefaultForCommand(command)
 //
 // All inputs are whitespace-trimmed. No validation here — let
 // the caller surface a useful error after resolution.

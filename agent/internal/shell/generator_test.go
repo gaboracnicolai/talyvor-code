@@ -23,11 +23,11 @@ func TestDetectShell_FallsBackToBash(t *testing.T) {
 
 func TestDetectShell_ExtractsName(t *testing.T) {
 	cases := map[string]string{
-		"/bin/zsh":             "zsh",
-		"/usr/local/bin/fish":  "fish",
-		"/bin/bash":            "bash",
-		"powershell":           "powershell",
-		"":                     "bash",
+		"/bin/zsh":            "zsh",
+		"/usr/local/bin/fish": "fish",
+		"/bin/bash":           "bash",
+		"powershell":          "powershell",
+		"":                    "bash",
 	}
 	for in, want := range cases {
 		t.Setenv("SHELL", in)

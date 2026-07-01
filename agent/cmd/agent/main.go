@@ -210,7 +210,8 @@ func runCheck(w io.Writer, cfg config.Config) error {
 }
 
 // runAsk implements the one-shot Q&A command. Usage:
-//   talyvor-code ask [--file path] [--lines a-b] [--issue ENG-42] "question..."
+//
+//	talyvor-code ask [--file path] [--lines a-b] [--issue ENG-42] "question..."
 //
 // File content (when --file is supplied) gets wrapped in a fenced
 // code block so the model sees structured context. The reply goes
@@ -583,12 +584,12 @@ const MaxAgentFiles = 20
 // picks Sonnet unless the user opts otherwise.
 
 // runAgent implements the agentic flow:
-//   1. Ask Lens for a JSON plan listing files to touch.
-//   2. For each file, ask Lens for the complete new content.
-//   3. Render a unified diff for human review.
-//   4. With --yes apply automatically; with --dry-run stop after
-//      the diff render; otherwise prompt per file.
-//   5. Apply approved changes, print summary.
+//  1. Ask Lens for a JSON plan listing files to touch.
+//  2. For each file, ask Lens for the complete new content.
+//  3. Render a unified diff for human review.
+//  4. With --yes apply automatically; with --dry-run stop after
+//     the diff render; otherwise prompt per file.
+//  5. Apply approved changes, print summary.
 //
 // `stdin` is split out so tests can drive the per-file prompts
 // with a bytes.Buffer instead of needing a real TTY.
@@ -1745,7 +1746,8 @@ func jsonDecode(data []byte, v any) error {
 // suites or Haiku for a fast scaffold.
 
 // runTest implements the `test` subcommand. Usage:
-//   talyvor-code test [--output path] [--framework jest] [--issue ENG-42] [--model id] <file>
+//
+//	talyvor-code test [--output path] [--framework jest] [--issue ENG-42] [--model id] <file>
 //
 // Reads the source file, infers the language from its extension,
 // asks Lens for tests with the matching system prompt, then
@@ -2421,11 +2423,11 @@ func runModels(stdout io.Writer) error {
 const maxShellFixAttempts = 3
 
 // runShell drives the shell-command generation flow. Steps:
-//   1. Resolve shell + OS context.
-//   2. Ask Lens (Haiku) for a single command.
-//   3. Print the command.
-//   4. Optional --explain pass for a brief breakdown.
-//   5. Optional --run with safety prompt + fix-on-failure loop.
+//  1. Resolve shell + OS context.
+//  2. Ask Lens (Haiku) for a single command.
+//  3. Print the command.
+//  4. Optional --explain pass for a brief breakdown.
+//  5. Optional --run with safety prompt + fix-on-failure loop.
 func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
 		explain  bool

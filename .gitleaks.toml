@@ -1,0 +1,11 @@
+# gitleaks config. Start from the maintained default ruleset and
+# allowlist the committed example files — they carry placeholders
+# (`tlv_...`, empty values), not real secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore example/template files that hold placeholder credentials"
+paths = [
+  '''.*\.example$''',
+]
