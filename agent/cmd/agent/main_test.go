@@ -1552,10 +1552,10 @@ func TestCommit_IssuePrefixIsPrepended(t *testing.T) {
 
 func TestCleanCommitMessage_StripsArtifacts(t *testing.T) {
 	cases := map[string]string{
-		"```\nfeat: x\n```":    "feat: x",
-		"\"chore: y\"":          "chore: y",
-		"feat: z\n":             "feat: z",
-		"  fix: trim  ":         "fix: trim",
+		"```\nfeat: x\n```": "feat: x",
+		"\"chore: y\"":      "chore: y",
+		"feat: z\n":         "feat: z",
+		"  fix: trim  ":     "fix: trim",
 	}
 	for in, want := range cases {
 		got := cleanCommitMessage(in)

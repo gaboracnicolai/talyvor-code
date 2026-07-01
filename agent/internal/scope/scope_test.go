@@ -33,9 +33,9 @@ func TestMatchGlob_LiteralPath(t *testing.T) {
 
 func TestMatchGlob_StarMatchesOneSegment(t *testing.T) {
 	cases := map[string]bool{
-		"src/*.go|src/auth.go":     true,
-		"src/*.go|src/auth/x.go":   false, // * doesn't cross /
-		"src/*.go|src/.dotfile":    false, // wildcard skips leading dot
+		"src/*.go|src/auth.go":   true,
+		"src/*.go|src/auth/x.go": false, // * doesn't cross /
+		"src/*.go|src/.dotfile":  false, // wildcard skips leading dot
 	}
 	for in, want := range cases {
 		parts := strings.SplitN(in, "|", 2)
@@ -49,15 +49,15 @@ func TestMatchGlob_StarMatchesOneSegment(t *testing.T) {
 
 func TestMatchGlob_DoubleStarCrossesSegments(t *testing.T) {
 	cases := map[string]bool{
-		"internal/auth/**|internal/auth/jwt.go":              true,
-		"internal/auth/**|internal/auth/jwt/handler.go":      true,
-		"internal/auth/**|internal/api/server.go":            false,
-		"**/*_test.go|src/auth_test.go":                      true,
-		"**/*_test.go|src/sub/auth_test.go":                  true,
-		"**/*_test.go|src/auth.go":                           false,
-		"**/handlers/**|src/handlers/foo.go":                 true,
-		"**/handlers/**|src/api/handlers/v1/foo.go":          true,
-		"**/handlers/**|src/api/foo.go":                      false,
+		"internal/auth/**|internal/auth/jwt.go":         true,
+		"internal/auth/**|internal/auth/jwt/handler.go": true,
+		"internal/auth/**|internal/api/server.go":       false,
+		"**/*_test.go|src/auth_test.go":                 true,
+		"**/*_test.go|src/sub/auth_test.go":             true,
+		"**/*_test.go|src/auth.go":                      false,
+		"**/handlers/**|src/handlers/foo.go":            true,
+		"**/handlers/**|src/api/handlers/v1/foo.go":     true,
+		"**/handlers/**|src/api/foo.go":                 false,
 	}
 	for in, want := range cases {
 		parts := strings.SplitN(in, "|", 2)
@@ -218,7 +218,7 @@ func TestFilterFiles_KeepsMatchesDropsRest(t *testing.T) {
 		{Path: "internal/auth/session.go"},
 		{Path: "internal/auth/jwt_test.go"}, // excluded
 		{Path: "cmd/auth/main.go"},
-		{Path: "internal/api/router.go"},     // not included
+		{Path: "internal/api/router.go"}, // not included
 	}
 	filtered := sm.FilterFiles(files)
 	got := []string{}

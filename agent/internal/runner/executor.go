@@ -1,9 +1,9 @@
 // Package runner powers the self-healing loop. Two responsibilities:
 //
-//   1. Detect a project's build/test command (`go build ./...`,
-//      `npm test`, …) from on-disk markers.
-//   2. Run that command, capture stdout/stderr/exit code, enforce
-//      a timeout, and report a structured result.
+//  1. Detect a project's build/test command (`go build ./...`,
+//     `npm test`, …) from on-disk markers.
+//  2. Run that command, capture stdout/stderr/exit code, enforce
+//     a timeout, and report a structured result.
 //
 // The healing logic lives in healer.go; this file is the IO side.
 package runner

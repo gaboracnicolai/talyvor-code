@@ -1,12 +1,12 @@
 // Package shell generates shell commands from natural-language
 // descriptions. The flow is:
 //
-//   1. Detect the user's shell + OS for prompt grounding.
-//   2. Build a short system prompt that pins the model to a single
-//      command, no prose, no fences.
-//   3. Route through Lens with Haiku — shell commands are short
-//      and latency matters more than nuance.
-//   4. Strip the common artefacts (fences, preambles).
+//  1. Detect the user's shell + OS for prompt grounding.
+//  2. Build a short system prompt that pins the model to a single
+//     command, no prose, no fences.
+//  3. Route through Lens with Haiku — shell commands are short
+//     and latency matters more than nuance.
+//  4. Strip the common artefacts (fences, preambles).
 //
 // Optional helpers cover safety screening + execution + a
 // fix-loop suggestion for when a generated command fails.

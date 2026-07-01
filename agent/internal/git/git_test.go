@@ -208,7 +208,7 @@ func TestIsGitHub(t *testing.T) {
 		"https://github.com/acme/widgets":            true,
 		"git@gitlab.com:acme/widgets.git":            false,
 		"https://gitea.example.com/acme/widgets.git": false,
-		"":                                           false,
+		"": false,
 	}
 	for url, want := range cases {
 		if got := IsGitHub(url); got != want {

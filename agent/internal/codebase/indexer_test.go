@@ -27,11 +27,11 @@ func writeFiles(t *testing.T, root string, files map[string]string) {
 func TestIndexDirectory_CountsFilesAndLanguages(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"a.go":          "package a\n\nfunc A() {}\n",
-		"b.go":          "package b\nvar X = 1\n",
-		"src/foo.ts":    "export const x = 1;\nexport const y = 2;\n",
-		"src/util.ts":   "export {};\n",
-		"README.md":     "# project\n",
+		"a.go":        "package a\n\nfunc A() {}\n",
+		"b.go":        "package b\nvar X = 1\n",
+		"src/foo.ts":  "export const x = 1;\nexport const y = 2;\n",
+		"src/util.ts": "export {};\n",
+		"README.md":   "# project\n",
 	})
 	idx, err := IndexDirectory(dir, 500)
 	if err != nil {
@@ -54,14 +54,14 @@ func TestIndexDirectory_CountsFilesAndLanguages(t *testing.T) {
 func TestIndexDirectory_SkipsBlockedPaths(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"src/app.ts":              "x\n",
-		"node_modules/lib/x.js":   "x\n",
-		".git/HEAD":               "ref: refs/heads/main\n",
-		"vendor/pkg/util.go":      "package util\n",
-		".next/build/chunk.js":    "x\n",
-		"dist/bundle.min.js":      "x\n",
-		"package-lock.json":       "{}\n",
-		"py/__pycache__/x.pyc":    "binary",
+		"src/app.ts":            "x\n",
+		"node_modules/lib/x.js": "x\n",
+		".git/HEAD":             "ref: refs/heads/main\n",
+		"vendor/pkg/util.go":    "package util\n",
+		".next/build/chunk.js":  "x\n",
+		"dist/bundle.min.js":    "x\n",
+		"package-lock.json":     "{}\n",
+		"py/__pycache__/x.pyc":  "binary",
 	})
 	idx, err := IndexDirectory(dir, 500)
 	if err != nil {
