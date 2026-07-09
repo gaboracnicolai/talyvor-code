@@ -944,9 +944,10 @@ func applyHealFixes(
 ) int {
 	applied := 0
 	for _, f := range fixes {
-		abs := f.File
-		if !isAbs(abs) {
-			abs = filepath.Join(workspaceRoot, f.File)
+		abs, cerr := confine(workspaceRoot, f.File)
+		if cerr != nil {
+			fmt.Fprintf(stderr, "! refusing heal fix outside workspace: %v\n", cerr)
+			continue
 		}
 		original := ""
 		if body, err := os.ReadFile(abs); err == nil {
@@ -1635,9 +1636,9 @@ type FileChange struct {
 // what should land at the path.
 func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root, model string) (*FileChange, error) {
 	change := &FileChange{Path: pf.Path, Operation: pf.Operation}
-	abs := pf.Path
-	if !isAbs(abs) {
-		abs = filepath.Join(root, pf.Path)
+	abs, err := confine(root, pf.Path)
+	if err != nil {
+		return nil, err
 	}
 	if pf.Operation == "modify" || pf.Operation == "delete" {
 		body, err := os.ReadFile(abs)
@@ -1677,9 +1678,9 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 // it writes the new content (creating parent dirs as needed); for
 // delete it removes the file.
 func writeChange(root string, c *FileChange) error {
-	abs := c.Path
-	if !isAbs(abs) {
-		abs = filepath.Join(root, c.Path)
+	abs, err := confine(root, c.Path)
+	if err != nil {
+		return err
 	}
 	switch c.Operation {
 	case "delete":
@@ -1705,6 +1706,28 @@ func GenerateUnifiedDiffWrap(original, modified, filename string) string {
 
 func isAbs(p string) bool {
 	return filepath.IsAbs(p)
+}
+
+// confine resolves p against the workspace root and returns the cleaned absolute path ONLY if it stays
+// inside root. S11: an absolute path outside root, or any "../" escape, is refused here — confinement is
+// enforced at the filesystem chokepoint, independent of the interactive approval prompt (containment is
+// not an approval question). An absolute path that legitimately lies under root is allowed.
+func confine(root, p string) (string, error) {
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return "", err
+	}
+	var abs string
+	if filepath.IsAbs(p) {
+		abs = filepath.Clean(p)
+	} else {
+		abs = filepath.Clean(filepath.Join(rootAbs, p))
+	}
+	rel, err := filepath.Rel(rootAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("refusing path outside workspace root %q: %s", rootAbs, p)
+	}
+	return abs, nil
 }
 
 func truncate(s string, n int) string {
