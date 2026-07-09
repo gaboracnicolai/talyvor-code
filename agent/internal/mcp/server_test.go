@@ -309,6 +309,42 @@ func TestReadFile_ReturnsContent(t *testing.T) {
 	}
 }
 
+// S11: read_file must not read outside the configured workspace root. RED (pre-fix): a token-holding
+// client reads any file via an absolute or ../ path. GREEN: refused; in-root reads still work.
+func TestReadFile_RefusesOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "in.go"), []byte("package a\n\nfunc A() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	secret := filepath.Join(t.TempDir(), "id_rsa")
+	if err := os.WriteFile(secret, []byte("PRIVATE-KEY-MATERIAL"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	s, srv := newServerForTest(t, nil, nil, nil)
+	s.SetRoot(root) // production always SetRoot()s (main.go)
+
+	// (a) absolute path outside root — the secret must NOT come back.
+	resp := callRPC(t, srv, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"`+secret+`"}}}`)
+	if resp.Error == nil && strings.Contains(toolText(t, resp), "PRIVATE-KEY-MATERIAL") {
+		t.Errorf("S11: read_file returned a file OUTSIDE the workspace root: %s", secret)
+	}
+
+	// (b) ../ traversal escape.
+	resp2 := callRPC(t, srv, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"../../../../../../etc/hosts"}}}`)
+	if resp2.Error == nil && strings.Contains(toolText(t, resp2), "localhost") {
+		t.Errorf("S11: read_file escaped via ../ to /etc/hosts")
+	}
+
+	// POSITIVE: an in-root read still works.
+	resp3 := callRPC(t, srv, `{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"in.go"}}}`)
+	if resp3.Error != nil {
+		t.Errorf("in-root read should succeed, got: %+v", resp3.Error)
+	} else if !strings.Contains(toolText(t, resp3), "package a") {
+		t.Errorf("in-root read returned wrong content")
+	}
+}
+
 func TestReadFile_LinesRangeSlices(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "x.txt")

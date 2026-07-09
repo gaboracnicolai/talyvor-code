@@ -9,6 +9,7 @@
 // logic is unit-testable.
 
 import * as vscode from "vscode";
+import * as path from "path";
 import type { LensClient } from "../lens/client";
 import type { LensConfig } from "../lens/types";
 import { CostTracker, estimateCostUSD } from "../providers/cost-tracker";
@@ -414,8 +415,8 @@ export class AgentMode {
   ): Promise<number> {
     let applied = 0;
     for (const fix of fixes) {
-      const abs = absolutise(fix.file, workspaceRoot);
       try {
+        const abs = absolutise(fix.file, workspaceRoot); // throws if outside workspace root (S11)
         const enc = new TextEncoder();
         await vscode.workspace.fs.writeFile(
           vscode.Uri.file(abs),
@@ -627,11 +628,16 @@ export class AgentMode {
 }
 
 function absolutise(p: string, root: string): string {
-  // POSIX-only absolute check is fine here — VS Code on Windows
-  // still resolves backslash paths consistently through
-  // vscode.Uri.file.
-  if (p.startsWith("/") || /^[a-zA-Z]:[\\/]/.test(p)) return p;
-  return root ? `${root}/${p}` : p;
+  // S11: confine to the workspace root. An absolute path outside root, or a "../" escape, is REFUSED
+  // (throws) — containment is enforced here, independent of the approval prompt. An absolute path that
+  // legitimately lies under root is allowed.
+  const rootAbs = path.resolve(root || ".");
+  const abs = path.resolve(rootAbs, p); // absolute p honored as-is; relative p resolves under root
+  const rel = path.relative(rootAbs, abs);
+  if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
+    throw new Error(`refusing path outside workspace root: ${p}`);
+  }
+  return abs;
 }
 
 // tail returns the last `max` characters of s with a leading

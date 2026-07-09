@@ -788,6 +788,31 @@ type readFileArgs struct {
 	Lines string `json:"lines"`
 }
 
+// confinedReadPath enforces that an MCP file read stays within the configured workspace root (s.root).
+// S11: read_file / ask_code / generate_tests / review_code took a raw caller path straight to os.Open,
+// letting a token-holding client read any file the process could (../../.ssh/id_rsa, .env, .git/config).
+// When no root is configured (s.root == "") there is no workspace boundary to enforce and the path is
+// returned as-is; the serve command always SetRoot()s, so production reads are always confined.
+func (s *Server) confinedReadPath(p string) (string, error) {
+	if s.root == "" {
+		return p, nil
+	}
+	rootAbs, err := filepath.Abs(s.root)
+	if err != nil {
+		return "", err
+	}
+	abs := p
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(rootAbs, abs)
+	}
+	abs = filepath.Clean(abs)
+	rel, err := filepath.Rel(rootAbs, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("refusing to read outside workspace root")
+	}
+	return abs, nil
+}
+
 func (s *Server) toolReadFile(raw json.RawMessage) (any, int, string) {
 	var a readFileArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
@@ -796,7 +821,11 @@ func (s *Server) toolReadFile(raw json.RawMessage) (any, int, string) {
 	if strings.TrimSpace(a.Path) == "" {
 		return nil, rpcErrInvalidParam, "path is required"
 	}
-	body, err := codebase.ReadFile(a.Path, codebase.DefaultMaxFileBytes)
+	safe, err := s.confinedReadPath(a.Path)
+	if err != nil {
+		return nil, rpcErrInvalidParam, "read: path outside workspace"
+	}
+	body, err := codebase.ReadFile(safe, codebase.DefaultMaxFileBytes)
 	if err != nil {
 		return nil, rpcErrInvalidParam, "read: " + err.Error()
 	}
