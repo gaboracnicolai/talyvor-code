@@ -4,8 +4,31 @@ package config
 
 import (
 	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"os"
 )
+
+// validateBaseURL rejects a Talyvor base URL that would leak the attached API key: it must be https
+// (except an explicit localhost host over http, for local dev), and must never resolve to a link-local /
+// cloud-metadata / unspecified address. A hostile config that pointed the client at http://attacker or
+// http://169.254.169.254 would otherwise send the user's key there.
+func validateBaseURL(name, raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("%s: invalid URL %q", name, raw)
+	}
+	host := u.Hostname()
+	isLocal := host == "localhost" || host == "127.0.0.1" || host == "::1"
+	if u.Scheme != "https" && !isLocal {
+		return fmt.Errorf("%s must be https (got %q) — the API key must not be sent in cleartext", name, raw)
+	}
+	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
+		return fmt.Errorf("%s: refusing link-local/metadata host %q", name, host)
+	}
+	return nil
+}
 
 type Config struct {
 	LensURL     string
@@ -63,6 +86,16 @@ func Load(flags Config) Config {
 // required field, joined with a newline. nil when nothing is
 // missing.
 func (c Config) Validate() error {
+	// Reject unsafe base URLs before anything else — a hostile config must not exfiltrate the API key.
+	for _, uc := range []struct{ name, val string }{
+		{"lens-url", c.LensURL}, {"track-url", c.TrackURL}, {"docs-url", c.DocsURL},
+	} {
+		if uc.val != "" {
+			if err := validateBaseURL(uc.name, uc.val); err != nil {
+				return err
+			}
+		}
+	}
 	var missing []string
 	if c.LensURL == "" {
 		missing = append(missing, "--lens-url or TALYVOR_LENS_URL")

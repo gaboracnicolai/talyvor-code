@@ -9,12 +9,16 @@
 
 package com.talyvor.code
 
+import com.intellij.credentialStore.CredentialAttributes
+import com.intellij.credentialStore.generateServiceName
+import com.intellij.ide.passwordSafe.PasswordSafe
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
+import java.net.URI
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
@@ -28,11 +32,12 @@ import javax.swing.JPanel
 @Service(Service.Level.APP)
 class TalyvorSettings : PersistentStateComponent<TalyvorSettings.State> {
 
+    // B-Code-creds (b): API keys are NOT persisted in State — that would write them in plaintext into
+    // TalyvorSettings.xml. They live in the IDE credential store (PasswordSafe). State holds only
+    // non-secret prefs.
     data class State(
         var lensUrl: String = "http://localhost:8080",
-        var lensApiKey: String = "",
         var trackUrl: String = "",
-        var trackApiKey: String = "",
         var workspaceId: String = "",
         var activeIssue: String = "",
         var model: String = "claude-haiku-4-6"
@@ -45,28 +50,30 @@ class TalyvorSettings : PersistentStateComponent<TalyvorSettings.State> {
         this.state = state
     }
 
+    // B-Code-creds (a): sanitize the base URL on read — reject non-https-remote / link-local / metadata,
+    // so a hostile config can't make the client send the API key to an attacker or internal host.
     var lensUrl: String
-        get() = state.lensUrl
+        get() = sanitizeBaseUrl(state.lensUrl)
         set(v) {
             state.lensUrl = v
         }
 
     var lensApiKey: String
-        get() = state.lensApiKey
+        get() = PasswordSafe.instance.getPassword(keyAttrs("lensApiKey")) ?: ""
         set(v) {
-            state.lensApiKey = v
+            PasswordSafe.instance.setPassword(keyAttrs("lensApiKey"), v.ifBlank { null })
         }
 
     var trackUrl: String
-        get() = state.trackUrl
+        get() = sanitizeBaseUrl(state.trackUrl)
         set(v) {
             state.trackUrl = v
         }
 
     var trackApiKey: String
-        get() = state.trackApiKey
+        get() = PasswordSafe.instance.getPassword(keyAttrs("trackApiKey")) ?: ""
         set(v) {
-            state.trackApiKey = v
+            PasswordSafe.instance.setPassword(keyAttrs("trackApiKey"), v.ifBlank { null })
         }
 
     var workspaceId: String
@@ -89,6 +96,23 @@ class TalyvorSettings : PersistentStateComponent<TalyvorSettings.State> {
 
     companion object {
         fun getInstance(): TalyvorSettings = service()
+
+        private fun keyAttrs(id: String): CredentialAttributes =
+            CredentialAttributes(generateServiceName("Talyvor Code", id))
+
+        private fun sanitizeBaseUrl(raw: String): String {
+            if (raw.isBlank()) return ""
+            val u = try {
+                URI(raw)
+            } catch (e: Exception) {
+                return ""
+            }
+            val host = u.host ?: return ""
+            val isLocal = host == "localhost" || host == "127.0.0.1" || host == "::1"
+            if (u.scheme != "https" && !(u.scheme == "http" && isLocal)) return ""
+            if (host == "0.0.0.0" || host.startsWith("169.254.") || host.startsWith("fe80")) return ""
+            return raw
+        }
     }
 }
 
