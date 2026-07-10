@@ -9,7 +9,7 @@
 // logic is unit-testable.
 
 import * as vscode from "vscode";
-import * as path from "path";
+import { absolutise } from "./confine-pure";
 import type { LensClient } from "../lens/client";
 import type { LensConfig } from "../lens/types";
 import { CostTracker, estimateCostUSD } from "../providers/cost-tracker";
@@ -627,18 +627,8 @@ export class AgentMode {
   }
 }
 
-function absolutise(p: string, root: string): string {
-  // S11: confine to the workspace root. An absolute path outside root, or a "../" escape, is REFUSED
-  // (throws) — containment is enforced here, independent of the approval prompt. An absolute path that
-  // legitimately lies under root is allowed.
-  const rootAbs = path.resolve(root || ".");
-  const abs = path.resolve(rootAbs, p); // absolute p honored as-is; relative p resolves under root
-  const rel = path.relative(rootAbs, abs);
-  if (rel === ".." || rel.startsWith(".." + path.sep) || path.isAbsolute(rel)) {
-    throw new Error(`refusing path outside workspace root: ${p}`);
-  }
-  return abs;
-}
+// absolutise (S11 workspace-root confinement) now lives in ./confine-pure so it is unit-testable without
+// the VS Code harness; imported at the top of this file.
 
 // tail returns the last `max` characters of s with a leading
 // "…" marker when the input was truncated. Used to keep heal

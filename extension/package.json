@@ -132,7 +132,8 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "test:unit": "tsc -p ./ && node --test \"out/src/**/*.test.js\""
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
