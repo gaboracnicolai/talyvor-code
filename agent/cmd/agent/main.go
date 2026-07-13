@@ -843,6 +843,11 @@ func runHealLoop(
 	healModel := modelpkg.DefaultForCommand("review") // Sonnet, per spec
 	reader := bufio.NewReader(stdin)
 
+	// K4 CODE LOOP — pairing: attempt 1's build tests the INITIAL multi-file plan (1:many, NOT soundly
+	// attributable to one generation) → not reported. Each subsequent build tests exactly the PREVIOUS
+	// repair generation (a single lc.CompleteWithUsage → one output_id) → reported 1:1 for that repair.
+	var lastRepairOutputID string
+
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if attempt == 1 {
 			fmt.Fprintf(stdout, "\n🔧 Running build check: %s\n", cmd)
@@ -851,6 +856,14 @@ func runHealLoop(
 		if err != nil {
 			fmt.Fprintf(stderr, "! heal: command run: %v\n", err)
 			return nil
+		}
+		// Report the mechanical verdict for the repair this build tested (1:1). Empty on attempt 1 (the
+		// unattributable initial batch) → skipped. Best-effort: a reporting failure NEVER breaks the build.
+		if cfg.ReportVerdicts && lastRepairOutputID != "" {
+			verdict := mechanicalVerdict(cmd, runner.IsSuccess(res))
+			if rerr := lc.ReportMechanicalVerdict(ctx, lastRepairOutputID, verdict, res.ExitCode, cmd, ""); rerr != nil {
+				fmt.Fprintf(stderr, "! verdict report failed (ignored): %v\n", rerr)
+			}
 		}
 		if runner.IsSuccess(res) {
 			if attempt == 1 {
@@ -876,13 +889,17 @@ func runHealLoop(
 			Language:        lang,
 			Attempt:         attempt,
 		})
-		reply, err := lc.Complete(ctx,
+		usage, err := lc.CompleteWithUsage(ctx,
 			[]lens.Message{{Role: "user", Content: prompt}},
 			healModel, "agent-heal", cfg.WorkspaceID, cfg.ActiveIssue,
 		)
 		if err != nil {
 			return fmt.Errorf("heal: %w", err)
 		}
+		reply := usage.Text
+		// Attribute the NEXT build's verdict to THIS repair generation (1:1). Empty when the gateway
+		// didn't return an output_id (verifier off / streaming) → the next build simply isn't reported.
+		lastRepairOutputID = usage.OutputID
 		_ = agentModel // surfaced via the apply-summary line above; healing pins Sonnet
 		fixes, err := runner.ParseHealResult(reply)
 		if err != nil {
@@ -903,6 +920,23 @@ func runHealLoop(
 		"❌ Could not fix automatically after %d attempts. Review the errors above and fix manually.\n",
 		maxAttempts)
 	return fmt.Errorf("heal: gave up after %d attempts", maxAttempts)
+}
+
+// mechanicalVerdict maps a build/test command + its success into the K4 mechanical verdict enum. A command
+// containing "test" is a test run (tests_passed/tests_failed); anything else is a build (compiled/
+// compile_failed). Deterministic, pure — the exit code carries the actual pass/fail.
+func mechanicalVerdict(cmd string, success bool) string {
+	isTest := strings.Contains(cmd, "test")
+	switch {
+	case success && isTest:
+		return "tests_passed"
+	case success:
+		return "compiled"
+	case isTest:
+		return "tests_failed"
+	default:
+		return "compile_failed"
+	}
 }
 
 // resolveHealCommand honours --heal-cmd if supplied, otherwise

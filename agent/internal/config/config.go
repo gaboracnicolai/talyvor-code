@@ -40,6 +40,10 @@ type Config struct {
 	WorkspaceID string
 	ActiveIssue string
 	Model       string
+	// ReportVerdicts gates the K4 code loop: when true the agent reports mechanical build/test verdicts
+	// back to Lens for the specific generation that produced the code. DEFAULT FALSE — off = the agent
+	// behaves exactly as before; reporting is best-effort and NEVER blocks or fails a user's build.
+	ReportVerdicts bool
 }
 
 // Load merges flag inputs with TALYVOR_* env vars. Empty flag
@@ -74,6 +78,9 @@ func Load(flags Config) Config {
 	}
 	if out.Model == "" {
 		out.Model = os.Getenv("TALYVOR_MODEL")
+	}
+	if !out.ReportVerdicts {
+		out.ReportVerdicts = os.Getenv("TALYVOR_REPORT_VERDICTS") == "true"
 	}
 	// Note: no hard default applied here. Each command resolves
 	// its own default via internal/model.ResolveModel, which
