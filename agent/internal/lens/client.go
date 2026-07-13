@@ -57,6 +57,10 @@ type Usage struct {
 	InputTokens  int
 	OutputTokens int
 	CostUSD      float64
+	// OutputID is the gateway-bound output identity Lens returns in the X-Talyvor-Output-Id response header
+	// (K4 code loop). Empty when the gateway doesn't set it (verifier off, or true streaming). It lets a
+	// build/test verdict be paired 1:1 with the specific generation that produced the code.
+	OutputID string
 }
 
 // CompleteWithUsage is the richer sibling to Complete — same
@@ -119,7 +123,43 @@ func (c *Client) CompleteWithUsage(ctx context.Context, messages []Message, mode
 		InputTokens:  out.Usage.InputTokens,
 		OutputTokens: out.Usage.OutputTokens,
 		CostUSD:      EstimateCostUSD(model, out.Usage.InputTokens, out.Usage.OutputTokens),
+		OutputID:     resp.Header.Get("X-Talyvor-Output-Id"),
 	}, nil
+}
+
+// ReportMechanicalVerdict self-reports a mechanical build/test verdict for an output this workspace
+// produced (K4 code loop). BEST-EFFORT: it must NEVER break the caller's build — every failure is returned
+// for the caller to swallow. It POSTs to the ownership-bound endpoint; the gateway verifies the caller owns
+// output_id and appends the verdict (first-report-wins). A no-op when output_id is empty or not configured.
+func (c *Client) ReportMechanicalVerdict(ctx context.Context, outputID, verdict string, exitCode int, tool, reason string) error {
+	if !c.IsConfigured() || outputID == "" {
+		return nil
+	}
+	enc, err := json.Marshal(map[string]any{
+		"verdict":   verdict,
+		"exit_code": exitCode,
+		"tool":      tool,
+		"reason":    reason,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.url+"/v1/output-verdicts/"+outputID+"/mechanical", bytes.NewReader(enc))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("lens: report verdict: %s", resp.Status)
+	}
+	return nil
 }
 
 // EstimateCostUSD prices a call from per-million-token rates.
