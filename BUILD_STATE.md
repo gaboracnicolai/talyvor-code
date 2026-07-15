@@ -126,3 +126,8 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   the next turn (feeds results back); stops on `done`; stops on the step budget;
   recovers from a malformed reply. Bounded by MaxSteps (default 20) + MaxRepeat
   (default 2) + transcript trim.
+- **Phase 3 — termination + no-progress** (committed). The overnight-safety cluster:
+  proven the loop aborts as StopNoProgress on (a) an edit→fail→identical-edit cycle
+  (stops at step 5, not the 50-step budget), (b) the same edit every turn (step 3),
+  (c) endless malformed replies; and stops cleanly on done, on budget, and surfaces a
+  model-call error as StopError. An unattended run cannot burn its budget looping.
