@@ -139,3 +139,9 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   the value, and EDITS server.go with it. The old single-pass generateChange gets
   only the target file + task, so it can neither observe a test result nor read a
   sibling — these two capabilities are the gap this run closes.
+- **Phase 5 — self-heal folds into the loop** (committed). A failing test is just
+  another OBSERVE the model re-plans on — not a bolted-on ≤3 retry. Proven richer
+  than the old healer: the heal RUNS the test, observes the failure, SEARCHES the
+  codebase for the right helper, and edits (run→observe→search→edit→run→done). The
+  old healer could only regenerate the changed file from the raw error text; it had
+  no search/read. Self-heal is now native loop behavior with the full tool set.
