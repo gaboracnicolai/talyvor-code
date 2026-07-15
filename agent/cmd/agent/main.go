@@ -115,6 +115,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runTest(stdout, stderr, cfg, rest)
 	case "run":
 		return runAgent(os.Stdin, stdout, stderr, cfg, rest)
+	case "index":
+		return runIndex(stdout, stderr, cfg, rest)
 	case "docs":
 		return runDocs(stdout, stderr, cfg, rest)
 	case "review":
@@ -153,6 +155,7 @@ COMMANDS
   chat       Start an interactive chat REPL
   test       Generate tests for a source file
   run        Run an agentic multi-file task
+  index      Build the semantic codebase index for retrieval (chat/ask/run)
   review     Review staged changes or files for bugs/security/perf
   commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
@@ -250,6 +253,12 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 		return err
 	}
 
+	ctx := context.Background()
+	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	// Retrieval-grounded context: pull the chunks most relevant to the question from
+	// the semantic index (built by `talyvor-code index`). Silent no-op when absent.
+	ret := loadRetriever(lc, cfg, ".", nil)
+
 	// File context precedes the question — the model sees what
 	// it's looking at before being told what to do with it.
 	var prompt strings.Builder
@@ -268,11 +277,13 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	} else {
 		prompt.WriteString(combinedPrefix(".", "lang", ""))
 	}
+	if sec := retrievedContext(ctx, ret, question, filepath.Base(filePath)); sec != "" {
+		prompt.WriteString(sec)
+		prompt.WriteString("\n")
+	}
 	prompt.WriteString("Question: ")
 	prompt.WriteString(question)
 
-	ctx := context.Background()
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	text, _, err := streamWithFallback(ctx, lc, stdout,
 		[]lens.Message{{Role: "user", Content: prompt.String()}},
 		chosenModel, "ask", cfg.WorkspaceID, cfg.ActiveIssue)
@@ -438,6 +449,10 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/model <id>" to swap model, "/file <path>" to attach a file.`)
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	// Retrieval-grounded chat: each turn pulls the chunks most relevant to the user's
+	// message from the semantic index (built by `talyvor-code index`). Absent → nil,
+	// chat behaves exactly as before.
+	chatRet := loadRetriever(lc, cfg, ".", nil)
 	history := []lens.Message{}
 	pendingFile := "" // attached via /file, consumed by next message
 
@@ -497,11 +512,14 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		}
 
 		// Build the user turn — optional file context first, then
-		// the prompt itself.
+		// retrieved codebase context, then the prompt itself.
 		userContent := line
 		if pendingFile != "" {
 			userContent = pendingFile + "\n\n" + line
 			pendingFile = ""
+		}
+		if sec := retrievedContext(context.Background(), chatRet, line, ""); sec != "" {
+			userContent = sec + "\n" + userContent
 		}
 		history = append(history, lens.Message{Role: "user", Content: userContent})
 		history = trimChatHistory(history)
@@ -664,6 +682,11 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		}
 	}
 
+	// Load the SEMANTIC index (built by `talyvor-code index`) for retrieval-grounded
+	// generation. Absent → nil retriever ⇒ per-file generation falls back to the
+	// prior single-file behavior.
+	retriever := loadRetriever(lc, cfg, workspaceRoot, stdout)
+
 	// ── Phase 1: plan ──
 	fmt.Fprintln(stdout, "▸ Planning…")
 	planText, err := lc.Complete(ctx,
@@ -722,7 +745,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	applied, skipped := 0, 0
 	for i, pf := range plan.Files {
 		fmt.Fprintf(stdout, "\n▸ Generating %d/%d: %s\n", i+1, len(plan.Files), pf.Path)
-		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot, chosenModel)
+		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot, chosenModel, retriever)
 		if err != nil {
 			fmt.Fprintf(stderr, "! %s: %v\n", pf.Path, err)
 			skipped++
@@ -1668,7 +1691,12 @@ type FileChange struct {
 // file. For modify operations we include the existing content so
 // the model has the full context; for create we just describe
 // what should land at the path.
-func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root, model string) (*FileChange, error) {
+// agentContextChunks caps how many retrieved sibling chunks are injected into a
+// per-file generation prompt — enough for cross-file coherence without blowing the
+// context window.
+const agentContextChunks = 5
+
+func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, task string, pf PlannedFile, root, model string, ret codebase.Retriever) (*FileChange, error) {
 	change := &FileChange{Path: pf.Path, Operation: pf.Operation}
 	abs, err := confine(root, pf.Path)
 	if err != nil {
@@ -1686,12 +1714,26 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 		return change, nil
 	}
 
+	// Cross-file context (recon gap #2): retrieve the RELEVANT SIBLING chunks for
+	// this task+file from the semantic index and show them to the model, so a
+	// multi-file edit is no longer generated blind to its siblings. Nil retriever
+	// (no index built) → no section, i.e. the prior single-file behavior.
+	var relevant string
+	if ret != nil {
+		if chunks, rerr := ret.Retrieve(ctx, task+" "+pf.Path+" "+pf.Description, agentContextChunks); rerr == nil {
+			relevant = codebase.RelevantContextSection(chunks, pf.Path, agentContextChunks)
+		}
+	}
+
 	var user strings.Builder
 	user.WriteString(combinedPrefix(root, "agent", ""))
 	user.WriteString("You are an expert software engineer. Make the specified change to this file. ")
 	user.WriteString("Return ONLY the complete new file content. No explanations, no markdown fences. ")
 	user.WriteString("The file must be syntactically correct.\n\n")
 	fmt.Fprintf(&user, "Task: %s\nFile: %s\nOperation: %s\n", task, pf.Path, pf.Operation)
+	if relevant != "" {
+		user.WriteString(relevant)
+	}
 	if pf.Operation == "modify" {
 		fmt.Fprintf(&user, "\nCurrent content:\n```\n%s\n```\n", change.OriginalContent)
 	}
