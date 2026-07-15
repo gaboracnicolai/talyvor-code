@@ -624,9 +624,13 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		prDraft     bool
 		branchName  string
 		ghToken     string
+		iterative   bool
+		maxSteps    int
 	)
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fs.BoolVar(&iterative, "iterative", false, "Use the ITERATIVE tool-using agent loop (search/read/edit/run → observe → re-plan) instead of the single-pass pipeline")
+	fs.IntVar(&maxSteps, "max-steps", 20, "Max tool-call steps for --iterative (default 20)")
 	fs.BoolVar(&dryRun, "dry-run", false, "Show plan + diffs without writing")
 	fs.BoolVar(&yes, "yes", false, "Auto-approve all changes")
 	fs.StringVar(&issue, "issue", "", "Override active issue for this task")
@@ -664,6 +668,21 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	ctx := context.Background()
+
+	// ── Iterative agent (opt-in via --iterative) ──
+	// The tool-using OBSERVE/ACT loop: the model drives search/read/edit/run and
+	// re-plans on real feedback, bounded by --max-steps + a no-progress detector, and
+	// retrieval-grounded via the semantic index. It AUTO-APPLIES confined edits (it
+	// must run + observe to make progress), so --dry-run does not apply. DESIGN FORK:
+	// opt-in so the existing single-pass pipeline (below) and its tests stay the
+	// default — flipping the default is a one-line change (see BUILD_STATE.md).
+	if iterative {
+		if dryRun {
+			fmt.Fprintln(stderr, "! --dry-run is ignored with --iterative (the loop must apply edits to run + observe)")
+		}
+		ret := loadRetriever(lc, cfg, workspaceRoot, stdout)
+		return runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
+	}
 
 	// ── Phase 0: index codebase ──
 	// Index up front so the planner sees the actual stack and so

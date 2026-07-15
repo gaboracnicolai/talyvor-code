@@ -145,3 +145,11 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   codebase for the right helper, and edits (run→observe→search→edit→run→done). The
   old healer could only regenerate the changed file from the raw error text; it had
   no search/read. Self-heal is now native loop behavior with the full tool set.
+- **Phase 6 — wired into `run --iterative`** (committed). New `cmd/agent/iterative.go`:
+  lensModel adapter (loop turns are Lens completions with the X-Talyvor-Issue/-Workspace
+  attribution, feature "agent-loop") + runIterativeAgent (builds the confined tool set +
+  retriever, runs the loop, prints Stop/Steps/Summary/EditedFiles). `run --iterative`
+  (opt-in; `--max-steps`, default 20) short-circuits the single-pass pipeline. `--dry-run`
+  is noted-and-ignored under --iterative (the loop must apply edits to run + observe).
+  End-to-end CLI test (mocked Lens scripting tool calls) proves the edit is applied and a
+  clean done is reported. Existing single-pass `run` tests untouched + green.
