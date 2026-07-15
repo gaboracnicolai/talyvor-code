@@ -174,3 +174,40 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   X-Talyvor-Issue/-Workspace attribution (feature "agent-loop").
 - **Egress:** nothing new leaves the machine — only the Lens model calls the loop
   makes (same gateway/trust boundary as every other agent call). No new service.
+
+## Iterative-agent design (as built)
+`internal/agentloop` — the model drives an OBSERVE/ACT loop over a confined tool set:
+- **Tools** (`tools.go`): `search_codebase` (real semantic retrieval), `read_file`,
+  `edit_file` (both S11-confined), `run` (runner primitive, rooted). `Registry`
+  dispatch mirrors the MCP tool pattern. `done` is a loop sentinel.
+- **Protocol** (`protocol.go`): one JSON object per turn `{thought,tool,args}`, parsed
+  defensively (fences/prose salvage) — provider-agnostic, no client change.
+- **Model seam** (`model.go`): `Model.Complete(messages)`; prod = lensModel, tests =
+  scripted stubs.
+- **Loop** (`loop.go`): system(tools) + user(task) → model picks a tool → dispatch →
+  feed the observation back → re-plan. Terminates on `done`, `MaxSteps` (budget), or
+  `MaxRepeat` no-progress (identical tool call recurs). Transcript trimmed to a cap.
+  A failing `run` is just another observation → self-heal is native.
+- **Wiring** (`cmd/agent/iterative.go` + `run --iterative`): retrieval-grounded,
+  Lens-attributed, auto-applies confined edits, bounded by `--max-steps`.
+
+## What's thin / deferred (honest)
+- **Extension NOT mirrored.** CLI-first was the right call for depth; the VS Code
+  extension's AgentMode still uses the single-pass pipeline. Mirroring the loop into
+  the extension is a follow-on run. (Extension/JetBrains byte-unchanged this run.)
+- **Loop is opt-in (`--iterative`); single-pass remains the default.** Flip is a
+  one-liner (move legacy behind `--single-pass`, repoint ~10 run tests) — deferred to
+  keep the unattended run non-breaking. See the design fork above.
+- **Structured-JSON tool transport, not native tool-calling.** Robust + testable;
+  native tool-calling (per-provider client change) is the documented alternative.
+- **run() uses `sh -c`** (reusing the runner) — shell features work; strict
+  arg-vector is the safer-but-more-limited alternative (fork above).
+- **No transcript compaction/summarization** yet — just a trim cap; long tasks near
+  the cap lose the oldest turns. Summarize-older is the next refinement.
+- **Determinism:** every loop test uses a scripted `Model` + seeded tools (no live
+  model); the observe/re-plan + self-heal tests run a REAL `go test` in a temp module.
+
+## CI (this run)
+Agent gate GREEN: `gofmt` clean, `go vet` clean, `go test -race` — 17 packages, 0
+fail (existing single-pass + all new agentloop/CLI tests). gitleaks clean.
+Extension/JetBrains byte-unchanged (only `agent/` + BUILD_STATE.md changed).
