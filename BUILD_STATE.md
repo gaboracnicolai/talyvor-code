@@ -90,3 +90,124 @@ tools — **deliberately NOT rewired this run** (scope = chat/agent; MCP holds a
 - Completion (VS Code) retrieval-grounding — the seam is clean; wire it next.
 - Incremental re-index on file change (today: full rebuild via `index`).
 - Path-aware embeddings (today: content-only) if disambiguation needs it.
+
+---
+
+# Run: iterative tool-using agent (branch `code-iterative-agent`, off b1dfbbb)
+
+Turns the CLI agent from a bounded single-pass pipeline (index → plan once →
+generate each file blind → heal ≤3) into a real ITERATIVE tool-using loop:
+search → read → plan → edit → run → OBSERVE → re-plan, bounded + safe to run
+unattended. New package `internal/agentloop`. TDD, red-first.
+
+## Design forks taken (conservative + reversible — revisit any of these)
+- **Tool-call transport = structured JSON in the model's text reply** (parsed +
+  dispatched), NOT provider-native tool-calling. Reason: provider-agnostic (uses
+  lens.Complete unchanged), reuses the repo's parsePlan/ParseHealResult pattern,
+  deterministic to stub. ALTERNATIVE: native Anthropic/OpenAI tool-calling (cleaner
+  structured API, per-provider client change, harder to stub). See protocol.go.
+- **Wiring = opt-in `run --iterative`, existing single-pass pipeline stays the
+  default** (so its tests are untouched and behavior is unchanged). "Replace the
+  default" is a one-line flip deferred for review. ALTERNATIVE: default to the loop
+  + move legacy behind `--single-pass` + repoint ~10 run tests. (Phase 6.)
+- **run() reuses the existing runner primitive** (`sh -c` in the repo root), like the
+  healer already does — command executes confined to the root; no untrusted value is
+  interpolated into a shell template. ALTERNATIVE: strict arg-vector exec (safer, but
+  breaks pipes/&& the model may legitimately use).
+
+## Phase narrative
+- **Phase 1 — tools scaffold** (committed). read_file/edit_file confined via
+  codebase.Confine (S11, proven: escape refused + no out-of-root write); run reuses
+  runner (non-zero exit = observation, not error); search_codebase = real semantic
+  retrieval (nil-safe); Registry dispatch. All red-first.
+- **Phase 2 — loop core** (committed). Model seam (provider-agnostic `Model`;
+  `ModelFunc` stub), JSON tool-call parser (defensive), the OBSERVE/ACT loop:
+  dispatch → feed result back → advance. Proven: the model SEES a tool observation on
+  the next turn (feeds results back); stops on `done`; stops on the step budget;
+  recovers from a malformed reply. Bounded by MaxSteps (default 20) + MaxRepeat
+  (default 2) + transcript trim.
+- **Phase 3 — termination + no-progress** (committed). The overnight-safety cluster:
+  proven the loop aborts as StopNoProgress on (a) an edit→fail→identical-edit cycle
+  (stops at step 5, not the 50-step budget), (b) the same edit every turn (step 3),
+  (c) endless malformed replies; and stops cleanly on done, on budget, and surfaces a
+  model-call error as StopError. An unattended run cannot burn its budget looping.
+- **Phase 4 — observe→re-plan + cross-file** (committed). The headline proofs, both
+  real integrations: (a) a buggy module (Add subtracts) — the agent RUNS `go test`,
+  OBSERVES the failure, and re-plans to a fix, verified by a re-run; proven the fix
+  was decided AFTER seeing the failure (not a blind retry). (b) server.go must use a
+  constant (47213) that lives ONLY in config.go — the agent READS config.go, learns
+  the value, and EDITS server.go with it. The old single-pass generateChange gets
+  only the target file + task, so it can neither observe a test result nor read a
+  sibling — these two capabilities are the gap this run closes.
+- **Phase 5 — self-heal folds into the loop** (committed). A failing test is just
+  another OBSERVE the model re-plans on — not a bolted-on ≤3 retry. Proven richer
+  than the old healer: the heal RUNS the test, observes the failure, SEARCHES the
+  codebase for the right helper, and edits (run→observe→search→edit→run→done). The
+  old healer could only regenerate the changed file from the raw error text; it had
+  no search/read. Self-heal is now native loop behavior with the full tool set.
+- **Phase 6 — wired into `run --iterative`** (committed). New `cmd/agent/iterative.go`:
+  lensModel adapter (loop turns are Lens completions with the X-Talyvor-Issue/-Workspace
+  attribution, feature "agent-loop") + runIterativeAgent (builds the confined tool set +
+  retriever, runs the loop, prints Stop/Steps/Summary/EditedFiles). `run --iterative`
+  (opt-in; `--max-steps`, default 20) short-circuits the single-pass pipeline. `--dry-run`
+  is noted-and-ignored under --iterative (the loop must apply edits to run + observe).
+  End-to-end CLI test (mocked Lens scripting tool calls) proves the edit is applied and a
+  clean done is reported. Existing single-pass `run` tests untouched + green.
+- **Phase 7 — confinement hardening** (committed). S11 proven to hold on EVERY tool
+  under an ADVERSARIAL model driving the loop: a model that deliberately tries to
+  read/overwrite/create files OUTSIDE the root gets nothing — every escape returns a
+  refusal observation (loop re-plans, never crashes), the out-of-root secret NEVER
+  enters the transcript, the outside file is unchanged, and no file is created
+  outside. run() executes in the repo root (proven: a relative write lands inside).
+
+## Security posture (stated plainly — hardened repo, NOT regressed)
+- **S11 confinement:** read_file + edit_file resolve every path through
+  codebase.Confine and refuse `..`/absolute escapes; proven per-tool AND under the
+  loop with an adversarial model. run() executes with the repo root as its working
+  directory.
+- **run injection-safety:** run reuses the existing runner primitive (`sh -c <cmd>`
+  in the root) exactly as the healer already does — the model's command is passed as
+  a single value; NO other untrusted input is interpolated into a shell template
+  (the injection vector). Fork noted above (reuse-runner vs strict arg-vector).
+- **Untouched:** MCP bearer-token/loopback auth, the config URL guard, the
+  cost-attribution moat, the K4 verdict loop. The loop's Lens calls carry the
+  X-Talyvor-Issue/-Workspace attribution (feature "agent-loop").
+- **Egress:** nothing new leaves the machine — only the Lens model calls the loop
+  makes (same gateway/trust boundary as every other agent call). No new service.
+
+## Iterative-agent design (as built)
+`internal/agentloop` — the model drives an OBSERVE/ACT loop over a confined tool set:
+- **Tools** (`tools.go`): `search_codebase` (real semantic retrieval), `read_file`,
+  `edit_file` (both S11-confined), `run` (runner primitive, rooted). `Registry`
+  dispatch mirrors the MCP tool pattern. `done` is a loop sentinel.
+- **Protocol** (`protocol.go`): one JSON object per turn `{thought,tool,args}`, parsed
+  defensively (fences/prose salvage) — provider-agnostic, no client change.
+- **Model seam** (`model.go`): `Model.Complete(messages)`; prod = lensModel, tests =
+  scripted stubs.
+- **Loop** (`loop.go`): system(tools) + user(task) → model picks a tool → dispatch →
+  feed the observation back → re-plan. Terminates on `done`, `MaxSteps` (budget), or
+  `MaxRepeat` no-progress (identical tool call recurs). Transcript trimmed to a cap.
+  A failing `run` is just another observation → self-heal is native.
+- **Wiring** (`cmd/agent/iterative.go` + `run --iterative`): retrieval-grounded,
+  Lens-attributed, auto-applies confined edits, bounded by `--max-steps`.
+
+## What's thin / deferred (honest)
+- **Extension NOT mirrored.** CLI-first was the right call for depth; the VS Code
+  extension's AgentMode still uses the single-pass pipeline. Mirroring the loop into
+  the extension is a follow-on run. (Extension/JetBrains byte-unchanged this run.)
+- **Loop is opt-in (`--iterative`); single-pass remains the default.** Flip is a
+  one-liner (move legacy behind `--single-pass`, repoint ~10 run tests) — deferred to
+  keep the unattended run non-breaking. See the design fork above.
+- **Structured-JSON tool transport, not native tool-calling.** Robust + testable;
+  native tool-calling (per-provider client change) is the documented alternative.
+- **run() uses `sh -c`** (reusing the runner) — shell features work; strict
+  arg-vector is the safer-but-more-limited alternative (fork above).
+- **No transcript compaction/summarization** yet — just a trim cap; long tasks near
+  the cap lose the oldest turns. Summarize-older is the next refinement.
+- **Determinism:** every loop test uses a scripted `Model` + seeded tools (no live
+  model); the observe/re-plan + self-heal tests run a REAL `go test` in a temp module.
+
+## CI (this run)
+Agent gate GREEN: `gofmt` clean, `go vet` clean, `go test -race` — 17 packages, 0
+fail (existing single-pass + all new agentloop/CLI tests). gitleaks clean.
+Extension/JetBrains byte-unchanged (only `agent/` + BUILD_STATE.md changed).
