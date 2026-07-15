@@ -153,3 +153,24 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   is noted-and-ignored under --iterative (the loop must apply edits to run + observe).
   End-to-end CLI test (mocked Lens scripting tool calls) proves the edit is applied and a
   clean done is reported. Existing single-pass `run` tests untouched + green.
+- **Phase 7 — confinement hardening** (committed). S11 proven to hold on EVERY tool
+  under an ADVERSARIAL model driving the loop: a model that deliberately tries to
+  read/overwrite/create files OUTSIDE the root gets nothing — every escape returns a
+  refusal observation (loop re-plans, never crashes), the out-of-root secret NEVER
+  enters the transcript, the outside file is unchanged, and no file is created
+  outside. run() executes in the repo root (proven: a relative write lands inside).
+
+## Security posture (stated plainly — hardened repo, NOT regressed)
+- **S11 confinement:** read_file + edit_file resolve every path through
+  codebase.Confine and refuse `..`/absolute escapes; proven per-tool AND under the
+  loop with an adversarial model. run() executes with the repo root as its working
+  directory.
+- **run injection-safety:** run reuses the existing runner primitive (`sh -c <cmd>`
+  in the root) exactly as the healer already does — the model's command is passed as
+  a single value; NO other untrusted input is interpolated into a shell template
+  (the injection vector). Fork noted above (reuse-runner vs strict arg-vector).
+- **Untouched:** MCP bearer-token/loopback auth, the config URL guard, the
+  cost-attribution moat, the K4 verdict loop. The loop's Lens calls carry the
+  X-Talyvor-Issue/-Workspace attribution (feature "agent-loop").
+- **Egress:** nothing new leaves the machine — only the Lens model calls the loop
+  makes (same gateway/trust boundary as every other agent call). No new service.
