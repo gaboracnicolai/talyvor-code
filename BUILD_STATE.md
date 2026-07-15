@@ -90,3 +90,39 @@ tools — **deliberately NOT rewired this run** (scope = chat/agent; MCP holds a
 - Completion (VS Code) retrieval-grounding — the seam is clean; wire it next.
 - Incremental re-index on file change (today: full rebuild via `index`).
 - Path-aware embeddings (today: content-only) if disambiguation needs it.
+
+---
+
+# Run: iterative tool-using agent (branch `code-iterative-agent`, off b1dfbbb)
+
+Turns the CLI agent from a bounded single-pass pipeline (index → plan once →
+generate each file blind → heal ≤3) into a real ITERATIVE tool-using loop:
+search → read → plan → edit → run → OBSERVE → re-plan, bounded + safe to run
+unattended. New package `internal/agentloop`. TDD, red-first.
+
+## Design forks taken (conservative + reversible — revisit any of these)
+- **Tool-call transport = structured JSON in the model's text reply** (parsed +
+  dispatched), NOT provider-native tool-calling. Reason: provider-agnostic (uses
+  lens.Complete unchanged), reuses the repo's parsePlan/ParseHealResult pattern,
+  deterministic to stub. ALTERNATIVE: native Anthropic/OpenAI tool-calling (cleaner
+  structured API, per-provider client change, harder to stub). See protocol.go.
+- **Wiring = opt-in `run --iterative`, existing single-pass pipeline stays the
+  default** (so its tests are untouched and behavior is unchanged). "Replace the
+  default" is a one-line flip deferred for review. ALTERNATIVE: default to the loop
+  + move legacy behind `--single-pass` + repoint ~10 run tests. (Phase 6.)
+- **run() reuses the existing runner primitive** (`sh -c` in the repo root), like the
+  healer already does — command executes confined to the root; no untrusted value is
+  interpolated into a shell template. ALTERNATIVE: strict arg-vector exec (safer, but
+  breaks pipes/&& the model may legitimately use).
+
+## Phase narrative
+- **Phase 1 — tools scaffold** (committed). read_file/edit_file confined via
+  codebase.Confine (S11, proven: escape refused + no out-of-root write); run reuses
+  runner (non-zero exit = observation, not error); search_codebase = real semantic
+  retrieval (nil-safe); Registry dispatch. All red-first.
+- **Phase 2 — loop core** (committed). Model seam (provider-agnostic `Model`;
+  `ModelFunc` stub), JSON tool-call parser (defensive), the OBSERVE/ACT loop:
+  dispatch → feed result back → advance. Proven: the model SEES a tool observation on
+  the next turn (feeds results back); stops on `done`; stops on the step budget;
+  recovers from a malformed reply. Bounded by MaxSteps (default 20) + MaxRepeat
+  (default 2) + transcript trim.

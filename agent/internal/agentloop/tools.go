@@ -69,6 +69,18 @@ func (r Registry) Names() []string {
 	return out
 }
 
+// DefaultTools builds the standard agent tool set for a repo root + (optional)
+// retriever: search_codebase, read_file, edit_file, run. A nil retriever leaves
+// search available but note-only (no index built).
+func DefaultTools(root string, ret codebase.Retriever) Registry {
+	reg := Registry{}
+	reg.Register(NewSearchTool(ret, 6))
+	reg.Register(NewReadTool(root))
+	reg.Register(NewEditTool(root))
+	reg.Register(NewRunTool(root))
+	return reg
+}
+
 func truncate(s string) string {
 	if len(s) <= maxObsBytes {
 		return s
