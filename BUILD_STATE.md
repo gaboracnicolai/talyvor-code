@@ -131,3 +131,11 @@ unattended. New package `internal/agentloop`. TDD, red-first.
   (stops at step 5, not the 50-step budget), (b) the same edit every turn (step 3),
   (c) endless malformed replies; and stops cleanly on done, on budget, and surfaces a
   model-call error as StopError. An unattended run cannot burn its budget looping.
+- **Phase 4 — observe→re-plan + cross-file** (committed). The headline proofs, both
+  real integrations: (a) a buggy module (Add subtracts) — the agent RUNS `go test`,
+  OBSERVES the failure, and re-plans to a fix, verified by a re-run; proven the fix
+  was decided AFTER seeing the failure (not a blind retry). (b) server.go must use a
+  constant (47213) that lives ONLY in config.go — the agent READS config.go, learns
+  the value, and EDITS server.go with it. The old single-pass generateChange gets
+  only the target file + task, so it can neither observe a test result nor read a
+  sibling — these two capabilities are the gap this run closes.
