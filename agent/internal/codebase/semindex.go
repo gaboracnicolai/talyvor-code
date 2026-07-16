@@ -124,22 +124,50 @@ func (idx *SemanticIndex) Retrieve(ctx context.Context, emb Embedder, query stri
 
 // Save writes the index as JSON, creating the parent dir. The caller is responsible
 // for passing a CONFINED path under the repo root.
+//
+// The write is ATOMIC: the payload goes to a temp file in the same directory, is
+// flushed, then renamed over the target. A serving command that Loads the index while
+// `index` is rewriting it therefore sees either the old or the new whole file — never a
+// torn/truncated one. The temp lives beside the target (same filesystem) so the rename
+// is a true atomic replace, and is removed on any error path.
 func (idx *SemanticIndex) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("codebase: index dir: %w", err)
 	}
 	data, err := json.Marshal(idx)
 	if err != nil {
 		return fmt.Errorf("codebase: marshal index: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("codebase: write index: %w", err)
+	tmp, err := os.CreateTemp(dir, ".codebase-index-*.tmp")
+	if err != nil {
+		return fmt.Errorf("codebase: temp index: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed; cleans up on any failure below
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("codebase: write temp index: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("codebase: sync temp index: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("codebase: close temp index: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("codebase: commit index: %w", err)
 	}
 	return nil
 }
 
 // LoadIndex reads a persisted index. Returns (nil, nil) when the file is absent so
-// callers can degrade to no-retrieval without special-casing.
+// callers can degrade to no-retrieval without special-casing. A version that does not
+// match IndexVersion fails LOUD (an error naming the mismatch) rather than being parsed
+// into a mis-interpreted index — an evolved on-disk format must force a rebuild, never
+// be silently mis-read. Callers treat this error like "no usable index" (rebuild on the
+// `index` path; degrade to no-retrieval on the serving path).
 func LoadIndex(path string) (*SemanticIndex, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -151,6 +179,9 @@ func LoadIndex(path string) (*SemanticIndex, error) {
 	var idx SemanticIndex
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, fmt.Errorf("codebase: parse index: %w", err)
+	}
+	if idx.Version != IndexVersion {
+		return nil, fmt.Errorf("codebase: index version %d != supported %d — run `talyvor-code index` to rebuild", idx.Version, IndexVersion)
 	}
 	return &idx, nil
 }

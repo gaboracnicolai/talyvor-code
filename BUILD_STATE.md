@@ -296,3 +296,23 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
     both `cmd/agent` (lensEmbedder) and `internal/mcp` (mcpEmbedder). Chose local
     duplication over hoisting a shared adapter into `lens`/`codebase`, to keep the phase
     self-contained and avoid coupling `codebase`↔`lens`. Documented for a future DRY pass.
+- **Phase 4 — index robustness** (committed). Two hardening changes to the persisted
+  artifact:
+  - **Atomic Save (temp-then-rename)**: `Save` now writes the JSON to a
+    `.codebase-index-*.tmp` beside the target (same dir → same filesystem), `Sync`s,
+    `Close`s, then `os.Rename`s over the target; the temp is removed on any error path.
+    A serving command that Loads while `index` rewrites sees the old or new WHOLE file,
+    never a torn one. The temp lives inside `.talyvor` (already walk-skipped) so it is
+    never itself indexed.
+  - **Version gate in LoadIndex**: a persisted `version` != `IndexVersion` now fails
+    LOUD (`index version N != supported M — run `talyvor-code index` to rebuild`) instead
+    of `json.Unmarshal` silently mis-reading an evolved format. Legacy unversioned
+    artifacts (no `version` field → 0) are rejected the same way. Every caller already
+    treats a Load error as "no usable index": the `index` command rebuilds loudly,
+    chat/ask/agent degrade to no-retrieval, MCP returns its honest "run index" message —
+    so the gate is fail-safe everywhere.
+  - RED→GREEN: a concurrent writers-vs-readers stress test (2000-chunk payload, 120
+    rewrites, 4 readers) caught a truncated `unexpected end of JSON input` on the old
+    `os.WriteFile` Save and is clean after temp-then-rename; a no-leftover-temp test
+    guards the cleanup; version-mismatch and legacy-unversioned loads now error naming
+    `version`. Full module `-race`: 17 packages ok, gofmt/vet clean.
