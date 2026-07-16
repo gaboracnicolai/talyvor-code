@@ -176,20 +176,29 @@ func (t editTool) Run(_ context.Context, raw json.RawMessage) (string, error) {
 // ── run ───────────────────────────────────────────────
 
 type runTool struct {
-	root    string
-	timeout time.Duration
+	root     string
+	timeout  time.Duration
+	lastExit int  // exit code of the most recent Run (for LastRun)
+	lastRan  bool // whether Run has executed a command (for LastRun)
 }
 
 // NewRunTool returns the confined command runner (build/test/shell), reusing the
-// injection-safe runner primitive; the command executes in the repo root.
-func NewRunTool(root string) Tool { return runTool{root: root, timeout: defaultRunTimeout} }
+// injection-safe runner primitive; the command executes in the repo root. Returned as
+// a pointer so it can record its most recent exit code (LastRun) for verdict attribution.
+func NewRunTool(root string) Tool { return &runTool{root: root, timeout: defaultRunTimeout} }
 
-func (runTool) Name() string { return "run" }
-func (runTool) Description() string {
+func (*runTool) Name() string { return "run" }
+func (*runTool) Description() string {
 	return `run {"cmd":"go test ./..."} — run a build/test/shell command in the repo root; returns exit code + captured output.`
 }
 
-func (t runTool) Run(ctx context.Context, raw json.RawMessage) (string, error) {
+// LastRun reports the exit code of the most recent Run and whether one has executed. It
+// lets the loop attribute a mechanical build/test verdict from a STRUCTURED exit code
+// rather than parsing the observation string. Only meaningful in the single-threaded
+// loop (one Run at a time).
+func (t *runTool) LastRun() (exitCode int, ran bool) { return t.lastExit, t.lastRan }
+
+func (t *runTool) Run(ctx context.Context, raw json.RawMessage) (string, error) {
 	var a struct {
 		Cmd string `json:"cmd"`
 	}
@@ -203,6 +212,7 @@ func (t runTool) Run(ctx context.Context, raw json.RawMessage) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("run: %w", err)
 	}
+	t.lastExit, t.lastRan = res.ExitCode, true
 	// A non-zero exit is a normal OBSERVATION (the model re-plans on it), never an error.
 	out := res.Stdout
 	if res.Stderr != "" {
