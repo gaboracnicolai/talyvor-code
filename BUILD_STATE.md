@@ -267,3 +267,32 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
   - Security posture unchanged: the staleness walk goes through the SAME `walkRepoFiles`
     → `Confine` (S11) path as indexing; it only reads inside the repo root and sends
     nothing over the network (pure local hash compare). The index artifact stays local.
+- **Phase 3 — MCP rewire (kill the fabricated score)** (committed). `search_codebase`
+  and `ask_code` auto-discovery no longer rank via the path-substring
+  `FindRelevantFiles` + the invented `rel := 1.0 - i*0.1` linear decay. Both now load
+  the persisted SEMANTIC index (`LoadIndex(IndexPath(root))`), embed the query through
+  Lens, and rank by true cosine — the exact `BoundIndex` retriever chat/agent use. New
+  `search_codebase` payload is `{results:[{path,language,start_line,end_line,score}],
+  chunks_indexed}` where `score` is real cosine. No index → an HONEST
+  `{indexed:false, reason:"…run `talyvor-code index` first"}` (never a fake score, never
+  a silent empty `files` that reads as "no matches"); Lens unconfigured →
+  `{configured:false,…}`. RED→GREEN: a seeded on-disk index + a mocked query-embed prove
+  the returned scores are the true cosines 0.8/0.6 (values the old 1.0/0.9 decay could
+  never yield), that the no-index path is honest, and that ask_code auto-discovery ranks
+  the semantically-closest file first. Grep proof: the linear-decay expression and every
+  `FindRelevantFiles` CALL are gone from `internal/mcp` (the name survives only in a
+  doc-comment naming what was replaced).
+  - **AUTH UNTOUCHED (verified by diff)**: the rewire changed only the two tools'
+    RELEVANCE source. Bearer-token check, `authOK`, `GenerateToken`, and
+    `confinedReadPath` (S11) are byte-identical — `git diff` shows no auth/confinement
+    lines changed. The path-substring `CodebaseIndex` + its reindex goroutine remain
+    (still used by `get_codebase_summary`); nothing was orphaned.
+  - **Fork — new `results` shape vs preserving `files`**: chose to RENAME the payload
+    key (`files`→`results`) and swap `relevance`→`score`, because the value's MEANING
+    changed from a fabricated per-file rank to a real per-chunk cosine; keeping the old
+    key would let a client keep trusting a differently-defined number. A shape change is
+    the honest signal. Reversible: re-add a `files` alias if a consumer needs it.
+  - **Fork — mcpEmbedder duplication**: a 6-line Lens→Embedder adapter now exists in
+    both `cmd/agent` (lensEmbedder) and `internal/mcp` (mcpEmbedder). Chose local
+    duplication over hoisting a shared adapter into `lens`/`codebase`, to keep the phase
+    self-contained and avoid coupling `codebase`↔`lens`. Documented for a future DRY pass.

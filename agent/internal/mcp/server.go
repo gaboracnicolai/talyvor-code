@@ -501,7 +501,7 @@ func (s *Server) dispatchTool(ctx context.Context, name string, args json.RawMes
 	case "get_active_issue":
 		return s.toolGetActiveIssue(ctx, args)
 	case "search_codebase":
-		return s.toolSearchCodebase(args)
+		return s.toolSearchCodebase(ctx, args)
 	case "read_file":
 		return s.toolReadFile(args)
 	case "search_docs":
@@ -537,12 +537,19 @@ func (s *Server) toolAskCode(ctx context.Context, raw json.RawMessage) (any, int
 	}
 	files := a.Files
 	if len(files) == 0 {
-		// Discover files from the codebase when the caller didn't
-		// supply any — gives the agent something to ground on.
-		if idx := s.CurrentIndex(); idx != nil {
-			matches := idx.FindRelevantFiles(a.Question, 5)
-			for _, m := range matches {
-				files = append(files, filepath.Join(idx.Root, m.Path))
+		// Discover grounding files from the SEMANTIC index (per-query embed + cosine),
+		// replacing the old path-substring guess. No index → no auto-grounding (the
+		// answer proceeds ungrounded rather than on a fabricated match).
+		if ret, _, ok := s.semanticRetriever(); ok {
+			if hits, herr := ret.Retrieve(ctx, a.Question, 5); herr == nil {
+				seen := map[string]bool{}
+				for _, h := range hits {
+					if seen[h.File] {
+						continue
+					}
+					seen[h.File] = true
+					files = append(files, filepath.Join(s.rootOrDot(), h.File))
+				}
 			}
 		}
 	}
@@ -737,12 +744,51 @@ func (s *Server) toolGetActiveIssue(ctx context.Context, raw json.RawMessage) (a
 	}, 0, ""
 }
 
+// rootOrDot is the workspace root, defaulting to "." when SetRoot was never called.
+func (s *Server) rootOrDot() string {
+	if s.root == "" {
+		return "."
+	}
+	return s.root
+}
+
+// mcpEmbedder adapts the server's Lens client to codebase.Embedder for per-query
+// embedding — the SAME trust boundary as chat/ask (only the query text is sent to
+// Lens; nothing new leaves the machine). It mirrors cmd/agent's lensEmbedder; the two
+// live in different packages and can't share a private adapter, so this keeps the MCP
+// rewire self-contained.
+type mcpEmbedder struct {
+	lc          *lens.Client
+	workspaceID string
+}
+
+func (e mcpEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return e.lc.Embed(ctx, texts, codebase.DefaultEmbedModel, "embed", e.workspaceID, "")
+}
+
+// semanticRetriever loads the persisted semantic index (built by `talyvor-code index`,
+// a LOCAL file under the root) and binds it to a Lens-backed query embedder — the same
+// real cosine retriever chat/ask/agent use. Returns ok=false when no usable index is
+// present, so callers fail HONESTLY ("run `talyvor-code index`") instead of fabricating
+// a relevance score.
+func (s *Server) semanticRetriever() (codebase.Retriever, *codebase.SemanticIndex, bool) {
+	sem, err := codebase.LoadIndex(codebase.IndexPath(s.rootOrDot()))
+	if err != nil || sem == nil || len(sem.Chunks) == 0 {
+		return nil, nil, false
+	}
+	return codebase.BoundIndex{Index: sem, Emb: mcpEmbedder{lc: s.lensClient, workspaceID: s.config.WorkspaceID}}, sem, true
+}
+
 type searchCodebaseArgs struct {
 	Query string `json:"query"`
 	Limit int    `json:"limit"`
 }
 
-func (s *Server) toolSearchCodebase(raw json.RawMessage) (any, int, string) {
+// toolSearchCodebase ranks the codebase against a query using the REAL semantic index
+// (per-query embedding + cosine similarity) — the same relevance source chat/agent use.
+// It replaces the old path-substring FindRelevantFiles + fabricated linear score: with
+// no index it fails honestly, and every score returned is a true cosine, never invented.
+func (s *Server) toolSearchCodebase(ctx context.Context, raw json.RawMessage) (any, int, string) {
 	var a searchCodebaseArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return nil, rpcErrInvalidParam, "invalid arguments"
@@ -750,37 +796,35 @@ func (s *Server) toolSearchCodebase(raw json.RawMessage) (any, int, string) {
 	if strings.TrimSpace(a.Query) == "" {
 		return nil, rpcErrInvalidParam, "query is required"
 	}
-	idx := s.CurrentIndex()
-	if idx == nil {
-		// Index lazily — the first call after `serve` start sees
-		// an empty index until the goroutine ticks; lazy build
-		// keeps tests working without StartReindex.
-		_ = s.IndexNow()
-		idx = s.CurrentIndex()
+	if s.lensClient == nil || !s.lensClient.IsConfigured() {
+		return map[string]any{"configured": false, "reason": "lens not configured — semantic search needs query embeddings"}, 0, ""
 	}
-	if idx == nil {
-		return map[string]any{"files": []any{}}, 0, ""
+	ret, sem, ok := s.semanticRetriever()
+	if !ok {
+		return map[string]any{
+			"indexed": false,
+			"reason":  "no semantic index found — run `talyvor-code index` first",
+		}, 0, ""
 	}
 	limit := a.Limit
 	if limit <= 0 {
 		limit = 10
 	}
-	matches := idx.FindRelevantFiles(a.Query, limit)
-	out := make([]map[string]any, 0, len(matches))
-	for i, m := range matches {
-		// Relevance is best-effort: 1.0 for the top hit, decaying
-		// linearly to a 0.1 floor.
-		rel := 1.0 - float64(i)*0.1
-		if rel < 0.1 {
-			rel = 0.1
-		}
-		out = append(out, map[string]any{
-			"path":      m.Path,
-			"language":  m.Language,
-			"relevance": rel,
+	hits, err := ret.Retrieve(ctx, a.Query, limit)
+	if err != nil {
+		return nil, rpcErrInternal, "search: " + err.Error()
+	}
+	results := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		results = append(results, map[string]any{
+			"path":       h.File,
+			"language":   h.Language,
+			"start_line": h.StartLine,
+			"end_line":   h.EndLine,
+			"score":      h.Score, // true cosine similarity, not a fabricated rank
 		})
 	}
-	return map[string]any{"files": out}, 0, ""
+	return map[string]any{"results": results, "chunks_indexed": len(sem.Chunks)}, 0, ""
 }
 
 type readFileArgs struct {

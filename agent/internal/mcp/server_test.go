@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/talyvor/code/internal/codebase"
 	"github.com/talyvor/code/internal/config"
 	"github.com/talyvor/code/internal/docs"
 	"github.com/talyvor/code/internal/lens"
@@ -253,35 +255,165 @@ func TestGetCodebaseSummary_ReturnsIndex(t *testing.T) {
 
 // ─── search_codebase ───────────────────────────────
 
-func TestSearchCodebase_ReturnsRelevantFiles(t *testing.T) {
-	dir := t.TempDir()
-	_ = os.MkdirAll(filepath.Join(dir, "src", "auth"), 0o755)
-	_ = os.WriteFile(filepath.Join(dir, "src", "auth", "jwt.ts"), []byte("export {};\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "src", "auth", "session.ts"), []byte("export {};\n"), 0o644)
-	_ = os.WriteFile(filepath.Join(dir, "src", "format.ts"), []byte("export {};\n"), 0o644)
-
-	s, srv := newServerForTest(t, nil, nil, nil)
-	s.SetRoot(dir)
-	if err := s.IndexNow(); err != nil {
-		t.Fatalf("IndexNow: %v", err)
+// seedSemanticIndex writes a persisted semantic index under dir with the given
+// (file → unit-vector) chunks, so the MCP tools have a REAL index to rank against.
+func seedSemanticIndex(t *testing.T, dir string, chunks []codebase.Chunk, vecs [][]float32) {
+	t.Helper()
+	idx := &codebase.SemanticIndex{
+		Version:    codebase.IndexVersion,
+		EmbedModel: codebase.DefaultEmbedModel,
+		Chunks:     chunks,
+		Vectors:    vecs,
 	}
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_codebase","arguments":{"query":"auth","limit":5}}}`
+	if err := idx.Save(codebase.IndexPath(dir)); err != nil {
+		t.Fatalf("seed index: %v", err)
+	}
+}
+
+// embedLens returns an httptest server that answers Lens embedding calls with a fixed
+// query vector (and fails any non-embedding call, so a test that only exercises search
+// stays honest about what it hit).
+func embedLens(t *testing.T, vec []float32) *httptest.Server {
+	t.Helper()
+	enc, _ := json.Marshal(vec)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.URL.Path, "embeddings") {
+			t.Errorf("unexpected non-embedding Lens call: %s", r.URL.Path)
+			w.WriteHeader(500)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":` + string(enc) + `}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestSearchCodebase_RanksBySemanticScore — Phase 3 core: search_codebase ranks by the
+// REAL semantic index (per-query embed + cosine), NOT the old path-substring +
+// fabricated linear score. Query embeds to [0.8,0.6]; the two chunk vectors are the
+// unit axes, so the true cosines are 0.8 (auth) and 0.6 (format) — values the old
+// `1.0 - i*0.1` decay (1.0, 0.9) could never produce.
+func TestSearchCodebase_RanksBySemanticScore(t *testing.T) {
+	dir := t.TempDir()
+	seedSemanticIndex(t, dir,
+		[]codebase.Chunk{
+			{File: "auth.go", Language: "Go", StartLine: 1, EndLine: 5, Content: "func Verify()"},
+			{File: "format.go", Language: "Go", StartLine: 1, EndLine: 5, Content: "func Format()"},
+		},
+		[][]float32{{1, 0}, {0, 1}},
+	)
+	lensSrv := embedLens(t, []float32{0.8, 0.6})
+	s, srv := newServerForTest(t, lensSrv, nil, nil)
+	s.SetRoot(dir)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_codebase","arguments":{"query":"how does verification work","limit":5}}}`
 	resp := callRPC(t, srv, body)
 	if resp.Error != nil {
 		t.Fatalf("error: %+v", resp.Error)
 	}
 	var got map[string]any
 	_ = json.Unmarshal([]byte(toolText(t, resp)), &got)
-	files := got["files"].([]any)
-	if len(files) < 2 {
-		t.Fatalf("expected ≥ 2 matches, got %d", len(files))
+	results, ok := got["results"].([]any)
+	if !ok || len(results) != 2 {
+		t.Fatalf("expected 2 semantic results, got %v", got)
 	}
-	top := files[0].(map[string]any)
-	if !strings.Contains(top["path"].(string), "auth") {
-		t.Fatalf("top match should be in auth/, got %v", top["path"])
+	top := results[0].(map[string]any)
+	second := results[1].(map[string]any)
+	if top["path"] != "auth.go" {
+		t.Errorf("top hit must be the semantically-closest chunk (auth.go), got %v", top["path"])
 	}
-	if top["relevance"].(float64) <= 0 {
-		t.Fatalf("relevance should be > 0, got %v", top["relevance"])
+	score0 := top["score"].(float64)
+	score1 := second["score"].(float64)
+	if math.Abs(score0-0.8) > 1e-4 || math.Abs(score1-0.6) > 1e-4 {
+		t.Errorf("scores must be REAL cosines (0.8, 0.6); got (%v, %v)", score0, score1)
+	}
+	// The fabricated linear-decay path produced 1.0 and 0.9 for the first two hits.
+	if score0 == 1.0 || score1 == 0.9 {
+		t.Errorf("fabricated linear relevance detected (%v, %v)", score0, score1)
+	}
+	if _, dead := got["files"]; dead {
+		t.Error(`old "files" payload shape must be gone (rewired to "results")`)
+	}
+}
+
+// TestSearchCodebase_NoIndex_HonestError — with no persisted semantic index,
+// search_codebase must fail HONESTLY (say to run `talyvor-code index`), never return a
+// fabricated score or a silent empty result that looks like "no matches".
+func TestSearchCodebase_NoIndex_HonestError(t *testing.T) {
+	dir := t.TempDir() // no index written
+	lensSrv := embedLens(t, []float32{1, 0})
+	s, srv := newServerForTest(t, lensSrv, nil, nil)
+	s.SetRoot(dir)
+
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search_codebase","arguments":{"query":"anything"}}}`
+	resp := callRPC(t, srv, body)
+	text := toolText(t, resp)
+	var got map[string]any
+	_ = json.Unmarshal([]byte(text), &got)
+	if got["indexed"] != false {
+		t.Errorf("no-index search must report indexed:false, got %v", got)
+	}
+	if !strings.Contains(text, "talyvor-code index") {
+		t.Errorf("honest no-index message must tell the user to run `talyvor-code index`; got %q", text)
+	}
+	if strings.Contains(text, `"score"`) || strings.Contains(text, `"relevance"`) {
+		t.Errorf("no-index path must NOT emit any score/relevance; got %q", text)
+	}
+}
+
+// TestAskCode_AutoDiscoversViaSemanticIndex — ask_code's file auto-discovery (when the
+// caller supplies none) now grounds on the SEMANTIC index: the file whose chunk is
+// closest to the question is the one read into the prompt, not a path-substring guess.
+func TestAskCode_AutoDiscoversViaSemanticIndex(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "auth.go"), []byte("package p\n\nfunc Verify() { /*AUTH_MARKER*/ }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "format.go"), []byte("package p\n\nfunc Format() { /*FORMAT_MARKER*/ }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedSemanticIndex(t, dir,
+		[]codebase.Chunk{
+			{File: "auth.go", Language: "Go", StartLine: 1, EndLine: 3, Content: "func Verify()"},
+			{File: "format.go", Language: "Go", StartLine: 1, EndLine: 3, Content: "func Format()"},
+		},
+		[][]float32{{1, 0}, {0, 1}},
+	)
+
+	// Lens serves the query embed ([1,0] → auth.go wins) then the completion; capture
+	// the completion prompt to prove the auth.go content was the grounding.
+	var prompt string
+	lensSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "embeddings") {
+			_, _ = w.Write([]byte(`{"data":[{"index":0,"embedding":[1,0]}]}`))
+			return
+		}
+		b, _ := io.ReadAll(r.Body)
+		prompt = string(b)
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"it verifies"}],"usage":{"input_tokens":10,"output_tokens":3}}`))
+	}))
+	defer lensSrv.Close()
+
+	s, srv := newServerForTest(t, lensSrv, nil, nil)
+	s.SetRoot(dir)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_code","arguments":{"question":"how is verification done"}}}`
+	resp := callRPC(t, srv, body)
+	if resp.Error != nil {
+		t.Fatalf("error: %+v", resp.Error)
+	}
+	if !strings.Contains(prompt, "AUTH_MARKER") {
+		t.Errorf("ask_code must auto-discover the semantically-closest file (auth.go) as grounding; prompt:\n%s", prompt)
+	}
+	// The question shares no path term with either file, so path-substring ranking
+	// couldn't order these — semantic ranking must put auth.go FIRST in files_used.
+	var got map[string]any
+	_ = json.Unmarshal([]byte(toolText(t, resp)), &got)
+	used, ok := got["files_used"].([]any)
+	if !ok || len(used) == 0 {
+		t.Fatalf("expected auto-discovered files_used, got %v", got)
+	}
+	if first, _ := used[0].(string); !strings.HasSuffix(first, "auth.go") {
+		t.Errorf("semantic auto-discovery must rank auth.go first in files_used; got %v", used)
 	}
 }
 
