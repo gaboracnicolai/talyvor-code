@@ -193,11 +193,24 @@ export class AgentPanel {
       },
       this.issueContext,
     );
-    await this.agent.startTask(
-      description.trim(),
-      this.freshConfig(),
-      this.workspaceRoot(),
-    );
+    // Opt-in: route to the iterative observe/act loop when enabled, else the single-pass
+    // pipeline (default). Conservative + reversible — the existing flow is untouched.
+    const iterative = vscode.workspace
+      .getConfiguration("talyvor")
+      .get<boolean>("agentIterative", false);
+    if (iterative) {
+      await this.agent.startIterativeTask(
+        description.trim(),
+        this.freshConfig(),
+        this.workspaceRoot(),
+      );
+    } else {
+      await this.agent.startTask(
+        description.trim(),
+        this.freshConfig(),
+        this.workspaceRoot(),
+      );
+    }
   }
 
   private freshConfig(): LensConfig {

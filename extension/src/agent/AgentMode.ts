@@ -42,6 +42,7 @@ import {
   promptForToken,
 } from "../github/pr-creator";
 import { generatePRBody, slugifyBranch } from "../github/pr-pure";
+import { runIterativeLoop } from "./iterative-pure";
 
 const AGENT_MODEL = "claude-sonnet-4-6";
 
@@ -103,6 +104,7 @@ const HEAL_MODEL = "claude-sonnet-4-6";
 export class AgentMode {
   private task: AgentTask | undefined;
   private outputChannel: vscode.OutputChannel | undefined;
+  private iterativeChannel: vscode.OutputChannel | undefined;
 
   constructor(
     private readonly lens: LensClient,
@@ -154,6 +156,119 @@ export class AgentMode {
       this.emit();
     }
     return task;
+  }
+
+  // startIterativeTask runs the ITERATIVE observe/act loop (the TS mirror of the CLI's
+  // `run --iterative`) instead of the single-pass plan→generate→approve→apply pipeline.
+  // The loop searches/reads/edits/runs autonomously, applying edits to DISK as it goes
+  // (there is no per-file approval gate — the user reviews the result via git/editor,
+  // exactly like the CLI). Opt-in: the panel routes here only when `talyvor.agentIterative`
+  // is enabled. The detailed turn-by-turn trace lands in the "Talyvor Agent — Iterative"
+  // output channel; the webview shows planning → executing → completed/failed.
+  //
+  // The pure orchestration (retriever load, tool + model wiring, the loop) lives in
+  // iterative-pure.ts and is fully unit-tested; this method is the thin bound wrapper
+  // (task state + cost + output channel + Track comment).
+  async startIterativeTask(
+    description: string,
+    config: LensConfig,
+    workspaceRoot: string,
+  ): Promise<AgentTask> {
+    const task: AgentTask = {
+      id: "task-" + Date.now().toString(36),
+      description,
+      issueId: config.activeIssue,
+      status: "executing",
+      plan: [],
+      changes: [],
+      totalCostUSD: 0,
+      createdAt: new Date(),
+    };
+    this.task = task;
+    this.emit();
+
+    const channel = this.ensureIterativeChannel();
+    channel.show(true);
+    channel.appendLine(`▸ Iterative agent — ${AGENT_MODEL}`);
+    channel.appendLine(`Task: ${description}\n`);
+
+    try {
+      const { result, indexed } = await runIterativeLoop({
+        lens: this.lens,
+        root: workspaceRoot,
+        task: description,
+        model: AGENT_MODEL,
+        workspaceId: config.workspaceId,
+        issueId: config.activeIssue,
+        onUsage: (inTok, outTok) =>
+          this.recordCost(inTok, outTok, config.activeIssue, "agent-loop"),
+      });
+
+      if (!indexed) {
+        channel.appendLine("  (no semantic index — search_codebase is note-only; run `talyvor-code index` for retrieval)\n");
+      }
+      // Replay the transcript so the human can audit every observe/act turn.
+      for (const m of result.transcript) {
+        if (m.role === "assistant" || m.role === "user") {
+          channel.appendLine(`[${m.role}] ${m.content}`);
+        }
+      }
+      channel.appendLine(`\n■ ${result.stop} after ${result.steps} step(s).`);
+      if (result.summary) channel.appendLine(`Summary: ${result.summary}`);
+      if (result.editedFiles.length > 0) {
+        channel.appendLine(`Edited: ${result.editedFiles.join(", ")}`);
+      }
+
+      // Surface the applied edits as (already-applied) changes so the completed view
+      // reports an accurate count; the loop wrote them to disk directly.
+      task.changes = result.editedFiles.map((f) => ({
+        filePath: f,
+        operation: "modify" as const,
+        originalContent: "",
+        newContent: "",
+        diff: [],
+        approved: true,
+      }));
+      task.plan = [
+        result.summary || `Agent ${result.stop} after ${result.steps} step(s).`,
+        ...(result.editedFiles.length ? [`Edited: ${result.editedFiles.join(", ")}`] : []),
+      ];
+
+      if (result.done) {
+        task.status = "completed";
+        task.completedAt = new Date();
+      } else {
+        task.status = "failed";
+        task.error = `agent did not reach a clean done (${result.stop}) after ${result.steps} step(s)${
+          result.error ? ": " + result.error : ""
+        } — review the changes in the output channel / git`;
+      }
+      this.emit();
+
+      if (result.done && this.issueContext && config.workspaceId && task.issueId) {
+        void this.issueContext.pushAgentCompletionComment(
+          config.workspaceId,
+          task.issueId,
+          description,
+          result.editedFiles.length,
+          task.totalCostUSD,
+          AGENT_MODEL,
+        );
+      }
+    } catch (err) {
+      task.error = err instanceof Error ? err.message : String(err);
+      task.status = "failed";
+      channel.appendLine(`\n! iterative agent failed: ${task.error}`);
+      this.emit();
+    }
+    return task;
+  }
+
+  private ensureIterativeChannel(): vscode.OutputChannel {
+    if (!this.iterativeChannel) {
+      this.iterativeChannel = vscode.window.createOutputChannel("Talyvor Agent — Iterative");
+    }
+    return this.iterativeChannel;
   }
 
   // approveChange + rejectChange manage per-file approval. The

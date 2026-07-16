@@ -448,3 +448,50 @@ which today still uses the single-pass pipeline. Do NOT merge — one PR, commit
     pipes/&& work) and the existing heal.ts. Documented with a justified `// nosemgrep`
     on the dangerous-spawn-shell rule (the intent is explicit, unlike heal.ts's silent
     twin).
+- **Phase 3b-i — iterative orchestration** (headless-tested). `src/agent/iterative-pure.ts`
+  `runIterativeLoop(deps)`: the vscode-free glue — load the retriever (honest-absent →
+  `indexed:false`), build the confined tools + the Lens model, run the loop, forward
+  per-turn token usage. `test/iterative.test.ts` (3 assertions, CI-run, fake Lens + temp
+  workspace): no-index → loop still runs + edit hits disk + no embed attempted; with-index
+  → `indexed:true` + a search turn embeds the query exactly once; usage aggregates across
+  turns. This is the seam the bound wrapper calls.
+- **Phase 3b-ii — VS-Code-bound wiring** (BUILT; MANUAL-VERIFY ONLY — see below).
+  `AgentMode.startIterativeTask` (thin wrapper over `runIterativeLoop`): task state +
+  cost recording + a "Talyvor Agent — Iterative" output channel that replays the
+  observe/act transcript + records applied edits so the completed view reports an
+  accurate count + posts the Track completion comment. `AgentPanel.startTask` routes here
+  when the new `talyvor.agentIterative` setting (default **false**) is on, else the
+  untouched single-pass path. `package.json` gains the setting.
+  - **Why manual-verify, not automated**: this surface imports `vscode` (OutputChannel,
+    webview, `workspace.getConfiguration`, the panel). VS Code's API does not verify
+    headlessly, and the run rules forbid a mock/fake-harness/skip-test. So it is NOT
+    unit-tested — by design. Everything it *calls* (loop, tools, retriever, model
+    adapter, orchestration) IS fully headless-tested (43 assertions across 4 CI-run
+    files). The bound wrapper is deliberately thin: state assignment + emit + channel +
+    the tested `runIterativeLoop`.
+  - **UX fork (documented)**: the iterative agent applies edits DIRECTLY to disk (no
+    per-file approval gate — mirrors the CLI `run --iterative`); the user reviews via
+    git/editor. The webview shows planning→executing→completed/failed; the detailed
+    turn-by-turn trace is in the output channel. Default OFF so the existing approve/apply
+    flow is the unchanged default.
+
+## MANUAL VERIFICATION (VS-Code-bound surface — a human must click)
+The pure seam is proven in CI. The following require a running VS Code (Extension
+Development Host) — I could not and did not automate them:
+1. `npm run compile` in `extension/`, press F5 (Extension Development Host).
+2. Set `talyvor.lensUrl` / `talyvor.lensApiKey` (+ `workspaceId`) to a reachable Lens.
+3. Enable **Talyvor Code: Agent Iterative** (`talyvor.agentIterative`) in Settings.
+4. Run **Talyvor: Start Agent Task** → describe a small change → observe:
+   - the "Talyvor Agent — Iterative" output channel streams the loop's turns and the
+     final `■ <stop> after N step(s)` + summary + edited files;
+   - the webview ends in ✅ completed (or Failed with the stop reason);
+   - the edits are on disk (check the editor / `git status`) — applied WITHOUT a per-file
+     approval prompt (expected — review via git);
+   - **save any open editors first** (tools write to disk via node:fs, not the vscode FS
+     layer — unsaved buffers are not seen).
+5. With NO `.talyvor/codebase-index.json` present: the channel notes "no semantic index …
+   run `talyvor-code index`" and the loop still runs (search is note-only). Run
+   `talyvor-code index` (CLI) to populate it, re-run, and confirm a `search_codebase`
+   turn returns ranked chunks.
+6. Toggle the setting OFF → **Start Agent Task** still drives the original single-pass
+   plan→approve→apply flow (regression check).

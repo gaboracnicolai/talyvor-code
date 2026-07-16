@@ -77,6 +77,11 @@
           "type": "boolean",
           "default": true,
           "description": "Enable inline code completions"
+        },
+        "talyvor.agentIterative": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the Agent panel with the ITERATIVE observe/act loop (search → read → edit → run → re-plan, retrieval-grounded via the local semantic index) instead of the single-pass plan→approve→apply pipeline. The iterative agent applies edits directly to disk (no per-file approval — review via git); its turn-by-turn trace appears in the 'Talyvor Agent — Iterative' output channel. Opt-in / reversible."
         }
       }
     },
