@@ -10,13 +10,11 @@ dist/
 .env.*
 !.env.example
 
-# JetBrains Gradle build outputs (the wrapper jar is generated
-# by `gradle wrapper` on first build — see jetbrains/README.md).
+# JetBrains Gradle build outputs. The wrapper (gradlew + gradlew.bat +
+# gradle-wrapper.jar) is now COMMITTED so CI runs ./gradlew with no
+# preinstalled Gradle — see jetbrains/README.md.
 jetbrains/.gradle/
 jetbrains/build/
-jetbrains/gradle/wrapper/gradle-wrapper.jar
-jetbrains/gradlew
-jetbrains/gradlew.bat
 jetbrains/.idea/
 # IntelliJ Platform Gradle Plugin 2.x local cache (self-update lock +
 # resolved local platform artifacts). Generated on first build.

@@ -58,8 +58,8 @@ jobs:
 
   jetbrains:
     runs-on: ubuntu-latest
-    # JetBrains deferred to the parity run; gradle wrapper + real build land there.
-    continue-on-error: true
+    # Honest, BLOCKING gate: it runs the committed gradle wrapper against the JVM
+    # JUnit suite and fails the build on a real test failure (no continue-on-error).
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -68,12 +68,12 @@ jobs:
         with:
           java-version: "17"
           distribution: "temurin"
-      - name: Install Gradle
-        run: |
-          wget -q https://services.gradle.org/distributions/gradle-8.7-bin.zip
-          unzip -q gradle-8.7-bin.zip -d /opt
-          echo "/opt/gradle-8.7/bin" >> $GITHUB_PATH
-      - name: Generate Gradle wrapper
-        run: cd jetbrains && gradle wrapper --gradle-version=8.7
+          # Caches ~/.gradle/caches (incl. the IntelliJ Platform SDK, which the
+          # gradle-intellij plugin pulls as a Gradle dependency) + ~/.gradle/wrapper,
+          # keyed on the gradle build files — so this blocking job isn't a multi-minute
+          # SDK download on every merge.
+          cache: gradle
+      # The wrapper (gradlew + gradle-wrapper.jar) is committed, so ./gradlew
+      # self-provisions Gradle 8.7 — no `gradle` preinstall / wrapper-generation step.
       - name: Test + build JetBrains plugin
         run: cd jetbrains && ./gradlew test buildPlugin --no-daemon
