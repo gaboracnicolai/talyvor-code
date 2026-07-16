@@ -423,3 +423,28 @@ which today still uses the single-pass pipeline. Do NOT merge — one PR, commit
   - Security: only the query text is sent to Lens (feature `embed`), same trust boundary
     as chat; the index stays a LOCAL file, never uploaded. Load path uses node:fs on the
     confined `<root>/.talyvor/` only.
+- **Phase 3a — real loop backends** (this commit; still headless-tested). `src/agent/
+  loop-tools.ts`: the node-backed tools that make the pure loop actually work —
+  `read_file`/`edit_file` (node:fs, S11-confined via `absolutise`), `run`
+  (child_process `sh -c` / powershell, cwd-confined + timeout), `search_codebase` (the
+  Retriever seam) + `defaultTools(root, ret)`; plus `lensLoopModel` adapting a Lens
+  client to the loop's Model (feature `agent-loop`, forwards the full transcript incl.
+  the system message — mirrors the CLI `iterative.go` adapter — and reports token usage
+  for cost tracking). `test/loop-tools.test.ts` (9 assertions, CI-run, all vscode-free):
+  read/edit confined + REFUSE `../` escapes, `run` captures exit+output and treats a
+  non-zero exit as an observation (not a throw), search returns real chunks / honest
+  note when absent, the adapter maps messages + tags + usage, and an INTEGRATION test
+  drives the pure loop over the REAL tools (scripted model: read→edit→run→done) proving
+  the edit hits disk and edited-files are tracked.
+  - **Fork — tools operate on DISK (node:fs), not vscode.workspace.fs**: chosen so the
+    whole tool set is headless-testable and matches the CLI loop's on-disk semantics
+    (what a subsequent build/run sees). Trade-off: they don't reflect unsaved editor
+    buffers — the bound wiring (Phase 3b) documents "save open editors first". Reversible
+    (swap to vscode.fs if unsaved-buffer awareness is needed, at the cost of testability).
+  - **Fork — `run` uses `sh -c` (non-literal spawn)**: the command IS the agent tool's
+    intended payload (running the model's build/test command is the tool's purpose); no
+    other input is interpolated into the shell string, cwd is the confined root, there's
+    a timeout. Mirrors the CLI `internal/runner` (chose `sh -c` over arg-vector so
+    pipes/&& work) and the existing heal.ts. Documented with a justified `// nosemgrep`
+    on the dangerous-spawn-shell rule (the intent is explicit, unlike heal.ts's silent
+    twin).
