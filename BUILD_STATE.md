@@ -316,3 +316,18 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
     `os.WriteFile` Save and is clean after temp-then-rename; a no-leftover-temp test
     guards the cleanup; version-mismatch and legacy-unversioned loads now error naming
     `version`. Full module `-race`: 17 packages ok, gofmt/vet clean.
+
+## Status — production-index run COMPLETE (awaiting review, NOT merged)
+- All 4 capabilities landed on `code-index-production` (off `22d4cf8`): incremental
+  re-index (`393fdb4`) · staleness (`cb584ba`) · MCP honest relevance (`966d89f`) ·
+  atomic+versioned artifact (`49d049e`).
+- **PR #21** open against `main`. CI ALL GREEN: agent (gofmt/vet/`-race`) ✓ · extension
+  ✓ · gitleaks ✓ · jetbrains ✓ · semgrep ✓.
+- Scope verified by diff: only `agent/` + this file. MCP auth / config guard / cost moat
+  / K4 verdict loop / agentloop / extension / jetbrains / gitleaks untouched. No container
+  created this run.
+- STOPPING before merge per run rules (do not merge; end with a PR).
+- **What's left (explicitly out of scope this run)**: VS Code + JetBrains retrieval
+  wiring (later supervised run); the two documented micro-optimizations (mtime/size
+  staleness fast-path needs a schema field; hoist the duplicated Lens→Embedder adapter);
+  no completion-wiring, no agent-loop mirror, `--iterative` default still off.
