@@ -147,6 +147,52 @@ export class LensClient {
     };
   }
 
+  // embed turns texts into embedding vectors through Lens's OpenAI embeddings proxy —
+  // the SAME gateway, auth, and issue-attribution headers as every chat call, so the
+  // trust boundary is unchanged (chunk text / the query is sent to Lens exactly as chat
+  // prompts are; nothing new leaves the machine, no local model). Vectors are returned
+  // ordered by the response's `index` so callers can zip them back to input order. This
+  // powers the extension's semantic retrieval (retrieval-pure.ts). A no-op on empty input.
+  async embed(
+    texts: string[],
+    model: string,
+    feature: string,
+    workspaceId: string,
+    issueId: string,
+  ): Promise<number[][]> {
+    if (!this.isConfigured()) {
+      throw new LensError("Lens is not configured", 0);
+    }
+    if (texts.length === 0) return [];
+    const res = await fetch(
+      `${this.url.replace(/\/$/, "")}/v1/proxy/openai/v1/embeddings`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${this.apiKey}`,
+          "X-Talyvor-Feature": `code-${feature}`,
+          "X-Talyvor-Workspace": workspaceId,
+          "X-Talyvor-Issue": issueId,
+        },
+        body: JSON.stringify({ model, input: texts }),
+      },
+    );
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new LensError(`Lens ${res.status}: ${text || res.statusText}`, res.status);
+    }
+    const data = (await res.json()) as {
+      data?: Array<{ index: number; embedding: number[] }>;
+    };
+    const rows = data.data ?? [];
+    const vecs: number[][] = new Array(rows.length);
+    for (const d of rows) {
+      if (d.index >= 0 && d.index < vecs.length) vecs[d.index] = d.embedding;
+    }
+    return vecs;
+  }
+
   // getStatus probes /healthz so the "Test Connection" command
   // can give a fast yes/no without paying for a real inference
   // round-trip.

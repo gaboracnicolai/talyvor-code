@@ -331,3 +331,167 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
   wiring (later supervised run); the two documented micro-optimizations (mtime/size
   staleness fast-path needs a schema field; hoist the duplicated Lens→Embedder adapter);
   no completion-wiring, no agent-loop mirror, `--iterative` default still off.
+
+---
+
+# Run: VS Code extension → CLI parity (branch `code-extension-agent`, off `c1aa63f`)
+
+SUPERVISED. Bring the merged iterative agent loop (`internal/agentloop`, #20) and the
+production semantic index (incremental + honest MCP relevance, #21) INTO the extension,
+which today still uses the single-pass pipeline. Do NOT merge — one PR, commit per phase.
+
+## VERIFY (real state on c1aa63f, read before building — do NOT assume)
+- **The extension is a fully independent TypeScript reimplementation.** It NEVER shells
+  out to the Go `talyvor-code` binary (the only `child_process`/`spawn`/`execFile` uses
+  are heal's build runner and `git` for PR/context). So "bring agentloop/index in" =
+  PORT/MIRROR to TS, not shell-out. BUILD_STATE (#20) already recorded the intent:
+  "Extension NOT mirrored … Mirroring the loop into the extension is a follow-on run."
+  "Do not touch agentloop/index except to CALL them" ⇒ don't modify the Go packages
+  (I work only under `extension/`); the extension mirrors their behavior in TS.
+- **Current extension agent = single-pass** (`src/agent/AgentMode.ts`): `plan()` (one
+  Lens call) → `executeOne()` per file (one blind Lens call each; reads the target file
+  but NO sibling/retrieval grounding) → `awaiting_approval` → user approves → apply →
+  optional `applyAndHeal` (build → ask model → apply fixes → retry ≤ MAX_HEAL_ATTEMPTS).
+  No observe/re-plan tool loop. `agent-pure.ts` holds the vscode-free bits (parsePlan,
+  state machine, unified-diff).
+- **No semantic retrieval anywhere in the extension.** The TS Lens client
+  (`src/lens/client.ts`) has complete/completeWithUsage/completeStream/getStatus/
+  getCost — **no `embed()`**. "Context" today is `.talyvor-context` (user YAML) + line-
+  prefix parsing for completions. No `.talyvor/codebase-index.json` load. So Phase 2
+  must add `embed()` + a TS Retriever over the Go index JSON.
+- **S11 already ported + tested**: `src/agent/confine-pure.ts` `absolutise()` mirrors the
+  Go `confine`; `confine-pure.test.ts` exercises escapes. I reuse it for the loop's file
+  tools.
+- **Test seam — TWO conventions; only ONE gates CI:**
+  - `test/*.test.ts` = self-contained runners (plain fns + `main()` + `process.exit(1)`
+    on failure, NO `vscode` import). `npm test` → `out/test/runTest.js` spawns each
+    compiled `out/test/*.test.js` in its own process. **THIS is what CI runs** (ci.yaml
+    `extension` job: install → compile → `tsc --noEmit` → `npm test`). Baseline: 16/16
+    files pass headlessly. → my pure-seam tests go HERE so they truly run in CI.
+  - `src/**/*-pure.test.ts` = `node:test`, run only by `test:unit` — **CI does NOT run
+    these**. (confine-pure.test.ts lives here.) I won't rely on this path for CI proof.
+- **Go loop semantics to mirror exactly** (`internal/agentloop`): observe/act loop,
+  `Config{MaxSteps 20, MaxRepeat 2, MaxTranscript 40}`, StopReason{done,budget,
+  no-progress,error}; no-progress trips on the 3rd identical (tool+args) call; budget
+  runs exactly MaxSteps on distinct calls; malformed reply fed back with a JSON hint
+  (bounded → no-progress); tool error = observation (never kills the loop); done carries
+  a summary; transcript trims to system + most-recent. Tool transport = one JSON object
+  per turn (NOT native tool-calling) — mirror it.
+
+## Plan (TDD the pure seam in `test/*.test.ts`; STOP-and-report on any UI wall)
+1. **Phase 1 — pure iterative loop** (`src/agent/loop-pure.ts`): Message/Model/Tool/
+   Registry/parseToolCall/Agent.run + StopReason/Config/Result. TDD all Go scenarios.
+2. **Phase 2 — retrieval-grounding**: `embed()` on the TS Lens client + a TS Retriever
+   over the Go index JSON (version gate, cosine, honest-absent). TDD with a fake embedder.
+3. **Phase 3 — VS-Code-bound wiring**: real tools (read/edit via confine-pure+vscode.fs,
+   run via child_process, search via Retriever) + an opt-in `AgentMode.startIterativeTask`
+   behind a setting; DOCUMENT the manual-verify steps for the panel/editor surface.
+
+## Phase narrative
+- **Phase 1 — pure iterative loop** (`79ec661`). `src/agent/loop-pure.ts`: the vscode-
+  free TS mirror of `internal/agentloop` — Message/Model/Tool/Registry seams, defensive
+  `parseToolCall`, `Agent.run` (observe/act, step budget, no-progress detector,
+  transcript trim, edited-file tracking, tool-error-as-observation). `test/agent-loop.
+  test.ts` (16 assertions, self-contained runner → runs in CI) drives it with a scripted
+  model stub + stub tools and mirrors the Go suite exactly: observe→re-plan (turn 2 sees
+  the observation), budget at MaxSteps, no-progress at the 3rd identical call, edit→fail
+  →edit aborts at step 5, garbage→no-progress, bad-format→JSON hint, model-error→
+  StopError, unknown/throwing tool→observation, edited-files unique, transcript trim
+  keeps system.
+  - **Fork — run() never throws**: Go returns `(Result, error)`; TS folds a hard model
+    error into `Result.error` with `stop=Error`, so the panel always gets a structured
+    outcome. Reversible (add a throwing wrapper if wanted).
+- **Phase 2 — retrieval-grounding** (this commit). `src/agent/retrieval-pure.ts`: loads
+  the SAME on-disk `.talyvor/codebase-index.json` the CLI writes (exact Go json tags),
+  version-gated (`parseIndex` fails loud on a mismatch / legacy unversioned), embeds the
+  query via an `Embedder` seam, ranks by TRUE cosine (Go `cosine` mirrored), honest-
+  absent (`loadRetriever` → null when the file is missing). Added `LensClient.embed()`
+  (the OpenAI embeddings proxy, `code-embed` attribution, index-ordered vectors) — the
+  TS client had no embed before. `test/retrieval.test.ts` (12 assertions, CI-run): real-
+  cosine ranking (0.8/0.6, NOT the old fabricated 1.0/0.9 — the honest-MCP twin), version
+  gate, absent→null, top-k, degenerate-safe cosine, and a fetch-stub proving embed hits
+  `/v1/proxy/openai/v1/embeddings` and re-orders by `index`.
+  - **Fork — index BUILD story (consume-only for now)**: the extension READS the CLI-
+    built index and retrieves; it does NOT itself (re)build it this run. Conservative-
+    reversible: adds NO new dependency and NO large port. When the index is absent,
+    retrieval degrades honestly (null → "run `talyvor-code index`"). Two documented ways
+    to add in-extension (incremental) building later, deferred for a decision: (a) shell
+    out to the `talyvor-code` binary's `index` (calls the Go incremental indexer — new
+    binary dependency + discovery), or (b) port the walker/chunker/atomic-save to TS
+    (large, duplicates the Go codebase package). Retrieval itself needs neither — it
+    works on any pre-built index. Flagged for the supervisor.
+  - Security: only the query text is sent to Lens (feature `embed`), same trust boundary
+    as chat; the index stays a LOCAL file, never uploaded. Load path uses node:fs on the
+    confined `<root>/.talyvor/` only.
+- **Phase 3a — real loop backends** (this commit; still headless-tested). `src/agent/
+  loop-tools.ts`: the node-backed tools that make the pure loop actually work —
+  `read_file`/`edit_file` (node:fs, S11-confined via `absolutise`), `run`
+  (child_process `sh -c` / powershell, cwd-confined + timeout), `search_codebase` (the
+  Retriever seam) + `defaultTools(root, ret)`; plus `lensLoopModel` adapting a Lens
+  client to the loop's Model (feature `agent-loop`, forwards the full transcript incl.
+  the system message — mirrors the CLI `iterative.go` adapter — and reports token usage
+  for cost tracking). `test/loop-tools.test.ts` (9 assertions, CI-run, all vscode-free):
+  read/edit confined + REFUSE `../` escapes, `run` captures exit+output and treats a
+  non-zero exit as an observation (not a throw), search returns real chunks / honest
+  note when absent, the adapter maps messages + tags + usage, and an INTEGRATION test
+  drives the pure loop over the REAL tools (scripted model: read→edit→run→done) proving
+  the edit hits disk and edited-files are tracked.
+  - **Fork — tools operate on DISK (node:fs), not vscode.workspace.fs**: chosen so the
+    whole tool set is headless-testable and matches the CLI loop's on-disk semantics
+    (what a subsequent build/run sees). Trade-off: they don't reflect unsaved editor
+    buffers — the bound wiring (Phase 3b) documents "save open editors first". Reversible
+    (swap to vscode.fs if unsaved-buffer awareness is needed, at the cost of testability).
+  - **Fork — `run` uses `sh -c` (non-literal spawn)**: the command IS the agent tool's
+    intended payload (running the model's build/test command is the tool's purpose); no
+    other input is interpolated into the shell string, cwd is the confined root, there's
+    a timeout. Mirrors the CLI `internal/runner` (chose `sh -c` over arg-vector so
+    pipes/&& work) and the existing heal.ts. Documented with a justified `// nosemgrep`
+    on the dangerous-spawn-shell rule (the intent is explicit, unlike heal.ts's silent
+    twin).
+- **Phase 3b-i — iterative orchestration** (headless-tested). `src/agent/iterative-pure.ts`
+  `runIterativeLoop(deps)`: the vscode-free glue — load the retriever (honest-absent →
+  `indexed:false`), build the confined tools + the Lens model, run the loop, forward
+  per-turn token usage. `test/iterative.test.ts` (3 assertions, CI-run, fake Lens + temp
+  workspace): no-index → loop still runs + edit hits disk + no embed attempted; with-index
+  → `indexed:true` + a search turn embeds the query exactly once; usage aggregates across
+  turns. This is the seam the bound wrapper calls.
+- **Phase 3b-ii — VS-Code-bound wiring** (BUILT; MANUAL-VERIFY ONLY — see below).
+  `AgentMode.startIterativeTask` (thin wrapper over `runIterativeLoop`): task state +
+  cost recording + a "Talyvor Agent — Iterative" output channel that replays the
+  observe/act transcript + records applied edits so the completed view reports an
+  accurate count + posts the Track completion comment. `AgentPanel.startTask` routes here
+  when the new `talyvor.agentIterative` setting (default **false**) is on, else the
+  untouched single-pass path. `package.json` gains the setting.
+  - **Why manual-verify, not automated**: this surface imports `vscode` (OutputChannel,
+    webview, `workspace.getConfiguration`, the panel). VS Code's API does not verify
+    headlessly, and the run rules forbid a mock/fake-harness/skip-test. So it is NOT
+    unit-tested — by design. Everything it *calls* (loop, tools, retriever, model
+    adapter, orchestration) IS fully headless-tested (43 assertions across 4 CI-run
+    files). The bound wrapper is deliberately thin: state assignment + emit + channel +
+    the tested `runIterativeLoop`.
+  - **UX fork (documented)**: the iterative agent applies edits DIRECTLY to disk (no
+    per-file approval gate — mirrors the CLI `run --iterative`); the user reviews via
+    git/editor. The webview shows planning→executing→completed/failed; the detailed
+    turn-by-turn trace is in the output channel. Default OFF so the existing approve/apply
+    flow is the unchanged default.
+
+## MANUAL VERIFICATION (VS-Code-bound surface — a human must click)
+The pure seam is proven in CI. The following require a running VS Code (Extension
+Development Host) — I could not and did not automate them:
+1. `npm run compile` in `extension/`, press F5 (Extension Development Host).
+2. Set `talyvor.lensUrl` / `talyvor.lensApiKey` (+ `workspaceId`) to a reachable Lens.
+3. Enable **Talyvor Code: Agent Iterative** (`talyvor.agentIterative`) in Settings.
+4. Run **Talyvor: Start Agent Task** → describe a small change → observe:
+   - the "Talyvor Agent — Iterative" output channel streams the loop's turns and the
+     final `■ <stop> after N step(s)` + summary + edited files;
+   - the webview ends in ✅ completed (or Failed with the stop reason);
+   - the edits are on disk (check the editor / `git status`) — applied WITHOUT a per-file
+     approval prompt (expected — review via git);
+   - **save any open editors first** (tools write to disk via node:fs, not the vscode FS
+     layer — unsaved buffers are not seen).
+5. With NO `.talyvor/codebase-index.json` present: the channel notes "no semantic index …
+   run `talyvor-code index`" and the loop still runs (search is note-only). Run
+   `talyvor-code index` (CLI) to populate it, re-run, and confirm a `search_codebase`
+   turn returns ranked chunks.
+6. Toggle the setting OFF → **Start Agent Task** still drives the original single-pass
+   plan→approve→apply flow (regression check).
