@@ -244,3 +244,26 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
   RED→GREEN: a counting embedder proves a re-index after changing ONE file embeds only
   that file; a deleted file's chunks leave the index; a new file is embedded; confinement
   intact.
+- **Phase 2 — staleness detection** (committed, branch pushed). New
+  `codebase.Staleness(root, idx, maxFiles) → {Stale, Changed, Deleted}` re-hashes the
+  working tree (walk + SHA-256, NO embedding — the cheap half of indexing) and diffs
+  against the index's stored `FileHashes`. Wired warn-only into `loadRetriever`, so all
+  three retrieval consumers (chat/ask/agent) surface a one-line `! codebase index is
+  STALE (N changed, M deleted)` on stderr when the tree has drifted — retrieval still
+  proceeds against the (stale) index rather than failing. RED→GREEN: stale after an edit
+  (names the changed file, not the unchanged one), a deleted file lands in `Deleted`,
+  fresh again after an incremental re-index, nil-index is a clean no-op; a consumer-side
+  test proves `loadRetriever` warns on a drifted tree and stays silent on a fresh one.
+  - **Fork — warn-only vs auto-refresh**: chose WARN-ONLY. A serving command
+    (ask/chat/agent) must never silently spend Lens embed calls to rebuild the index;
+    the user re-runs `talyvor-code index` (itself now incremental → cheap). Auto-refresh
+    would be the reverse default and is a one-call change at the warn site if wanted.
+  - **Fork — content-hash vs mtime staleness**: chose CONTENT-HASH (reads + hashes every
+    embeddable file). Reliable — never a false "fresh" after a git checkout/touch that a
+    bare mtime check would miss. Cost is one confined walk per serving invocation (bounded
+    by the same skip-dirs as indexing, no network). A mtime+size fast-path is the
+    documented future optimization; it needs the index schema to also store per-file
+    mtime/size, so it is deferred rather than done half-way.
+  - Security posture unchanged: the staleness walk goes through the SAME `walkRepoFiles`
+    → `Confine` (S11) path as indexing; it only reads inside the repo root and sends
+    nothing over the network (pure local hash compare). The index artifact stays local.

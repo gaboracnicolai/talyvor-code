@@ -257,7 +257,7 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	// Retrieval-grounded context: pull the chunks most relevant to the question from
 	// the semantic index (built by `talyvor-code index`). Silent no-op when absent.
-	ret := loadRetriever(lc, cfg, ".", nil)
+	ret := loadRetriever(lc, cfg, ".", nil, os.Stderr)
 
 	// File context precedes the question — the model sees what
 	// it's looking at before being told what to do with it.
@@ -452,7 +452,7 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 	// Retrieval-grounded chat: each turn pulls the chunks most relevant to the user's
 	// message from the semantic index (built by `talyvor-code index`). Absent → nil,
 	// chat behaves exactly as before.
-	chatRet := loadRetriever(lc, cfg, ".", nil)
+	chatRet := loadRetriever(lc, cfg, ".", nil, stderr)
 	history := []lens.Message{}
 	pendingFile := "" // attached via /file, consumed by next message
 
@@ -680,7 +680,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		if dryRun {
 			fmt.Fprintln(stderr, "! --dry-run is ignored with --iterative (the loop must apply edits to run + observe)")
 		}
-		ret := loadRetriever(lc, cfg, workspaceRoot, stdout)
+		ret := loadRetriever(lc, cfg, workspaceRoot, stdout, stderr)
 		return runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
 	}
 
@@ -704,7 +704,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	// Load the SEMANTIC index (built by `talyvor-code index`) for retrieval-grounded
 	// generation. Absent → nil retriever ⇒ per-file generation falls back to the
 	// prior single-file behavior.
-	retriever := loadRetriever(lc, cfg, workspaceRoot, stdout)
+	retriever := loadRetriever(lc, cfg, workspaceRoot, stdout, stderr)
 
 	// ── Phase 1: plan ──
 	fmt.Fprintln(stdout, "▸ Planning…")

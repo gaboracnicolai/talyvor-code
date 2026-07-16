@@ -48,10 +48,16 @@ func newLensEmbedder(lc *lens.Client, cfg config.Config) lensEmbedder {
 }
 
 // loadRetriever loads the persisted semantic index for retrieval-grounded features
-// (chat, agent). Absent or unreadable → nil, so callers degrade to their prior
-// non-retrieval behavior instead of failing. `note` (may be nil) receives a
-// one-line status.
-func loadRetriever(lc *lens.Client, cfg config.Config, root string, note io.Writer) codebase.Retriever {
+// (chat, ask, agent). Absent or unreadable → nil, so callers degrade to their prior
+// non-retrieval behavior instead of failing. `note` (may be nil) receives a one-line
+// load status; `warn` (may be nil) receives a one-line STALENESS warning when the
+// working tree has drifted from the index.
+//
+// Staleness is warn-only, never auto-refresh: a serving command must not silently
+// spend Lens embed calls to re-index. The check is the cheap half of indexing — it
+// walks + content-hashes the tree (no embedding). See BUILD_STATE for the warn-vs-
+// auto-refresh and content-hash-vs-mtime forks.
+func loadRetriever(lc *lens.Client, cfg config.Config, root string, note, warn io.Writer) codebase.Retriever {
 	sem, err := codebase.LoadIndex(codebase.IndexPath(root))
 	if err != nil || sem == nil {
 		if note != nil {
@@ -61,6 +67,11 @@ func loadRetriever(lc *lens.Client, cfg config.Config, root string, note io.Writ
 	}
 	if note != nil {
 		fmt.Fprintf(note, "  semantic index: %d chunks loaded\n", len(sem.Chunks))
+	}
+	if warn != nil {
+		if rep, serr := codebase.Staleness(root, sem, codebase.DefaultMaxFiles); serr == nil && rep.Stale {
+			fmt.Fprintf(warn, "  ! %s\n", rep.Summary())
+		}
 	}
 	return codebase.BoundIndex{Index: sem, Emb: newLensEmbedder(lc, cfg)}
 }
