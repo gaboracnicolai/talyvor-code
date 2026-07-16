@@ -386,3 +386,40 @@ which today still uses the single-pass pipeline. Do NOT merge — one PR, commit
 3. **Phase 3 — VS-Code-bound wiring**: real tools (read/edit via confine-pure+vscode.fs,
    run via child_process, search via Retriever) + an opt-in `AgentMode.startIterativeTask`
    behind a setting; DOCUMENT the manual-verify steps for the panel/editor surface.
+
+## Phase narrative
+- **Phase 1 — pure iterative loop** (`79ec661`). `src/agent/loop-pure.ts`: the vscode-
+  free TS mirror of `internal/agentloop` — Message/Model/Tool/Registry seams, defensive
+  `parseToolCall`, `Agent.run` (observe/act, step budget, no-progress detector,
+  transcript trim, edited-file tracking, tool-error-as-observation). `test/agent-loop.
+  test.ts` (16 assertions, self-contained runner → runs in CI) drives it with a scripted
+  model stub + stub tools and mirrors the Go suite exactly: observe→re-plan (turn 2 sees
+  the observation), budget at MaxSteps, no-progress at the 3rd identical call, edit→fail
+  →edit aborts at step 5, garbage→no-progress, bad-format→JSON hint, model-error→
+  StopError, unknown/throwing tool→observation, edited-files unique, transcript trim
+  keeps system.
+  - **Fork — run() never throws**: Go returns `(Result, error)`; TS folds a hard model
+    error into `Result.error` with `stop=Error`, so the panel always gets a structured
+    outcome. Reversible (add a throwing wrapper if wanted).
+- **Phase 2 — retrieval-grounding** (this commit). `src/agent/retrieval-pure.ts`: loads
+  the SAME on-disk `.talyvor/codebase-index.json` the CLI writes (exact Go json tags),
+  version-gated (`parseIndex` fails loud on a mismatch / legacy unversioned), embeds the
+  query via an `Embedder` seam, ranks by TRUE cosine (Go `cosine` mirrored), honest-
+  absent (`loadRetriever` → null when the file is missing). Added `LensClient.embed()`
+  (the OpenAI embeddings proxy, `code-embed` attribution, index-ordered vectors) — the
+  TS client had no embed before. `test/retrieval.test.ts` (12 assertions, CI-run): real-
+  cosine ranking (0.8/0.6, NOT the old fabricated 1.0/0.9 — the honest-MCP twin), version
+  gate, absent→null, top-k, degenerate-safe cosine, and a fetch-stub proving embed hits
+  `/v1/proxy/openai/v1/embeddings` and re-orders by `index`.
+  - **Fork — index BUILD story (consume-only for now)**: the extension READS the CLI-
+    built index and retrieves; it does NOT itself (re)build it this run. Conservative-
+    reversible: adds NO new dependency and NO large port. When the index is absent,
+    retrieval degrades honestly (null → "run `talyvor-code index`"). Two documented ways
+    to add in-extension (incremental) building later, deferred for a decision: (a) shell
+    out to the `talyvor-code` binary's `index` (calls the Go incremental indexer — new
+    binary dependency + discovery), or (b) port the walker/chunker/atomic-save to TS
+    (large, duplicates the Go codebase package). Retrieval itself needs neither — it
+    works on any pre-built index. Flagged for the supervisor.
+  - Security: only the query text is sent to Lens (feature `embed`), same trust boundary
+    as chat; the index stays a LOCAL file, never uploaded. Load path uses node:fs on the
+    confined `<root>/.talyvor/` only.
