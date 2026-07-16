@@ -2,8 +2,35 @@ package agentloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 )
+
+// StepInfo is what the loop observed after executing one turn's tool call. An optional
+// Observer receives it so an EXTERNAL consumer (K4 verdict reporting) can pair a
+// generation to a build/test outcome WITHOUT this package depending on lens/verdicts.
+// For a `run` tool that executed, RunExit + Ran carry the structured exit code (no
+// observation-string parsing).
+type StepInfo struct {
+	OutputID string          // the generation's output_id ("" if unknown)
+	Tool     string          // tool name dispatched this step
+	Args     json.RawMessage // the tool call args
+	ToolErr  bool            // the tool returned an error (the observation is the error)
+	RunExit  int             // exit code, valid only when Ran
+	Ran      bool            // true iff a `run` tool actually executed a command this step
+}
+
+// Observer receives one StepInfo per executed tool call. Best-effort by contract: it
+// MUST NOT block or panic the loop (a verdict report is fire-and-forget). Nil = no-op.
+type Observer interface {
+	ObserveStep(StepInfo)
+}
+
+// lastRunner is the optional capability the loop reads to obtain a run tool's structured
+// exit code after dispatch.
+type lastRunner interface {
+	LastRun() (exitCode int, ran bool)
+}
 
 // StopReason is why the loop ended.
 type StopReason int
@@ -35,6 +62,9 @@ type Config struct {
 	MaxSteps      int // hard cap on tool-call turns (default 20)
 	MaxRepeat     int // abort after an identical tool call recurs more than this (default 2)
 	MaxTranscript int // messages kept in context before trimming the oldest (default 40)
+	// Observer (optional) receives one StepInfo per executed tool call — used to attach
+	// K4 verdict reporting externally. Nil ⇒ the loop behaves exactly as before.
+	Observer Observer
 }
 
 // Result is the loop outcome.
@@ -85,6 +115,12 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		if err != nil {
 			return Result{Stop: StopError, Steps: step, EditedFiles: editedFiles, Transcript: messages}, err
 		}
+		// The output_id of the generation that produced THIS turn's reply (when the Model
+		// exposes it). Read immediately after Complete so it pairs 1:1 with this turn.
+		var outputID string
+		if oi, ok := a.model.(OutputIdentified); ok {
+			outputID = oi.LastOutputID()
+		}
 
 		call, perr := parseToolCall(reply)
 		if perr != nil {
@@ -116,6 +152,17 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 			obs = "[error] " + terr.Error() // a tool error is an observation; the model re-plans
 		} else if call.Tool == "edit_file" {
 			editedFiles = appendUnique(editedFiles, editPath(call.Args))
+		}
+		// Emit this step to the Observer (if any). For a successfully-executed `run`, read
+		// the structured exit code from the tool. Best-effort: nil Observer ⇒ no-op.
+		if a.cfg.Observer != nil {
+			si := StepInfo{OutputID: outputID, Tool: call.Tool, Args: call.Args, ToolErr: terr != nil}
+			if terr == nil {
+				if lr, ok := a.tools[call.Tool].(lastRunner); ok {
+					si.RunExit, si.Ran = lr.LastRun()
+				}
+			}
+			a.cfg.Observer.ObserveStep(si)
 		}
 		messages = a.appendTurn(messages, reply, fmt.Sprintf("[%s]\n%s", call.Tool, obs))
 	}

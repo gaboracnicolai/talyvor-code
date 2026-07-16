@@ -592,3 +592,58 @@ install, no version skew). Do NOT merge — one PR, commit per phase.
 5. Confirm the built index is consumed by retrieval: enable `talyvor.agentIterative` (#22),
    run an agent task, and confirm a `search_codebase` turn returns ranked chunks (writer→
    reader round-trip live). Deleting `.talyvor/` and re-running rebuilds from scratch.
+
+---
+
+# Run 7 — K4 mechanical verdicts for the ITERATIVE loop (branch `code-k4-iterative-verdicts`, off `a733c57`)
+
+WATCHED / moat-integrity: a mis-attributed verdict corrupts K4 data. Extend K4 mechanical-
+verdict reporting to `internal/agentloop` (the primary code path — today reports nothing).
+Client-safe: calls the already-wired `POST /v1/output-verdicts/{id}/mechanical`; holds NO
+authority; flag-gated on `ReportVerdicts` (default OFF); best-effort/never-blocks. NOT H5,
+NOT money/provenance, NOT the GET reader, NOT PR/spec attribution.
+
+## VERIFY (read on a733c57)
+- **Proven heal-loop pattern** (`agent/cmd/agent/main.go:889-944`): tracks the LAST single
+  repair generation's `output_id` (`usage.OutputID` from `lc.CompleteWithUsage`, i.e. the
+  `X-Talyvor-Output-Id` header, `client.go:60,126`); reports it 1:1 for the NEXT build via
+  `ReportMechanicalVerdict` (`client.go:130-160` → the endpoint); best-effort (report error
+  logged + swallowed, never breaks the build); gated on `cfg.ReportVerdicts`. **It explicitly
+  SKIPS the initial multi-file plan as "1:many, NOT soundly attributable → not reported."**
+  `mechanicalVerdict(cmd, success)` (main.go:967) maps to tests_passed/tests_failed/compiled/
+  compile_failed — it does NOT gate on whether the cmd is actually a build/test.
+- **Iterative loop** (`agent/internal/agentloop/loop.go`): ONE tool call per turn (each
+  `model.Complete` → one generation → one `parseToolCall` → one `Dispatch`). Tools:
+  search_codebase/read_file/edit_file/run. The `run` tool (`tools.go:192-211`) executes an
+  ARBITRARY command via `runner.Run` and returns the exit only inside the observation string
+  `"$ <cmd>\nexit <N>\n<out>"`. The `Model` seam (`model.go:16`) returns `(string, error)` —
+  **no output_id**; `iterative.go` `lensModel.Complete` calls `lc.Complete` which DISCARDS
+  the output_id. Registry is `map[string]Tool`.
+- **THE PAIRING CRUX**: a `run` tests the CUMULATIVE file state of ALL `edit_file` turns since
+  the last run. If >1 edit preceded it, the outcome is 1:many — blaming any single generation
+  (esp. a FAILURE) can fault an innocent edit → corrupts K4.
+
+## STATED PAIRING RULE — "sound 1:1, or skip" (justified)
+Track the `output_id`s of `edit_file` generations since the last build/test `run`. On a
+build/test `run`, report the mechanical verdict for a generation ONLY when EXACTLY ONE
+un-verdicted code-producing generation preceded it AND its output_id is known — a true 1:1.
+Otherwise SKIP (report nothing): zero edits, or >1 edits (1:many batch), or an unknown/empty
+output_id. A build/test run always CLEARS the pending set (tested — reported or skipped).
+Non-build/test runs are IGNORED (don't report, don't clear). Build/test-ness is a CONSERVATIVE
+`looksLikeBuildOrTest(cmd)` gate.
+- **Justification**: mirrors the heal loop's OWN "skip the 1:many batch, report only the 1:1"
+  discipline. Soundness > coverage because a mis-attributed verdict CORRUPTS the moat while a
+  skipped one merely lowers coverage. The common `edit→run→edit→run` pattern is each a clean
+  1:1 (full coverage); only batched `edit→edit→run` is skipped. Conservative build-gate: a
+  false positive (verdict for `ls`) corrupts; a false negative (skip a real build) only lowers
+  coverage.
+- **Alternatives rejected**: "attribute to the most-recent edit" and "attribute to each edit in
+  the batch" both mis-attribute a FAIL to innocent generations — rejected for moat integrity.
+
+## Design (additive, behavior-preserving — agentloop was call-only)
+- agentloop: optional `OutputIdentified{ LastOutputID() string }` (Model capability);
+  `run` tool exposes `LastRun() (exit int, ran bool)`; an optional `Observer{ ObserveStep(
+  StepInfo) }` + `Config.Observer` the loop calls each step (nil ⇒ no-op ⇒ byte-identical).
+- cmd/agent: `*lensModel` uses `CompleteWithUsage` + implements `LastOutputID`; a
+  `verdictObserver` (implements the rule, calls a `verdictReporter` iface the real
+  `*lens.Client` satisfies) wired into `Config.Observer` ONLY when `cfg.ReportVerdicts`.

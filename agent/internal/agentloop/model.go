@@ -17,6 +17,15 @@ type Model interface {
 	Complete(ctx context.Context, messages []Message) (string, error)
 }
 
+// OutputIdentified is an OPTIONAL Model capability: LastOutputID returns the gateway-
+// bound output identity (X-Talyvor-Output-Id) of the model's most recent Complete, or
+// "" when unknown. The loop reads it — when the Model implements it — to attribute K4
+// mechanical verdicts to the exact generation that produced a code change. Purely
+// additive: a Model that does not implement it disables verdict attribution, nothing else.
+type OutputIdentified interface {
+	LastOutputID() string
+}
+
 // ModelFunc adapts a function to Model (handy for test stubs).
 type ModelFunc func(ctx context.Context, messages []Message) (string, error)
 
