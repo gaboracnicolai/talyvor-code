@@ -108,6 +108,7 @@
       {"command": "talyvor.reviewPR", "title": "Talyvor: Review Current PR"},
       {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"},
       {"command": "talyvor.generateContext", "title": "Talyvor: Generate Project Context"},
+      {"command": "talyvor.buildIndex", "title": "Talyvor: Build Semantic Index"},
       {"command": "talyvor.setScope", "title": "Talyvor: Set Context Scope"}
     ],
     "menus": {

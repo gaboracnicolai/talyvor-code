@@ -35,6 +35,7 @@ import { SpecWatcher } from "./docs/spec-watcher";
 import { RulesLoader } from "./rules/rules-loader";
 import { ContextLoader } from "./context/context-loader";
 import { generateContextCommand } from "./commands/context-command";
+import { buildIndexCommand } from "./commands/index-command";
 import { ScopeManager } from "./scope/scope-manager";
 import { setScopeCommand } from "./commands/scope-command";
 import {
@@ -159,6 +160,9 @@ export function activate(context: vscode.ExtensionContext): void {
     ),
     vscode.commands.registerCommand("talyvor.generateContext", () =>
       generateContextCommand(lensClient, tracker, TalyvorConfig.getLensConfig()),
+    ),
+    vscode.commands.registerCommand("talyvor.buildIndex", () =>
+      buildIndexCommand(lensClient, TalyvorConfig.getLensConfig()),
     ),
     vscode.commands.registerCommand("talyvor.setScope", () =>
       setScopeCommand(scopeManager),

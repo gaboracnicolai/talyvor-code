@@ -541,3 +541,54 @@ install, no version skew). Do NOT merge — one PR, commit per phase.
 3. Atomic + versioned Save (temp-then-rename; version stamp the reader accepts).
 4. Round-trip linchpin: THIS writer → the EXISTING retrieval-pure reader → retrieve (real cosine).
 5. Wire: opt-in "build index" command (vscode-bound → manual-verify, documented).
+
+## Phase narrative (TS index BUILDER — all TDD, mutation-verified where impl preceded test)
+- **Phase 1 — walker + chunker + language** (`21a5a10`, RED→GREEN): `index-build-pure.ts`
+  mirrors DetectLanguage/embeddableLang, SHA-256 contentHash (proven vs the "abc" vector),
+  ChunkFile (Go decl-aware + non-Go 50/10 windows), and walkRepo (Go skipDirs incl.
+  `.talyvor` NOT reindexed; `build` NOT skipped; skipSuffixes; only embeddable langs). S11:
+  every read via `readConfined` (absolutise) — refuses `../`; symlinks out of root NOT
+  followed (isFile()/isDirectory() false for them) — a hardening over the Go walker.
+  METHOD NOTE: the module is one cohesive mirror of one Go package, so buildIncremental +
+  saveIndex landed here too; their behavior is proven by Phases 2–4, EACH mutation-verified.
+- **Phase 2 — incremental** (`…`): counting-embedder proves edit-one→re-embed-only-that,
+  delete→chunks+hash leave (0 embeds), add→embed-only-new. Mutation: `reusable=false` → the
+  reuse/drop/add asserts go RED. (mirror of Go incremental_test.go)
+- **Phase 3 — atomic + versioned Save**: version stamp accepted by the reader (round-load),
+  whole-file replace, no temp leftover, and a **worker_threads** reader (real OS-thread
+  parallelism) hammering the target during 150 rewrites of a 2000-chunk index NEVER sees a
+  torn file. Mutation: direct writeFileSync (no temp-then-rename) → the concurrent reader
+  catches a torn read (RED). This is the node equivalent of the Go goroutine race.
+- **Phase 4 — writer↔reader round-trip (LINCHPIN)**: build with THIS writer → load with the
+  EXISTING unmodified retrieval-pure reader → retrieve (auth chunk ranks first by real
+  cosine); version + chunk-count + 1-based spans round-trip; on-disk fields are snake_case
+  with file_hashes + embed_model; incremental output stays reader-valid. Mutation: bump the
+  writer's version stamp → the reader rejects it (RED). Format agreement PROVEN end-to-end.
+- **Phase 5 — refresh orchestration + opt-in command**: `refreshIndex` (vscode-free: load
+  prior → incremental → atomic save → delta; a version-mismatched prior forces a LOUD full
+  rebuild) + `indexDelta` are headless-tested (full→all-reused→edit-one→1-changed;
+  version-mismatch→full-rebuild). The `talyvor.buildIndex` command (`index-command.ts`) is a
+  THIN vscode wrapper (progress notification + Lens-backed embedder + result toast) —
+  MANUAL-VERIFY ONLY (imports vscode; no mock/skip per the run rules).
+
+## Security posture (held)
+- **S11**: every walk/hash read goes through `readConfined`→`absolutise` (refuses `../`);
+  symlinks out of root are not followed (proven adversarially). Reads stay inside the root.
+- **Trust boundary unchanged**: only chunk text is sent to Lens (feature `embed`), exactly
+  as chat does; the built index is a LOCAL file under `<root>/.talyvor/`, never uploaded.
+- **Reader untouched**: the writer IMPORTS retrieval-pure's types/constants; I did not
+  modify the #22 reader's format. Go packages / MCP auth / config guard / cost moat / K4
+  verdict loop untouched (only `extension/` + BUILD_STATE changed — verified by diff).
+
+## MANUAL VERIFICATION (vscode-bound command — a human must click)
+1. `npm run compile` in `extension/`, press F5 (Extension Development Host).
+2. Set `talyvor.lensUrl` / `talyvor.lensApiKey` (+ `workspaceId`) to a reachable Lens.
+3. Run **Talyvor: Build Semantic Index** (`talyvor.buildIndex`):
+   - a progress notification "building semantic index…" appears;
+   - on success a toast reports "N chunks across M files — X re-embedded, Y reused →
+     .talyvor/codebase-index.json"; the file exists under `<root>/.talyvor/`.
+4. Run it AGAIN with no edits → the toast shows all files **reused**, 0 re-embedded
+   (incremental). Edit one file, re-run → exactly 1 re-embedded.
+5. Confirm the built index is consumed by retrieval: enable `talyvor.agentIterative` (#22),
+   run an agent task, and confirm a `search_codebase` turn returns ranked chunks (writer→
+   reader round-trip live). Deleting `.talyvor/` and re-running rebuilds from scratch.

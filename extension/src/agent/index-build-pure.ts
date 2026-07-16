@@ -16,6 +16,8 @@ import { absolutise } from "./confine-pure";
 import {
   DEFAULT_EMBED_MODEL,
   INDEX_VERSION,
+  indexPath,
+  loadIndex,
   type Chunk,
   type Embedder,
   type SemanticIndex,
@@ -358,4 +360,50 @@ export function saveIndex(idx: SemanticIndex, targetPath: string): void {
     }
     throw err;
   }
+}
+
+// ─── refresh orchestration (mirror the CLI `index` command) ──
+
+// indexDelta reports how many files were reused (hash unchanged vs prev) vs re-embedded
+// (new/changed) in the freshly built index — mirrors the CLI's indexDelta.
+export function indexDelta(prev: SemanticIndex | null, idx: SemanticIndex): { reused: number; changed: number } {
+  let reused = 0;
+  let changed = 0;
+  for (const [p, h] of Object.entries(idx.file_hashes ?? {})) {
+    if (prev && prev.file_hashes?.[p] === h && h !== "") reused++;
+    else changed++;
+  }
+  return { reused, changed };
+}
+
+export interface RefreshResult {
+  chunks: number;
+  files: number;
+  reused: number;
+  changed: number;
+  fullRebuild: boolean; // true when no usable prior index was reused (first build or version drift)
+}
+
+// refreshIndex is the vscode-free core of the "build index" command: load the prior
+// index as the incremental base (a version-mismatched/corrupt prior → a loud FULL
+// rebuild, never a silent mis-parse), build incrementally, and SAVE atomically to the
+// canonical path. Returns the delta for the caller to report. Testable headlessly; the
+// vscode command is a thin wrapper that supplies the Lens-backed embedder + progress UI.
+export async function refreshIndex(emb: Embedder, root: string, maxFiles = DEFAULT_MAX_FILES): Promise<RefreshResult> {
+  let prev: SemanticIndex | null = null;
+  try {
+    prev = loadIndex(root); // null when absent
+  } catch {
+    prev = null; // version mismatch / parse error → full rebuild
+  }
+  const idx = await buildIncremental(emb, root, maxFiles, prev);
+  saveIndex(idx, indexPath(root));
+  const { reused, changed } = indexDelta(prev, idx);
+  return {
+    chunks: idx.chunks.length,
+    files: Object.keys(idx.file_hashes ?? {}).length,
+    reused,
+    changed,
+    fullRebuild: prev === null,
+  };
 }
