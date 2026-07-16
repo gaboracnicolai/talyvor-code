@@ -28,21 +28,27 @@ type RetrievedChunk struct {
 	Score float64 `json:"score"`
 }
 
+// IndexVersion is the on-disk index schema version. A load of a DIFFERENT version
+// fails LOUD (LoadIndex) rather than silently mis-parsing an evolved format — bump
+// this whenever the artifact shape or the embed semantics change.
+const IndexVersion = 1
+
 // SemanticIndex holds the embedded chunk corpus for cosine retrieval. It is a plain
 // LOCAL artifact (persisted under the repo root, confined) — vectors + chunk
-// metadata, nothing else.
+// metadata + per-file content hashes (for incremental re-index), nothing else.
 type SemanticIndex struct {
-	Root       string      `json:"root,omitempty"`
-	EmbedModel string      `json:"embed_model,omitempty"`
-	Chunks     []Chunk     `json:"chunks"`
-	Vectors    [][]float32 `json:"vectors"`
+	Version    int               `json:"version"`
+	Root       string            `json:"root,omitempty"`
+	EmbedModel string            `json:"embed_model,omitempty"`
+	FileHashes map[string]string `json:"file_hashes,omitempty"` // repo-rel path → content hash
+	Chunks     []Chunk           `json:"chunks"`
+	Vectors    [][]float32       `json:"vectors"`
 }
 
-// BuildIndex embeds every chunk's CONTENT (content only — not its path — so
-// retrieval ranks by code content, not filename) and returns the index. Batches the
-// Embedder calls. Pure given the Embedder.
-func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticIndex, error) {
-	idx := &SemanticIndex{Chunks: chunks, Vectors: make([][]float32, 0, len(chunks))}
+// embedChunks embeds every chunk's CONTENT (content only — not its path — so
+// retrieval ranks by code content, not filename), batching the Embedder calls.
+func embedChunks(ctx context.Context, emb Embedder, chunks []Chunk) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(chunks))
 	for start := 0; start < len(chunks); start += embedBatchSize {
 		end := start + embedBatchSize
 		if end > len(chunks) {
@@ -59,9 +65,18 @@ func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticInd
 		if len(vecs) != len(texts) {
 			return nil, fmt.Errorf("codebase: embedder returned %d vectors for %d texts", len(vecs), len(texts))
 		}
-		idx.Vectors = append(idx.Vectors, vecs...)
+		vectors = append(vectors, vecs...)
 	}
-	return idx, nil
+	return vectors, nil
+}
+
+// BuildIndex embeds a chunk set into a fresh index. Pure given the Embedder.
+func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticIndex, error) {
+	vecs, err := embedChunks(ctx, emb, chunks)
+	if err != nil {
+		return nil, err
+	}
+	return &SemanticIndex{Version: IndexVersion, Chunks: chunks, Vectors: vecs}, nil
 }
 
 // Retrieve embeds the query and returns the top-k chunks by cosine similarity,
@@ -109,22 +124,50 @@ func (idx *SemanticIndex) Retrieve(ctx context.Context, emb Embedder, query stri
 
 // Save writes the index as JSON, creating the parent dir. The caller is responsible
 // for passing a CONFINED path under the repo root.
+//
+// The write is ATOMIC: the payload goes to a temp file in the same directory, is
+// flushed, then renamed over the target. A serving command that Loads the index while
+// `index` is rewriting it therefore sees either the old or the new whole file — never a
+// torn/truncated one. The temp lives beside the target (same filesystem) so the rename
+// is a true atomic replace, and is removed on any error path.
 func (idx *SemanticIndex) Save(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return fmt.Errorf("codebase: index dir: %w", err)
 	}
 	data, err := json.Marshal(idx)
 	if err != nil {
 		return fmt.Errorf("codebase: marshal index: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("codebase: write index: %w", err)
+	tmp, err := os.CreateTemp(dir, ".codebase-index-*.tmp")
+	if err != nil {
+		return fmt.Errorf("codebase: temp index: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op once renamed; cleans up on any failure below
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("codebase: write temp index: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("codebase: sync temp index: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("codebase: close temp index: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("codebase: commit index: %w", err)
 	}
 	return nil
 }
 
 // LoadIndex reads a persisted index. Returns (nil, nil) when the file is absent so
-// callers can degrade to no-retrieval without special-casing.
+// callers can degrade to no-retrieval without special-casing. A version that does not
+// match IndexVersion fails LOUD (an error naming the mismatch) rather than being parsed
+// into a mis-interpreted index — an evolved on-disk format must force a rebuild, never
+// be silently mis-read. Callers treat this error like "no usable index" (rebuild on the
+// `index` path; degrade to no-retrieval on the serving path).
 func LoadIndex(path string) (*SemanticIndex, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -136,6 +179,9 @@ func LoadIndex(path string) (*SemanticIndex, error) {
 	var idx SemanticIndex
 	if err := json.Unmarshal(data, &idx); err != nil {
 		return nil, fmt.Errorf("codebase: parse index: %w", err)
+	}
+	if idx.Version != IndexVersion {
+		return nil, fmt.Errorf("codebase: index version %d != supported %d — run `talyvor-code index` to rebuild", idx.Version, IndexVersion)
 	}
 	return &idx, nil
 }

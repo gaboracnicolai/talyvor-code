@@ -47,6 +47,7 @@ const DefaultMaxFiles = 500
 // node_modules) are caught the same way.
 var skipDirs = map[string]bool{
 	".git":         true,
+	".talyvor":     true, // the semantic index's OWN cache dir — never index the index artifact
 	"node_modules": true,
 	"vendor":       true,
 	".next":        true,

@@ -211,3 +211,123 @@ unattended. New package `internal/agentloop`. TDD, red-first.
 Agent gate GREEN: `gofmt` clean, `go vet` clean, `go test -race` — 17 packages, 0
 fail (existing single-pass + all new agentloop/CLI tests). gitleaks clean.
 Extension/JetBrains byte-unchanged (only `agent/` + BUILD_STATE.md changed).
+
+---
+
+# Run: production-grade codebase index (branch `code-index-production`, off 22d4cf8)
+
+Makes the semantic index incremental + honest + robust. Go/CLI only (the VS Code
+layer is a later supervised run). TDD, red-first, `-pure` seam.
+
+## VERIFY (state on 22d4cf8, read before building)
+- `SemanticIndex{Root,EmbedModel,Chunks,Vectors}` — NO version, NO per-file hashes.
+- `BuildFromRoot` re-embeds EVERY chunk every run. `Save` = direct os.WriteFile (not
+  atomic). `LoadIndex` = json.Unmarshal (no version check). `Retrieve` = real cosine.
+- MCP `search_codebase` (server.go:768-780) ranks via `FindRelevantFiles`
+  (path-substring) + a FABRICATED score `rel := 1.0 - float64(i)*0.1` (line 773);
+  `ask_code` auto-discovery uses the same path-substring. Server holds lensClient+root.
+- The walk did NOT skip `.talyvor` → a re-index would ingest its OWN cache.
+
+## Design forks taken (conservative + reversible — see each site)
+- **content hash = SHA-256** (stdlib, collision-safe) vs a faster non-crypto hash
+  (dep + collision risk on a correctness-critical skip). semindex_build.go.
+- **`index` is INCREMENTAL by default**, `--full` forces a re-embed. A version/parse
+  error on the existing index → loud full rebuild, never a silent mis-parse.
+- **embed-model change ⇒ full rebuild** (mixing models corrupts cosine): reuse only
+  when prev.Version==IndexVersion AND prev.EmbedModel matches.
+
+## Phase narrative
+- **Phase 1 — incremental re-indexing** (committed). SemanticIndex gains `Version` +
+  `FileHashes`; `BuildIncremental` reuses unchanged files' chunks+vectors, embeds ONLY
+  new/changed files, drops deleted files. `.talyvor` now skipped by the walk. `index`
+  loads the prior index and re-indexes incrementally (reports re-embedded vs reused).
+  RED→GREEN: a counting embedder proves a re-index after changing ONE file embeds only
+  that file; a deleted file's chunks leave the index; a new file is embedded; confinement
+  intact.
+- **Phase 2 — staleness detection** (committed, branch pushed). New
+  `codebase.Staleness(root, idx, maxFiles) → {Stale, Changed, Deleted}` re-hashes the
+  working tree (walk + SHA-256, NO embedding — the cheap half of indexing) and diffs
+  against the index's stored `FileHashes`. Wired warn-only into `loadRetriever`, so all
+  three retrieval consumers (chat/ask/agent) surface a one-line `! codebase index is
+  STALE (N changed, M deleted)` on stderr when the tree has drifted — retrieval still
+  proceeds against the (stale) index rather than failing. RED→GREEN: stale after an edit
+  (names the changed file, not the unchanged one), a deleted file lands in `Deleted`,
+  fresh again after an incremental re-index, nil-index is a clean no-op; a consumer-side
+  test proves `loadRetriever` warns on a drifted tree and stays silent on a fresh one.
+  - **Fork — warn-only vs auto-refresh**: chose WARN-ONLY. A serving command
+    (ask/chat/agent) must never silently spend Lens embed calls to rebuild the index;
+    the user re-runs `talyvor-code index` (itself now incremental → cheap). Auto-refresh
+    would be the reverse default and is a one-call change at the warn site if wanted.
+  - **Fork — content-hash vs mtime staleness**: chose CONTENT-HASH (reads + hashes every
+    embeddable file). Reliable — never a false "fresh" after a git checkout/touch that a
+    bare mtime check would miss. Cost is one confined walk per serving invocation (bounded
+    by the same skip-dirs as indexing, no network). A mtime+size fast-path is the
+    documented future optimization; it needs the index schema to also store per-file
+    mtime/size, so it is deferred rather than done half-way.
+  - Security posture unchanged: the staleness walk goes through the SAME `walkRepoFiles`
+    → `Confine` (S11) path as indexing; it only reads inside the repo root and sends
+    nothing over the network (pure local hash compare). The index artifact stays local.
+- **Phase 3 — MCP rewire (kill the fabricated score)** (committed). `search_codebase`
+  and `ask_code` auto-discovery no longer rank via the path-substring
+  `FindRelevantFiles` + the invented `rel := 1.0 - i*0.1` linear decay. Both now load
+  the persisted SEMANTIC index (`LoadIndex(IndexPath(root))`), embed the query through
+  Lens, and rank by true cosine — the exact `BoundIndex` retriever chat/agent use. New
+  `search_codebase` payload is `{results:[{path,language,start_line,end_line,score}],
+  chunks_indexed}` where `score` is real cosine. No index → an HONEST
+  `{indexed:false, reason:"…run `talyvor-code index` first"}` (never a fake score, never
+  a silent empty `files` that reads as "no matches"); Lens unconfigured →
+  `{configured:false,…}`. RED→GREEN: a seeded on-disk index + a mocked query-embed prove
+  the returned scores are the true cosines 0.8/0.6 (values the old 1.0/0.9 decay could
+  never yield), that the no-index path is honest, and that ask_code auto-discovery ranks
+  the semantically-closest file first. Grep proof: the linear-decay expression and every
+  `FindRelevantFiles` CALL are gone from `internal/mcp` (the name survives only in a
+  doc-comment naming what was replaced).
+  - **AUTH UNTOUCHED (verified by diff)**: the rewire changed only the two tools'
+    RELEVANCE source. Bearer-token check, `authOK`, `GenerateToken`, and
+    `confinedReadPath` (S11) are byte-identical — `git diff` shows no auth/confinement
+    lines changed. The path-substring `CodebaseIndex` + its reindex goroutine remain
+    (still used by `get_codebase_summary`); nothing was orphaned.
+  - **Fork — new `results` shape vs preserving `files`**: chose to RENAME the payload
+    key (`files`→`results`) and swap `relevance`→`score`, because the value's MEANING
+    changed from a fabricated per-file rank to a real per-chunk cosine; keeping the old
+    key would let a client keep trusting a differently-defined number. A shape change is
+    the honest signal. Reversible: re-add a `files` alias if a consumer needs it.
+  - **Fork — mcpEmbedder duplication**: a 6-line Lens→Embedder adapter now exists in
+    both `cmd/agent` (lensEmbedder) and `internal/mcp` (mcpEmbedder). Chose local
+    duplication over hoisting a shared adapter into `lens`/`codebase`, to keep the phase
+    self-contained and avoid coupling `codebase`↔`lens`. Documented for a future DRY pass.
+- **Phase 4 — index robustness** (committed). Two hardening changes to the persisted
+  artifact:
+  - **Atomic Save (temp-then-rename)**: `Save` now writes the JSON to a
+    `.codebase-index-*.tmp` beside the target (same dir → same filesystem), `Sync`s,
+    `Close`s, then `os.Rename`s over the target; the temp is removed on any error path.
+    A serving command that Loads while `index` rewrites sees the old or new WHOLE file,
+    never a torn one. The temp lives inside `.talyvor` (already walk-skipped) so it is
+    never itself indexed.
+  - **Version gate in LoadIndex**: a persisted `version` != `IndexVersion` now fails
+    LOUD (`index version N != supported M — run `talyvor-code index` to rebuild`) instead
+    of `json.Unmarshal` silently mis-reading an evolved format. Legacy unversioned
+    artifacts (no `version` field → 0) are rejected the same way. Every caller already
+    treats a Load error as "no usable index": the `index` command rebuilds loudly,
+    chat/ask/agent degrade to no-retrieval, MCP returns its honest "run index" message —
+    so the gate is fail-safe everywhere.
+  - RED→GREEN: a concurrent writers-vs-readers stress test (2000-chunk payload, 120
+    rewrites, 4 readers) caught a truncated `unexpected end of JSON input` on the old
+    `os.WriteFile` Save and is clean after temp-then-rename; a no-leftover-temp test
+    guards the cleanup; version-mismatch and legacy-unversioned loads now error naming
+    `version`. Full module `-race`: 17 packages ok, gofmt/vet clean.
+
+## Status — production-index run COMPLETE (awaiting review, NOT merged)
+- All 4 capabilities landed on `code-index-production` (off `22d4cf8`): incremental
+  re-index (`393fdb4`) · staleness (`cb584ba`) · MCP honest relevance (`966d89f`) ·
+  atomic+versioned artifact (`49d049e`).
+- **PR #21** open against `main`. CI ALL GREEN: agent (gofmt/vet/`-race`) ✓ · extension
+  ✓ · gitleaks ✓ · jetbrains ✓ · semgrep ✓.
+- Scope verified by diff: only `agent/` + this file. MCP auth / config guard / cost moat
+  / K4 verdict loop / agentloop / extension / jetbrains / gitleaks untouched. No container
+  created this run.
+- STOPPING before merge per run rules (do not merge; end with a PR).
+- **What's left (explicitly out of scope this run)**: VS Code + JetBrains retrieval
+  wiring (later supervised run); the two documented micro-optimizations (mtime/size
+  staleness fast-path needs a schema field; hoist the duplicated Lens→Embedder adapter);
+  no completion-wiring, no agent-loop mirror, `--iterative` default still off.
