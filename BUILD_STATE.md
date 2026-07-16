@@ -211,3 +211,36 @@ unattended. New package `internal/agentloop`. TDD, red-first.
 Agent gate GREEN: `gofmt` clean, `go vet` clean, `go test -race` — 17 packages, 0
 fail (existing single-pass + all new agentloop/CLI tests). gitleaks clean.
 Extension/JetBrains byte-unchanged (only `agent/` + BUILD_STATE.md changed).
+
+---
+
+# Run: production-grade codebase index (branch `code-index-production`, off 22d4cf8)
+
+Makes the semantic index incremental + honest + robust. Go/CLI only (the VS Code
+layer is a later supervised run). TDD, red-first, `-pure` seam.
+
+## VERIFY (state on 22d4cf8, read before building)
+- `SemanticIndex{Root,EmbedModel,Chunks,Vectors}` — NO version, NO per-file hashes.
+- `BuildFromRoot` re-embeds EVERY chunk every run. `Save` = direct os.WriteFile (not
+  atomic). `LoadIndex` = json.Unmarshal (no version check). `Retrieve` = real cosine.
+- MCP `search_codebase` (server.go:768-780) ranks via `FindRelevantFiles`
+  (path-substring) + a FABRICATED score `rel := 1.0 - float64(i)*0.1` (line 773);
+  `ask_code` auto-discovery uses the same path-substring. Server holds lensClient+root.
+- The walk did NOT skip `.talyvor` → a re-index would ingest its OWN cache.
+
+## Design forks taken (conservative + reversible — see each site)
+- **content hash = SHA-256** (stdlib, collision-safe) vs a faster non-crypto hash
+  (dep + collision risk on a correctness-critical skip). semindex_build.go.
+- **`index` is INCREMENTAL by default**, `--full` forces a re-embed. A version/parse
+  error on the existing index → loud full rebuild, never a silent mis-parse.
+- **embed-model change ⇒ full rebuild** (mixing models corrupts cosine): reuse only
+  when prev.Version==IndexVersion AND prev.EmbedModel matches.
+
+## Phase narrative
+- **Phase 1 — incremental re-indexing** (committed). SemanticIndex gains `Version` +
+  `FileHashes`; `BuildIncremental` reuses unchanged files' chunks+vectors, embeds ONLY
+  new/changed files, drops deleted files. `.talyvor` now skipped by the walk. `index`
+  loads the prior index and re-indexes incrementally (reports re-embedded vs reused).
+  RED→GREEN: a counting embedder proves a re-index after changing ONE file embeds only
+  that file; a deleted file's chunks leave the index; a new file is embedded; confinement
+  intact.

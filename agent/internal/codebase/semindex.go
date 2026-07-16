@@ -28,21 +28,27 @@ type RetrievedChunk struct {
 	Score float64 `json:"score"`
 }
 
+// IndexVersion is the on-disk index schema version. A load of a DIFFERENT version
+// fails LOUD (LoadIndex) rather than silently mis-parsing an evolved format — bump
+// this whenever the artifact shape or the embed semantics change.
+const IndexVersion = 1
+
 // SemanticIndex holds the embedded chunk corpus for cosine retrieval. It is a plain
 // LOCAL artifact (persisted under the repo root, confined) — vectors + chunk
-// metadata, nothing else.
+// metadata + per-file content hashes (for incremental re-index), nothing else.
 type SemanticIndex struct {
-	Root       string      `json:"root,omitempty"`
-	EmbedModel string      `json:"embed_model,omitempty"`
-	Chunks     []Chunk     `json:"chunks"`
-	Vectors    [][]float32 `json:"vectors"`
+	Version    int               `json:"version"`
+	Root       string            `json:"root,omitempty"`
+	EmbedModel string            `json:"embed_model,omitempty"`
+	FileHashes map[string]string `json:"file_hashes,omitempty"` // repo-rel path → content hash
+	Chunks     []Chunk           `json:"chunks"`
+	Vectors    [][]float32       `json:"vectors"`
 }
 
-// BuildIndex embeds every chunk's CONTENT (content only — not its path — so
-// retrieval ranks by code content, not filename) and returns the index. Batches the
-// Embedder calls. Pure given the Embedder.
-func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticIndex, error) {
-	idx := &SemanticIndex{Chunks: chunks, Vectors: make([][]float32, 0, len(chunks))}
+// embedChunks embeds every chunk's CONTENT (content only — not its path — so
+// retrieval ranks by code content, not filename), batching the Embedder calls.
+func embedChunks(ctx context.Context, emb Embedder, chunks []Chunk) ([][]float32, error) {
+	vectors := make([][]float32, 0, len(chunks))
 	for start := 0; start < len(chunks); start += embedBatchSize {
 		end := start + embedBatchSize
 		if end > len(chunks) {
@@ -59,9 +65,18 @@ func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticInd
 		if len(vecs) != len(texts) {
 			return nil, fmt.Errorf("codebase: embedder returned %d vectors for %d texts", len(vecs), len(texts))
 		}
-		idx.Vectors = append(idx.Vectors, vecs...)
+		vectors = append(vectors, vecs...)
 	}
-	return idx, nil
+	return vectors, nil
+}
+
+// BuildIndex embeds a chunk set into a fresh index. Pure given the Embedder.
+func BuildIndex(ctx context.Context, emb Embedder, chunks []Chunk) (*SemanticIndex, error) {
+	vecs, err := embedChunks(ctx, emb, chunks)
+	if err != nil {
+		return nil, err
+	}
+	return &SemanticIndex{Version: IndexVersion, Chunks: chunks, Vectors: vecs}, nil
 }
 
 // Retrieve embeds the query and returns the top-k chunks by cosine similarity,
