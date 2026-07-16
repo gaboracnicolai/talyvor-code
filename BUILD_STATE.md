@@ -495,3 +495,100 @@ Development Host) — I could not and did not automate them:
    turn returns ranked chunks.
 6. Toggle the setting OFF → **Start Agent Task** still drives the original single-pass
    plan→approve→apply flow (regression check).
+
+---
+
+# Run: in-extension TS index BUILDING (branch `code-extension-index-build`, off `f13a730`)
+
+SUPERVISED. Completes the extension's retrieval story: today it only CONSUMES a CLI-built
+index (retrieval-pure.ts, #22); after this it BUILDS its own in-process TypeScript index —
+no shell-out to the Go binary (DECISION MADE: in-process = no PATH trust surface, no second
+install, no version skew). Do NOT merge — one PR, commit per phase.
+
+## VERIFY (Go source mirrored + extension seam, read on f13a730)
+- **Go writer (internal/codebase) — the exact semantics to mirror:**
+  - Walker `IndexDirectory`: skipDirs = {.git, .talyvor, node_modules, vendor, .next, dist,
+    __pycache__} (NOTE: `build` is in the map as **false** → NOT skipped); skipSuffixes =
+    {.min.js, .min.css, .lock, -lock.json}; maxFiles cap 500. `.talyvor` IS skipped (the
+    already-fixed self-index bug — must NOT reintroduce).
+  - `DetectLanguage`: ext→lang map; `embeddableLang(lang) = lang != "" && lang != "Other"`
+    (only recognized languages embed).
+  - `ChunkFile`: whitespace→none; Go→`chunkGo` (col-0 func/func(/type/const/var boundaries,
+    each absorbs its preceding `//` block; header chunk before first decl; a decl > 160 lines
+    is window-split; no decls → fall back to windows); non-Go / declless-Go → `windowRange`
+    (50-line windows, 10-line overlap → next start = end-9). 1-based inclusive spans.
+  - `BuildIncremental`: `walkRepoFiles` (IndexDirectory → embeddableLang filter → Confine
+    (S11) → ReadFile 100KB cap → SHA-256 hex hash); reusable = prev!=nil && prev.Version==1 &&
+    (prev.EmbedModel==""||==DefaultEmbedModel); group prev chunks+vecs by file; per entry stamp
+    FileHashes[path]=hash, REUSE chunks+vecs when hash matches prev, else `ChunkFile`→newChunks;
+    embed only newChunks (batch 64); Chunks = reused++new, Vectors = reusedVecs++newVecs.
+  - `Save`: MkdirAll → marshal → CreateTemp in dir → Write → Sync → Close → **Rename** (atomic);
+    temp removed on any error. `IndexVersion` = 1 stamped. `DefaultEmbedModel` =
+    "text-embedding-3-small". `IndexPath` = <root>/.talyvor/codebase-index.json.
+- **Extension reader (retrieval-pure.ts, #22) — the format the writer MUST produce:**
+  `Chunk {file, language, start_line, end_line, content}` (snake_case), `SemanticIndex
+  {version, root?, embed_model?, file_hashes?, chunks, vectors}`, `parseIndex` version-gates
+  (version !== 1 → throw). **The writer IMPORTS these very types + `INDEX_VERSION` +
+  `DEFAULT_EMBED_MODEL` + `indexPath` from retrieval-pure.ts → format agreement is guaranteed
+  by construction, and I do NOT modify the reader.** confine-pure `absolutise` = S11.
+- **Test seam**: CI runs `test/*.test.ts` (self-contained node runners), NOT `*-pure.test.ts`.
+  Baseline 20/20 files green. New tests go in test/*.test.ts, 0 skips.
+
+## Plan (TDD the pure seam; any vscode-bound wiring = manual-verify)
+1. Walker + chunker + language (`index-build-pure.ts`): mirror skipDirs/suffixes/lang set +
+   ChunkFile boundaries; .talyvor NOT indexed; S11 confined reads (adversarial path refused).
+2. Incremental core: SHA-256 hash + reuse/embed-only-changed/drop-deleted (counting embedder).
+3. Atomic + versioned Save (temp-then-rename; version stamp the reader accepts).
+4. Round-trip linchpin: THIS writer → the EXISTING retrieval-pure reader → retrieve (real cosine).
+5. Wire: opt-in "build index" command (vscode-bound → manual-verify, documented).
+
+## Phase narrative (TS index BUILDER — all TDD, mutation-verified where impl preceded test)
+- **Phase 1 — walker + chunker + language** (`21a5a10`, RED→GREEN): `index-build-pure.ts`
+  mirrors DetectLanguage/embeddableLang, SHA-256 contentHash (proven vs the "abc" vector),
+  ChunkFile (Go decl-aware + non-Go 50/10 windows), and walkRepo (Go skipDirs incl.
+  `.talyvor` NOT reindexed; `build` NOT skipped; skipSuffixes; only embeddable langs). S11:
+  every read via `readConfined` (absolutise) — refuses `../`; symlinks out of root NOT
+  followed (isFile()/isDirectory() false for them) — a hardening over the Go walker.
+  METHOD NOTE: the module is one cohesive mirror of one Go package, so buildIncremental +
+  saveIndex landed here too; their behavior is proven by Phases 2–4, EACH mutation-verified.
+- **Phase 2 — incremental** (`…`): counting-embedder proves edit-one→re-embed-only-that,
+  delete→chunks+hash leave (0 embeds), add→embed-only-new. Mutation: `reusable=false` → the
+  reuse/drop/add asserts go RED. (mirror of Go incremental_test.go)
+- **Phase 3 — atomic + versioned Save**: version stamp accepted by the reader (round-load),
+  whole-file replace, no temp leftover, and a **worker_threads** reader (real OS-thread
+  parallelism) hammering the target during 150 rewrites of a 2000-chunk index NEVER sees a
+  torn file. Mutation: direct writeFileSync (no temp-then-rename) → the concurrent reader
+  catches a torn read (RED). This is the node equivalent of the Go goroutine race.
+- **Phase 4 — writer↔reader round-trip (LINCHPIN)**: build with THIS writer → load with the
+  EXISTING unmodified retrieval-pure reader → retrieve (auth chunk ranks first by real
+  cosine); version + chunk-count + 1-based spans round-trip; on-disk fields are snake_case
+  with file_hashes + embed_model; incremental output stays reader-valid. Mutation: bump the
+  writer's version stamp → the reader rejects it (RED). Format agreement PROVEN end-to-end.
+- **Phase 5 — refresh orchestration + opt-in command**: `refreshIndex` (vscode-free: load
+  prior → incremental → atomic save → delta; a version-mismatched prior forces a LOUD full
+  rebuild) + `indexDelta` are headless-tested (full→all-reused→edit-one→1-changed;
+  version-mismatch→full-rebuild). The `talyvor.buildIndex` command (`index-command.ts`) is a
+  THIN vscode wrapper (progress notification + Lens-backed embedder + result toast) —
+  MANUAL-VERIFY ONLY (imports vscode; no mock/skip per the run rules).
+
+## Security posture (held)
+- **S11**: every walk/hash read goes through `readConfined`→`absolutise` (refuses `../`);
+  symlinks out of root are not followed (proven adversarially). Reads stay inside the root.
+- **Trust boundary unchanged**: only chunk text is sent to Lens (feature `embed`), exactly
+  as chat does; the built index is a LOCAL file under `<root>/.talyvor/`, never uploaded.
+- **Reader untouched**: the writer IMPORTS retrieval-pure's types/constants; I did not
+  modify the #22 reader's format. Go packages / MCP auth / config guard / cost moat / K4
+  verdict loop untouched (only `extension/` + BUILD_STATE changed — verified by diff).
+
+## MANUAL VERIFICATION (vscode-bound command — a human must click)
+1. `npm run compile` in `extension/`, press F5 (Extension Development Host).
+2. Set `talyvor.lensUrl` / `talyvor.lensApiKey` (+ `workspaceId`) to a reachable Lens.
+3. Run **Talyvor: Build Semantic Index** (`talyvor.buildIndex`):
+   - a progress notification "building semantic index…" appears;
+   - on success a toast reports "N chunks across M files — X re-embedded, Y reused →
+     .talyvor/codebase-index.json"; the file exists under `<root>/.talyvor/`.
+4. Run it AGAIN with no edits → the toast shows all files **reused**, 0 re-embedded
+   (incremental). Edit one file, re-run → exactly 1 re-embedded.
+5. Confirm the built index is consumed by retrieval: enable `talyvor.agentIterative` (#22),
+   run an agent task, and confirm a `search_codebase` turn returns ranked chunks (writer→
+   reader round-trip live). Deleting `.talyvor/` and re-running rebuilds from scratch.
