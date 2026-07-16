@@ -331,3 +331,58 @@ layer is a later supervised run). TDD, red-first, `-pure` seam.
   wiring (later supervised run); the two documented micro-optimizations (mtime/size
   staleness fast-path needs a schema field; hoist the duplicated Lens→Embedder adapter);
   no completion-wiring, no agent-loop mirror, `--iterative` default still off.
+
+---
+
+# Run: VS Code extension → CLI parity (branch `code-extension-agent`, off `c1aa63f`)
+
+SUPERVISED. Bring the merged iterative agent loop (`internal/agentloop`, #20) and the
+production semantic index (incremental + honest MCP relevance, #21) INTO the extension,
+which today still uses the single-pass pipeline. Do NOT merge — one PR, commit per phase.
+
+## VERIFY (real state on c1aa63f, read before building — do NOT assume)
+- **The extension is a fully independent TypeScript reimplementation.** It NEVER shells
+  out to the Go `talyvor-code` binary (the only `child_process`/`spawn`/`execFile` uses
+  are heal's build runner and `git` for PR/context). So "bring agentloop/index in" =
+  PORT/MIRROR to TS, not shell-out. BUILD_STATE (#20) already recorded the intent:
+  "Extension NOT mirrored … Mirroring the loop into the extension is a follow-on run."
+  "Do not touch agentloop/index except to CALL them" ⇒ don't modify the Go packages
+  (I work only under `extension/`); the extension mirrors their behavior in TS.
+- **Current extension agent = single-pass** (`src/agent/AgentMode.ts`): `plan()` (one
+  Lens call) → `executeOne()` per file (one blind Lens call each; reads the target file
+  but NO sibling/retrieval grounding) → `awaiting_approval` → user approves → apply →
+  optional `applyAndHeal` (build → ask model → apply fixes → retry ≤ MAX_HEAL_ATTEMPTS).
+  No observe/re-plan tool loop. `agent-pure.ts` holds the vscode-free bits (parsePlan,
+  state machine, unified-diff).
+- **No semantic retrieval anywhere in the extension.** The TS Lens client
+  (`src/lens/client.ts`) has complete/completeWithUsage/completeStream/getStatus/
+  getCost — **no `embed()`**. "Context" today is `.talyvor-context` (user YAML) + line-
+  prefix parsing for completions. No `.talyvor/codebase-index.json` load. So Phase 2
+  must add `embed()` + a TS Retriever over the Go index JSON.
+- **S11 already ported + tested**: `src/agent/confine-pure.ts` `absolutise()` mirrors the
+  Go `confine`; `confine-pure.test.ts` exercises escapes. I reuse it for the loop's file
+  tools.
+- **Test seam — TWO conventions; only ONE gates CI:**
+  - `test/*.test.ts` = self-contained runners (plain fns + `main()` + `process.exit(1)`
+    on failure, NO `vscode` import). `npm test` → `out/test/runTest.js` spawns each
+    compiled `out/test/*.test.js` in its own process. **THIS is what CI runs** (ci.yaml
+    `extension` job: install → compile → `tsc --noEmit` → `npm test`). Baseline: 16/16
+    files pass headlessly. → my pure-seam tests go HERE so they truly run in CI.
+  - `src/**/*-pure.test.ts` = `node:test`, run only by `test:unit` — **CI does NOT run
+    these**. (confine-pure.test.ts lives here.) I won't rely on this path for CI proof.
+- **Go loop semantics to mirror exactly** (`internal/agentloop`): observe/act loop,
+  `Config{MaxSteps 20, MaxRepeat 2, MaxTranscript 40}`, StopReason{done,budget,
+  no-progress,error}; no-progress trips on the 3rd identical (tool+args) call; budget
+  runs exactly MaxSteps on distinct calls; malformed reply fed back with a JSON hint
+  (bounded → no-progress); tool error = observation (never kills the loop); done carries
+  a summary; transcript trims to system + most-recent. Tool transport = one JSON object
+  per turn (NOT native tool-calling) — mirror it.
+
+## Plan (TDD the pure seam in `test/*.test.ts`; STOP-and-report on any UI wall)
+1. **Phase 1 — pure iterative loop** (`src/agent/loop-pure.ts`): Message/Model/Tool/
+   Registry/parseToolCall/Agent.run + StopReason/Config/Result. TDD all Go scenarios.
+2. **Phase 2 — retrieval-grounding**: `embed()` on the TS Lens client + a TS Retriever
+   over the Go index JSON (version gate, cosine, honest-absent). TDD with a fake embedder.
+3. **Phase 3 — VS-Code-bound wiring**: real tools (read/edit via confine-pure+vscode.fs,
+   run via child_process, search via Retriever) + an opt-in `AgentMode.startIterativeTask`
+   behind a setting; DOCUMENT the manual-verify steps for the panel/editor surface.
