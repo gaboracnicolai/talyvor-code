@@ -681,7 +681,27 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 			fmt.Fprintln(stderr, "! --dry-run is ignored with --iterative (the loop must apply edits to run + observe)")
 		}
 		ret := loadRetriever(lc, cfg, workspaceRoot, stdout, stderr)
-		return runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
+		result, err := runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
+		if err != nil {
+			return err
+		}
+		// --pr for the iterative path: open a PR for the applied edits. Previously this
+		// was a SILENT no-op (the iterative branch returned before Phase 4) — now it
+		// works, so the surviving generations can be attributed to the PR (Phase 2).
+		if openPR {
+			if len(result.EditedFiles) == 0 {
+				fmt.Fprintln(stderr, "! --pr: the iterative agent edited nothing — no PR to open")
+			} else {
+				url, perr := runPRAfterAgent(ctx, stdin, stdout, stderr, lc, cfg,
+					taskDesc, result.EditedFiles, branchName, ghToken, prDraft, yes)
+				if perr != nil {
+					fmt.Fprintf(stderr, "! pr: %v\n", perr)
+				} else if url != "" {
+					fmt.Fprintf(stdout, "✅ PR opened: %s\n", url)
+				}
+			}
+		}
+		return nil
 	}
 
 	// ── Phase 0: index codebase ──
