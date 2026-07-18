@@ -2,6 +2,7 @@ package lens
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -38,8 +39,10 @@ func TestReportAttribution(t *testing.T) {
 	}
 
 	status = 409
-	if err := c.ReportAttribution(context.Background(), "oid-2", "pr", "ref"); err != nil {
-		t.Errorf("409 must be success-equivalent (nil); got %v", err)
+	// A 409 (already attributed to a DIFFERENT ref) now returns the ErrAttributionConflict
+	// sentinel so the caller can LOG it — still non-fatal / success-equivalent (not a hard error).
+	if err := c.ReportAttribution(context.Background(), "oid-2", "pr", "ref"); !errors.Is(err, ErrAttributionConflict) {
+		t.Errorf("409 must return ErrAttributionConflict (logged, non-fatal); got %v", err)
 	}
 
 	status = 500

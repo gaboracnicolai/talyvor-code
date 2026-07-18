@@ -791,6 +791,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	// ── Phase 2: execute (per file) ──
 	reader := bufio.NewReader(stdin)
 	applied, skipped := 0, 0
+	var appliedChanges []FileChange // for PR attribution: the Phase-2 generations that actually landed
 	for i, pf := range plan.Files {
 		fmt.Fprintf(stdout, "\n▸ Generating %d/%d: %s\n", i+1, len(plan.Files), pf.Path)
 		change, err := generateChange(ctx, lc, cfg, taskDesc, pf, workspaceRoot, chosenModel, retriever)
@@ -826,6 +827,7 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 			continue
 		}
 		applied++
+		appliedChanges = append(appliedChanges, *change) // landed → eligible for attribution
 	}
 
 	fmt.Fprintf(stdout, "\nApplied %d/%d changes (skipped %d)\n", applied, len(plan.Files), skipped)
@@ -833,16 +835,19 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		nonEmpty(cfg.ActiveIssue, "(none)"))
 
 	// ── Phase 3: optional self-heal ──
+	healAttribution := map[string]string{}
 	if healEnabled && applied > 0 && !dryRun {
 		changedFiles := make([]string, 0, applied)
 		for _, pf := range plan.Files {
 			changedFiles = append(changedFiles, pf.Path)
 		}
-		if err := runHealLoop(
+		ha, herr := runHealLoop(
 			ctx, stdin, stdout, stderr, lc, cfg, taskDesc, workspaceRoot,
 			healCmd, changedFiles, chosenModel, yes, maxAttempts,
-		); err != nil {
-			return err
+		)
+		healAttribution = ha // repairs recorded even when heal ultimately gave up
+		if herr != nil {
+			return herr
 		}
 	}
 
@@ -862,6 +867,16 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		} else if url != "" {
 			prURL = url
 			fmt.Fprintf(stdout, "✅ PR opened: %s\n", url)
+			// Attribute the SURVIVING single-pass generations (Phase-2 landed edits +
+			// heal repairs, last-writer ∩ committed diff) to the PR. Flag-gated +
+			// best-effort — NEVER fails the PR.
+			if cfg.ReportAttribution {
+				if committed, cerr := committedDiffFiles(); cerr != nil {
+					fmt.Fprintf(stderr, "! attribution: committed diff unavailable: %v (skipped)\n", cerr)
+				} else if n := attributePR(ctx, cfg, stderr, lc, singlePassLastWriters(appliedChanges, healAttribution), committed, url); n > 0 {
+					fmt.Fprintf(stdout, "  attributed %d surviving generation(s) to the PR\n", n)
+				}
+			}
 		}
 	}
 
@@ -902,14 +917,17 @@ func runHealLoop(
 	agentModel string,
 	autoYes bool,
 	maxAttempts int,
-) error {
+) (map[string]string, error) {
+	// healAttribution: repo-rel file → the output_id of the repair generation that LAST
+	// wrote it (for PR attribution). Empty when the gateway returned no output_id.
+	healAttribution := map[string]string{}
 	if maxAttempts <= 0 {
 		maxAttempts = runner.MaxHealAttempts
 	}
 	cmd, lang, err := resolveHealCommand(workspaceRoot, healCmdOverride)
 	if err != nil {
 		fmt.Fprintf(stderr, "! heal: %v (skipping)\n", err)
-		return nil
+		return healAttribution, nil
 	}
 	healModel := modelpkg.DefaultForCommand("review") // Sonnet, per spec
 	reader := bufio.NewReader(stdin)
@@ -926,7 +944,7 @@ func runHealLoop(
 		res, err := runner.Run(ctx, cmd, workspaceRoot, 60*time.Second)
 		if err != nil {
 			fmt.Fprintf(stderr, "! heal: command run: %v\n", err)
-			return nil
+			return healAttribution, nil
 		}
 		// Report the mechanical verdict for the repair this build tested (1:1). Empty on attempt 1 (the
 		// unattributable initial batch) → skipped. Best-effort: a reporting failure NEVER breaks the build.
@@ -942,7 +960,7 @@ func runHealLoop(
 			} else {
 				fmt.Fprintf(stdout, "✅ Fixed on attempt %d.\n", attempt-1)
 			}
-			return nil
+			return healAttribution, nil
 		}
 		fmt.Fprintf(stdout, "❌ Build failed (exit %d). Attempting self-heal (%d/%d)…\n",
 			res.ExitCode, attempt, maxAttempts)
@@ -965,7 +983,7 @@ func runHealLoop(
 			healModel, "agent-heal", cfg.WorkspaceID, cfg.ActiveIssue,
 		)
 		if err != nil {
-			return fmt.Errorf("heal: %w", err)
+			return healAttribution, fmt.Errorf("heal: %w", err)
 		}
 		reply := usage.Text
 		// Attribute the NEXT build's verdict to THIS repair generation (1:1). Empty when the gateway
@@ -981,16 +999,23 @@ func runHealLoop(
 			fmt.Fprintln(stderr, "! heal: model returned no fixes")
 			continue
 		}
-		applied := applyHealFixes(stdin, stdout, stderr, reader, workspaceRoot, fixes, autoYes)
-		if applied == 0 {
+		written := applyHealFixes(stdin, stdout, stderr, reader, workspaceRoot, fixes, autoYes)
+		if len(written) == 0 {
 			fmt.Fprintln(stdout, "No fixes applied — aborting heal loop.")
-			return nil
+			return healAttribution, nil
+		}
+		// This repair is now the LAST writer of each file it wrote (supersedes any
+		// earlier generation of the same file). Skip when the gateway gave no output_id.
+		if lastRepairOutputID != "" {
+			for _, f := range written {
+				healAttribution[f] = lastRepairOutputID
+			}
 		}
 	}
 	fmt.Fprintf(stdout,
 		"❌ Could not fix automatically after %d attempts. Review the errors above and fix manually.\n",
 		maxAttempts)
-	return fmt.Errorf("heal: gave up after %d attempts", maxAttempts)
+	return healAttribution, fmt.Errorf("heal: gave up after %d attempts", maxAttempts)
 }
 
 // mechanicalVerdict maps a build/test command + its success into the K4 mechanical verdict enum. A command
@@ -1036,9 +1061,9 @@ func stitchOutput(r *runner.ExecutionResult) string {
 	return r.Stdout
 }
 
-// applyHealFixes writes the model's corrected files to disk,
-// prompting per-file when autoYes is false. Returns the count of
-// applied fixes.
+// applyHealFixes writes the model's corrected files to disk (with per-fix approval).
+// Returns the repo-relative paths it actually WROTE — the caller attributes each to the
+// repair generation that produced them.
 func applyHealFixes(
 	stdin io.Reader,
 	stdout, stderr io.Writer,
@@ -1046,8 +1071,8 @@ func applyHealFixes(
 	workspaceRoot string,
 	fixes []runner.FileFix,
 	autoYes bool,
-) int {
-	applied := 0
+) []string {
+	written := make([]string, 0, len(fixes))
 	for _, f := range fixes {
 		abs, cerr := confine(workspaceRoot, f.File)
 		if cerr != nil {
@@ -1082,9 +1107,9 @@ func applyHealFixes(
 			fmt.Fprintf(stderr, "! write %s: %v\n", abs, err)
 			continue
 		}
-		applied++
+		written = append(written, f.File)
 	}
-	return applied
+	return written
 }
 
 // indent prepends `prefix` to every line of s. Used to set off
@@ -1733,6 +1758,9 @@ type FileChange struct {
 	Operation       string
 	OriginalContent string
 	NewContent      string
+	// OutputID is the gateway output_id of the generation that produced NewContent
+	// (X-Talyvor-Output-Id). Used for PR attribution; "" when the gateway returned none.
+	OutputID string
 }
 
 // generateChange asks Lens for the complete new content for one
@@ -1787,14 +1815,17 @@ func generateChange(ctx context.Context, lc *lens.Client, cfg config.Config, tas
 	}
 	fmt.Fprintf(&user, "\nChange to make: %s\n", pf.Description)
 
-	reply, err := lc.Complete(ctx,
+	// CompleteWithUsage (vs Complete) so we capture the gateway output_id for PR
+	// attribution — the request is byte-identical (Complete wraps CompleteWithUsage).
+	usage, err := lc.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: user.String()}},
 		model, "agent-execute", cfg.WorkspaceID, cfg.ActiveIssue,
 	)
 	if err != nil {
 		return nil, err
 	}
-	change.NewContent = stripFences(reply)
+	change.NewContent = stripFences(usage.Text)
+	change.OutputID = usage.OutputID
 	return change, nil
 }
 
