@@ -1,6 +1,44 @@
 package main
 
-import "sort"
+import (
+	"context"
+	"fmt"
+	"io"
+	"sort"
+
+	"github.com/talyvor/code/internal/config"
+)
+
+// attributionReporter is the slice of the Lens client the caller needs. The real
+// *lens.Client satisfies it; tests inject a fake. Code holds NO authority — Lens owns
+// the ownership gate (append-only, first-wins).
+type attributionReporter interface {
+	ReportAttribution(ctx context.Context, outputID, targetKind, targetRef string) error
+}
+
+// attributePR reports each SURVIVING generation (survivingAttributions: last-writer per
+// file ∩ the committed diff) as attributed to targetRef with target_kind "pr". Returns
+// the count reported.
+//
+// Flag-gated: with ReportAttribution OFF it makes ZERO calls (byte-identical). Best-
+// effort: any error (a 409 is already success inside the reporter) is logged and skipped
+// — attribution NEVER fails the PR. No secrets/content are sent — ids + target_ref only.
+func attributePR(ctx context.Context, cfg config.Config, log io.Writer, rep attributionReporter, editAttribution map[string]string, committedFiles []string, targetRef string) int {
+	if !cfg.ReportAttribution {
+		return 0
+	}
+	n := 0
+	for _, id := range survivingAttributions(editAttribution, committedFiles) {
+		if err := rep.ReportAttribution(ctx, id, "pr", targetRef); err != nil {
+			if log != nil {
+				fmt.Fprintf(log, "! attribution failed (ignored) for %s: %v\n", id, err)
+			}
+			continue
+		}
+		n++
+	}
+	return n
+}
 
 // survivingAttributions is the survival gate: from the loop's per-file last-writer map
 // (agentloop.Result.EditAttribution), keep only the output_ids whose file actually

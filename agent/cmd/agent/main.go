@@ -698,6 +698,15 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 					fmt.Fprintf(stderr, "! pr: %v\n", perr)
 				} else if url != "" {
 					fmt.Fprintf(stdout, "✅ PR opened: %s\n", url)
+					// Attribute the SURVIVING generations (last-writer ∩ committed diff)
+					// to the PR. Flag-gated + best-effort — NEVER fails the PR.
+					if cfg.ReportAttribution {
+						if committed, cerr := committedDiffFiles(); cerr != nil {
+							fmt.Fprintf(stderr, "! attribution: committed diff unavailable: %v (skipped)\n", cerr)
+						} else if n := attributePR(ctx, cfg, stderr, lc, result.EditAttribution, committed, url); n > 0 {
+							fmt.Fprintf(stdout, "  attributed %d surviving generation(s) to the PR\n", n)
+						}
+					}
 				}
 			}
 		}
@@ -2440,6 +2449,16 @@ func runPRAfterAgent(
 	}
 	_ = stderr
 	return res.URL, nil
+}
+
+// committedDiffFiles returns the files changed on the current branch vs the default base
+// (the committed diff) — the survival set the attribution caller filters by. Best-effort.
+func committedDiffFiles() ([]string, error) {
+	base, err := gitpkg.GetDefaultBranch()
+	if err != nil {
+		return nil, err
+	}
+	return gitpkg.GetChangedFiles(base)
 }
 
 // generatePRTitle asks Lens (Haiku) for a concise PR title.

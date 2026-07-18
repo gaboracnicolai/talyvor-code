@@ -44,6 +44,10 @@ type Config struct {
 	// back to Lens for the specific generation that produced the code. DEFAULT FALSE — off = the agent
 	// behaves exactly as before; reporting is best-effort and NEVER blocks or fails a user's build.
 	ReportVerdicts bool
+	// ReportAttribution gates PR attribution: when true, after `run --iterative --pr` opens a PR the
+	// agent attributes each SURVIVING generation's output_id to that PR (Lens owns the ownership gate).
+	// DEFAULT FALSE — off = zero attribution calls, byte-identical; best-effort and NEVER fails the PR.
+	ReportAttribution bool
 }
 
 // Load merges flag inputs with TALYVOR_* env vars. Empty flag
@@ -81,6 +85,9 @@ func Load(flags Config) Config {
 	}
 	if !out.ReportVerdicts {
 		out.ReportVerdicts = os.Getenv("TALYVOR_REPORT_VERDICTS") == "true"
+	}
+	if !out.ReportAttribution {
+		out.ReportAttribution = os.Getenv("TALYVOR_REPORT_ATTRIBUTION") == "true"
 	}
 	// Note: no hard default applied here. Each command resolves
 	// its own default via internal/model.ResolveModel, which
