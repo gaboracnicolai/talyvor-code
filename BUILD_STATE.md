@@ -647,3 +647,35 @@ Non-build/test runs are IGNORED (don't report, don't clear). Build/test-ness is 
 - cmd/agent: `*lensModel` uses `CompleteWithUsage` + implements `LastOutputID`; a
   `verdictObserver` (implements the rule, calls a `verdictReporter` iface the real
   `*lens.Client` satisfies) wired into `Config.Observer` ONLY when `cfg.ReportVerdicts`.
+
+---
+
+# Run: PR attribution — thread output_ids + caller (branch `code-attribution-caller`, off `b9b3c12`)
+
+Client-side, no authority, flag-gated. Phase 1 = the prereq (a prior recon STOPPED here);
+Phase 2 = the caller. STOP before merge.
+
+## RE-VERIFIED recon facts (all still true on b9b3c12)
+1. single-pass `generateChange` (main.go:1761, feature `agent-execute`) uses `lc.Complete`,
+   which drops OutputID (client.go:44-50 returns only `out.Text`).
+2. the ITERATIVE path captures ids (verdictObserver, verdict_observer.go:47) but
+   `runIterativeAgent` returned at main.go:684 BEFORE Phase-4 PR creation.
+3. `PRConfig` (pr.go:28) + `agentloop.Result` (loop.go:71) carried no ids.
+4. ⇒ a client in the PR path had nothing to POST.
+
+## Phase 1 — thread the ids + fix the --iterative --pr no-op
+- **Survival gate = "SURVIVED INTO THE COMMITTED DIFF", not "touched during the run".**
+  - Level 1 (loop, `agentloop.Result.EditAttribution` map file→last-writer output_id):
+    edit_file writes COMPLETE content, so the last writer per file wins; an earlier
+    generation whose write is overwritten is dropped. Proven: A superseded by B on foo.go
+    → foo.go attributes to B only (attribution_test.go).
+  - Level 2 (`survivingAttributions(editAttr, committedFiles)`, cmd/agent): keep only ids
+    whose file is in `git diff base...branch` (gitpkg.GetChangedFiles). A file edited then
+    reverted is absent from the committed diff → dropped. Distinct + sorted. Proven incl.
+    revert-drops-all (attribution_test.go).
+- **--iterative --pr FIX — chose MAKE IT WORK (not warn).** Why: Phase 2 attributes after a
+  PR lands, and fact #2 says ONLY the iterative path captures ids — so the iterative path
+  must create the PR or the whole feature is inert; a warn would leave nothing to attribute.
+  `runIterativeAgent` now returns `(agentloop.Result, error)`; the run command's iterative
+  branch opens a PR (reusing `runPRAfterAgent`) when `--pr` + edits exist. Default (no --pr)
+  is byte-identical.

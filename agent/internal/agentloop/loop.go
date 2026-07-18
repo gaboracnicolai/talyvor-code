@@ -74,7 +74,13 @@ type Result struct {
 	Steps       int
 	Stop        StopReason
 	EditedFiles []string
-	Transcript  []Message
+	// EditAttribution maps a repo-relative file path to the output_id of the LAST
+	// generation that wrote it (edit_file writes complete content, so the last writer
+	// is the one whose content survives on disk). Empty when the Model exposes no
+	// output_id. The attribution caller further filters this by the COMMITTED diff, so
+	// a file later reverted to its base content is not attributed.
+	EditAttribution map[string]string
+	Transcript      []Message
 }
 
 // Agent drives the iterative loop over a Model + a tool Registry.
@@ -108,12 +114,13 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		{Role: "user", Content: "Task: " + task + "\n\nBegin. Respond with ONE JSON tool call."},
 	}
 	editedFiles := []string{}
+	editAttribution := map[string]string{} // repo-rel path → last-writer output_id
 	sigCount := map[string]int{}
 
 	for step := 1; step <= a.cfg.MaxSteps; step++ {
 		reply, err := a.model.Complete(ctx, messages)
 		if err != nil {
-			return Result{Stop: StopError, Steps: step, EditedFiles: editedFiles, Transcript: messages}, err
+			return Result{Stop: StopError, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, err
 		}
 		// The output_id of the generation that produced THIS turn's reply (when the Model
 		// exposes it). Read immediately after Complete so it pairs 1:1 with this turn.
@@ -127,7 +134,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 			// Bad format: feed it back so the model can correct — but bound the
 			// number of consecutive malformed replies so it can't loop on garbage.
 			if sigCount["\x00parse"]++; sigCount["\x00parse"] > a.cfg.MaxRepeat {
-				return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, Transcript: messages}, nil
+				return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
 			}
 			messages = a.appendTurn(messages, reply,
 				`[error] `+perr.Error()+` — reply with EXACTLY ONE JSON object: {"thought":"...","tool":"<tool>","args":{...}}`)
@@ -135,7 +142,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		}
 
 		if call.Tool == "done" {
-			return Result{Done: true, Summary: doneSummary(call.Args), Steps: step, Stop: StopDone, EditedFiles: editedFiles, Transcript: messages}, nil
+			return Result{Done: true, Summary: doneSummary(call.Args), Steps: step, Stop: StopDone, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
 		}
 
 		// No-progress detector: the identical (tool, args) recurring more than
@@ -144,14 +151,20 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		// unattended run can't burn its budget looping.
 		sig := call.Tool + "\x00" + string(call.Args)
 		if sigCount[sig]++; sigCount[sig] > a.cfg.MaxRepeat {
-			return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, Transcript: messages}, nil
+			return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
 		}
 
 		obs, terr := a.tools.Dispatch(ctx, call.Tool, call.Args)
 		if terr != nil {
 			obs = "[error] " + terr.Error() // a tool error is an observation; the model re-plans
 		} else if call.Tool == "edit_file" {
-			editedFiles = appendUnique(editedFiles, editPath(call.Args))
+			p := editPath(call.Args)
+			editedFiles = appendUnique(editedFiles, p)
+			// Record the last-writer output_id for this file (overwrites an earlier
+			// generation's write of the same file — supersession). Skip unknown ids.
+			if p != "" && outputID != "" {
+				editAttribution[p] = outputID
+			}
 		}
 		// Emit this step to the Observer (if any). For a successfully-executed `run`, read
 		// the structured exit code from the tool. Best-effort: nil Observer ⇒ no-op.
@@ -166,7 +179,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		}
 		messages = a.appendTurn(messages, reply, fmt.Sprintf("[%s]\n%s", call.Tool, obs))
 	}
-	return Result{Stop: StopBudget, Steps: a.cfg.MaxSteps, EditedFiles: editedFiles, Transcript: messages}, nil
+	return Result{Stop: StopBudget, Steps: a.cfg.MaxSteps, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
 }
 
 // appendTurn records the assistant reply + the observation, trimming the transcript
