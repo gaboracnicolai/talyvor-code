@@ -67,7 +67,7 @@ func verdictObserverFor(ctx context.Context, cfg config.Config, lc *lens.Client,
 // runIterativeAgent drives the tool-using loop for a task: it builds the confined
 // tool set (search/read/edit/run) over the repo root + the semantic retriever, wires
 // the Lens model, runs the OBSERVE/ACT loop, and prints the outcome.
-func runIterativeAgent(ctx context.Context, lc *lens.Client, cfg config.Config, task, root, model string, ret codebase.Retriever, maxSteps int, stdout, stderr io.Writer) error {
+func runIterativeAgent(ctx context.Context, lc *lens.Client, cfg config.Config, task, root, model string, ret codebase.Retriever, maxSteps int, stdout, stderr io.Writer) (agentloop.Result, error) {
 	tools := agentloop.DefaultTools(root, ret)
 	m := newLensModel(lc, model, cfg.WorkspaceID, cfg.ActiveIssue)
 	// K4: attribute mechanical build/test verdicts to the generation that produced each
@@ -82,7 +82,7 @@ func runIterativeAgent(ctx context.Context, lc *lens.Client, cfg config.Config, 
 
 	res, err := ag.Run(ctx, task)
 	if err != nil {
-		return fmt.Errorf("iterative agent: %w", err)
+		return res, fmt.Errorf("iterative agent: %w", err)
 	}
 
 	fmt.Fprintf(stdout, "\n■ %s after %d step(s).\n", res.Stop, res.Steps)
@@ -96,5 +96,5 @@ func runIterativeAgent(ctx context.Context, lc *lens.Client, cfg config.Config, 
 		fmt.Fprintf(stderr, "! agent did not reach a clean done (%s) — review the changes above\n", res.Stop)
 	}
 	fmt.Fprintf(stderr, "(model=%s issue=%s)\n", model, nonEmpty(cfg.ActiveIssue, "(none)"))
-	return nil
+	return res, nil
 }

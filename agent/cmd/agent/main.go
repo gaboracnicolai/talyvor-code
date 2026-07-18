@@ -681,7 +681,36 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 			fmt.Fprintln(stderr, "! --dry-run is ignored with --iterative (the loop must apply edits to run + observe)")
 		}
 		ret := loadRetriever(lc, cfg, workspaceRoot, stdout, stderr)
-		return runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
+		result, err := runIterativeAgent(ctx, lc, cfg, taskDesc, workspaceRoot, chosenModel, ret, maxSteps, stdout, stderr)
+		if err != nil {
+			return err
+		}
+		// --pr for the iterative path: open a PR for the applied edits. Previously this
+		// was a SILENT no-op (the iterative branch returned before Phase 4) — now it
+		// works, so the surviving generations can be attributed to the PR (Phase 2).
+		if openPR {
+			if len(result.EditedFiles) == 0 {
+				fmt.Fprintln(stderr, "! --pr: the iterative agent edited nothing — no PR to open")
+			} else {
+				url, perr := runPRAfterAgent(ctx, stdin, stdout, stderr, lc, cfg,
+					taskDesc, result.EditedFiles, branchName, ghToken, prDraft, yes)
+				if perr != nil {
+					fmt.Fprintf(stderr, "! pr: %v\n", perr)
+				} else if url != "" {
+					fmt.Fprintf(stdout, "✅ PR opened: %s\n", url)
+					// Attribute the SURVIVING generations (last-writer ∩ committed diff)
+					// to the PR. Flag-gated + best-effort — NEVER fails the PR.
+					if cfg.ReportAttribution {
+						if committed, cerr := committedDiffFiles(); cerr != nil {
+							fmt.Fprintf(stderr, "! attribution: committed diff unavailable: %v (skipped)\n", cerr)
+						} else if n := attributePR(ctx, cfg, stderr, lc, result.EditAttribution, committed, url); n > 0 {
+							fmt.Fprintf(stdout, "  attributed %d surviving generation(s) to the PR\n", n)
+						}
+					}
+				}
+			}
+		}
+		return nil
 	}
 
 	// ── Phase 0: index codebase ──
@@ -2420,6 +2449,16 @@ func runPRAfterAgent(
 	}
 	_ = stderr
 	return res.URL, nil
+}
+
+// committedDiffFiles returns the files changed on the current branch vs the default base
+// (the committed diff) — the survival set the attribution caller filters by. Best-effort.
+func committedDiffFiles() ([]string, error) {
+	base, err := gitpkg.GetDefaultBranch()
+	if err != nil {
+		return nil, err
+	}
+	return gitpkg.GetChangedFiles(base)
 }
 
 // generatePRTitle asks Lens (Haiku) for a concise PR title.

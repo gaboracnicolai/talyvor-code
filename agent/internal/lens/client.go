@@ -162,6 +162,43 @@ func (c *Client) ReportMechanicalVerdict(ctx context.Context, outputID, verdict 
 	return nil
 }
 
+// ReportAttribution attributes an output to a downstream target (a landed PR/spec) via
+// POST /v1/outputs/{output_id}/attribution with {target_kind,target_ref}. Client-side,
+// no authority: Lens owns the gate (ownership-bound, append-only first-wins). A 409
+// (already attributed) is SUCCESS-EQUIVALENT (nil) — first-report-wins; other >=400 are
+// errors. A no-op when unconfigured or output_id is empty. target_ref is opaque to Lens.
+func (c *Client) ReportAttribution(ctx context.Context, outputID, targetKind, targetRef string) error {
+	if !c.IsConfigured() || outputID == "" {
+		return nil
+	}
+	enc, err := json.Marshal(map[string]any{
+		"target_kind": targetKind,
+		"target_ref":  targetRef,
+	})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.url+"/v1/outputs/"+outputID+"/attribution", bytes.NewReader(enc))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict {
+		return nil // already attributed (append-only first-wins) — success-equivalent
+	}
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("lens: report attribution: %s", resp.Status)
+	}
+	return nil
+}
+
 // EstimateCostUSD prices a call from per-million-token rates.
 // Keep the table tight; Lens does authoritative reconciliation.
 func EstimateCostUSD(model string, inputTokens, outputTokens int) float64 {
