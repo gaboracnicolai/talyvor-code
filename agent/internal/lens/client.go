@@ -162,6 +162,11 @@ func (c *Client) ReportMechanicalVerdict(ctx context.Context, outputID, verdict 
 	return nil
 }
 
+// ErrAttributionConflict signals a 409 from the attribution endpoint: the output is
+// already attributed to a DIFFERENT target_ref. Non-fatal + success-equivalent (the
+// caller must NOT fail the PR), but a possible mis-attribution worth logging.
+var ErrAttributionConflict = errors.New("lens: output already attributed to a different target")
+
 // ReportAttribution attributes an output to a downstream target (a landed PR/spec) via
 // POST /v1/outputs/{output_id}/attribution with {target_kind,target_ref}. Client-side,
 // no authority: Lens owns the gate (ownership-bound, append-only first-wins). A 409
@@ -191,7 +196,11 @@ func (c *Client) ReportAttribution(ctx context.Context, outputID, targetKind, ta
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusConflict {
-		return nil // already attributed (append-only first-wins) — success-equivalent
+		// The output was already attributed to a DIFFERENT target_ref (append-only
+		// first-wins). Non-fatal + success-equivalent, but a possible mis-attribution —
+		// surfaced via a sentinel the caller LOGS. (An identical re-post returns 200
+		// recorded:false and stays silent.)
+		return ErrAttributionConflict
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("lens: report attribution: %s", resp.Status)

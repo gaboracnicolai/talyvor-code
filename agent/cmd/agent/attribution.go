@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 
 	"github.com/talyvor/code/internal/config"
+	"github.com/talyvor/code/internal/lens"
 )
 
 // attributionReporter is the slice of the Lens client the caller needs. The real
@@ -29,15 +31,45 @@ func attributePR(ctx context.Context, cfg config.Config, log io.Writer, rep attr
 	}
 	n := 0
 	for _, id := range survivingAttributions(editAttribution, committedFiles) {
-		if err := rep.ReportAttribution(ctx, id, "pr", targetRef); err != nil {
+		err := rep.ReportAttribution(ctx, id, "pr", targetRef)
+		switch {
+		case err == nil:
+			n++ // recorded (or an identical re-post) — silent success
+		case errors.Is(err, lens.ErrAttributionConflict):
+			// Already attributed to a DIFFERENT ref — a possible mis-attribution. LOG it
+			// (non-fatal, success-equivalent) but do NOT count it as this PR's attribution.
+			if log != nil {
+				fmt.Fprintf(log, "! attribution: %s is already attributed to a different target (possible mis-attribution) — not re-claimed for this PR\n", id)
+			}
+		default:
 			if log != nil {
 				fmt.Fprintf(log, "! attribution failed (ignored) for %s: %v\n", id, err)
 			}
-			continue
 		}
-		n++
 	}
 	return n
+}
+
+// singlePassLastWriters builds the single-pass path's per-file last-writer map (path →
+// output_id), reusing #26's survival discipline: each APPLIED Phase-2 generation records
+// its file, then heal-loop repairs OVERWRITE the files they rewrote (a repair is the
+// later, surviving writer). Skipped files are excluded by the caller (they never reach
+// `applied`); the committed-diff filter (survivingAttributions) then drops anything that
+// did not survive. Unknown (empty) ids are skipped.
+func singlePassLastWriters(applied []FileChange, healAttribution map[string]string) map[string]string {
+	m := make(map[string]string, len(applied)+len(healAttribution))
+	for _, c := range applied {
+		if c.Path != "" && c.OutputID != "" {
+			m[c.Path] = c.OutputID
+		}
+	}
+	// Heal repairs run AFTER Phase 2, so they win for any file they rewrote (last writer).
+	for file, oid := range healAttribution {
+		if file != "" && oid != "" {
+			m[file] = oid
+		}
+	}
+	return m
 }
 
 // survivingAttributions is the survival gate: from the loop's per-file last-writer map
