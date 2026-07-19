@@ -48,6 +48,13 @@ type Config struct {
 	// agent attributes each SURVIVING generation's output_id to that PR (Lens owns the ownership gate).
 	// DEFAULT FALSE — off = zero attribution calls, byte-identical; best-effort and NEVER fails the PR.
 	ReportAttribution bool
+	// CommitArtifact gates the H5 buildable-artifact commitment: when true, after --pr opens a PR the
+	// agent commits, for each SURVIVING generation whose on-disk file still byte-equals its canonical
+	// content, the module manifest to Lens (POST /v1/outputs/{id}/artifact — Lens owns ownership +
+	// append-once and folds the captured content hash). DEFAULT FALSE — off = zero commit calls,
+	// byte-identical; best-effort and NEVER fails the PR. Against-interest: an attested compile_failed
+	// on a committed artifact can burn the workspace's own H5 bond.
+	CommitArtifact bool
 }
 
 // Load merges flag inputs with TALYVOR_* env vars. Empty flag
@@ -88,6 +95,9 @@ func Load(flags Config) Config {
 	}
 	if !out.ReportAttribution {
 		out.ReportAttribution = os.Getenv("TALYVOR_REPORT_ATTRIBUTION") == "true"
+	}
+	if !out.CommitArtifact {
+		out.CommitArtifact = os.Getenv("TALYVOR_COMMIT_ARTIFACT") == "true"
 	}
 	// Note: no hard default applied here. Each command resolves
 	// its own default via internal/model.ResolveModel, which

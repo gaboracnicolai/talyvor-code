@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"github.com/talyvor/code/internal/lens"
 )
 
 // StepInfo is what the loop observed after executing one turn's tool call. An optional
@@ -80,7 +82,13 @@ type Result struct {
 	// output_id. The attribution caller further filters this by the COMMITTED diff, so
 	// a file later reverted to its base content is not attributed.
 	EditAttribution map[string]string
-	Transcript      []Message
+	// OutputCanonicalSHA maps an output_id to the sha256 of that generation's CANONICAL reply text —
+	// the value Lens captured as output_content_sha256 (lens/canonical.go). Recorded at the only moment
+	// the reply and its output_id are paired (the transcript is trimmed, so post-hoc pairing is
+	// impossible). The H5 artifact-commit rule compares this against the on-disk file's hash: commit
+	// iff equal — for tool-call replies they essentially never are, and the rule correctly declines.
+	OutputCanonicalSHA map[string]string
+	Transcript         []Message
 }
 
 // Agent drives the iterative loop over a Model + a tool Registry.
@@ -115,12 +123,13 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 	}
 	editedFiles := []string{}
 	editAttribution := map[string]string{} // repo-rel path → last-writer output_id
+	outputCanonical := map[string]string{} // output_id → sha256(canonical reply text)
 	sigCount := map[string]int{}
 
 	for step := 1; step <= a.cfg.MaxSteps; step++ {
 		reply, err := a.model.Complete(ctx, messages)
 		if err != nil {
-			return Result{Stop: StopError, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, err
+			return Result{Stop: StopError, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, OutputCanonicalSHA: outputCanonical, Transcript: messages}, err
 		}
 		// The output_id of the generation that produced THIS turn's reply (when the Model
 		// exposes it). Read immediately after Complete so it pairs 1:1 with this turn.
@@ -128,13 +137,16 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		if oi, ok := a.model.(OutputIdentified); ok {
 			outputID = oi.LastOutputID()
 		}
+		if outputID != "" {
+			outputCanonical[outputID] = lens.CanonicalContentSHA256(reply)
+		}
 
 		call, perr := parseToolCall(reply)
 		if perr != nil {
 			// Bad format: feed it back so the model can correct — but bound the
 			// number of consecutive malformed replies so it can't loop on garbage.
 			if sigCount["\x00parse"]++; sigCount["\x00parse"] > a.cfg.MaxRepeat {
-				return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
+				return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, OutputCanonicalSHA: outputCanonical, Transcript: messages}, nil
 			}
 			messages = a.appendTurn(messages, reply,
 				`[error] `+perr.Error()+` — reply with EXACTLY ONE JSON object: {"thought":"...","tool":"<tool>","args":{...}}`)
@@ -142,7 +154,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		}
 
 		if call.Tool == "done" {
-			return Result{Done: true, Summary: doneSummary(call.Args), Steps: step, Stop: StopDone, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
+			return Result{Done: true, Summary: doneSummary(call.Args), Steps: step, Stop: StopDone, EditedFiles: editedFiles, EditAttribution: editAttribution, OutputCanonicalSHA: outputCanonical, Transcript: messages}, nil
 		}
 
 		// No-progress detector: the identical (tool, args) recurring more than
@@ -151,7 +163,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		// unattended run can't burn its budget looping.
 		sig := call.Tool + "\x00" + string(call.Args)
 		if sigCount[sig]++; sigCount[sig] > a.cfg.MaxRepeat {
-			return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
+			return Result{Stop: StopNoProgress, Steps: step, EditedFiles: editedFiles, EditAttribution: editAttribution, OutputCanonicalSHA: outputCanonical, Transcript: messages}, nil
 		}
 
 		obs, terr := a.tools.Dispatch(ctx, call.Tool, call.Args)
@@ -179,7 +191,7 @@ func (a *Agent) Run(ctx context.Context, task string) (Result, error) {
 		}
 		messages = a.appendTurn(messages, reply, fmt.Sprintf("[%s]\n%s", call.Tool, obs))
 	}
-	return Result{Stop: StopBudget, Steps: a.cfg.MaxSteps, EditedFiles: editedFiles, EditAttribution: editAttribution, Transcript: messages}, nil
+	return Result{Stop: StopBudget, Steps: a.cfg.MaxSteps, EditedFiles: editedFiles, EditAttribution: editAttribution, OutputCanonicalSHA: outputCanonical, Transcript: messages}, nil
 }
 
 // appendTurn records the assistant reply + the observation, trimming the transcript
