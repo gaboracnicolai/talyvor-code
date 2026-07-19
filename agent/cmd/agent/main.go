@@ -707,6 +707,16 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 							fmt.Fprintf(stdout, "  attributed %d surviving generation(s) to the PR\n", n)
 						}
 					}
+					// H5 artifact commit (same survival set; the disk==canonical rule decides —
+					// iterative tool-call replies essentially never equal a file's bytes, and then
+					// nothing commits). Flag-gated + best-effort — NEVER fails the PR.
+					if cfg.CommitArtifact {
+						if committed, cerr := committedDiffFiles(); cerr != nil {
+							fmt.Fprintf(stderr, "! artifact: committed diff unavailable: %v (skipped)\n", cerr)
+						} else if n := commitArtifacts(ctx, cfg, stderr, lc, result.EditAttribution, result.OutputCanonicalSHA, committed, workspaceRoot); n > 0 {
+							fmt.Fprintf(stdout, "  committed %d buildable-artifact manifest(s) to Lens\n", n)
+						}
+					}
 				}
 			}
 		}
@@ -875,6 +885,26 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 					fmt.Fprintf(stderr, "! attribution: committed diff unavailable: %v (skipped)\n", cerr)
 				} else if n := attributePR(ctx, cfg, stderr, lc, singlePassLastWriters(appliedChanges, healAttribution), committed, url); n > 0 {
 					fmt.Fprintf(stdout, "  attributed %d surviving generation(s) to the PR\n", n)
+				}
+			}
+			// H5 artifact commit: for each surviving generation whose file on disk STILL byte-equals
+			// its canonical content, commit the module manifest (Lens folds the captured content
+			// hash). Phase-2 generations carry their canonical bytes as NewContent; heal repairs
+			// have no whole-file canonical and are skipped by the rule. Flag-gated + best-effort —
+			// NEVER fails the PR.
+			if cfg.CommitArtifact {
+				if committed, cerr := committedDiffFiles(); cerr != nil {
+					fmt.Fprintf(stderr, "! artifact: committed diff unavailable: %v (skipped)\n", cerr)
+				} else {
+					canonical := make(map[string]string, len(appliedChanges))
+					for _, c := range appliedChanges {
+						if c.OutputID != "" {
+							canonical[c.OutputID] = sha256Hex([]byte(c.NewContent))
+						}
+					}
+					if n := commitArtifacts(ctx, cfg, stderr, lc, singlePassLastWriters(appliedChanges, healAttribution), canonical, committed, workspaceRoot); n > 0 {
+						fmt.Fprintf(stdout, "  committed %d buildable-artifact manifest(s) to Lens\n", n)
+					}
 				}
 			}
 		}
@@ -1896,19 +1926,10 @@ func truncate(s string, n int) string {
 // executor's response sometimes carries despite the prompt's "no
 // fences" instruction.
 func stripFences(s string) string {
-	out := strings.TrimSpace(s)
-	if strings.HasPrefix(out, "```") {
-		if i := strings.Index(out, "\n"); i >= 0 {
-			out = out[i+1:]
-		}
-	}
-	if j := strings.LastIndex(out, "```"); j >= 0 && strings.TrimSpace(out[j:]) == "```" {
-		out = strings.TrimRight(out[:j], "\n")
-	}
-	if !strings.HasSuffix(out, "\n") {
-		out += "\n"
-	}
-	return out
+	// Delegates to the shared canonical-content implementation — the SAME bytes Lens binds as
+	// output_content_sha256 (lens/canonical.go mirrors talyvor-lens outputverify/content.go). One
+	// implementation in this repo, so the writer and the artifact-commit rule can never drift.
+	return lens.CanonicalContent(s)
 }
 
 // jsonDecode is a one-line wrapper to keep the encoding/json
