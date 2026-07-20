@@ -117,6 +117,28 @@ func GenerateToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+// ResolveServeToken decides the MCP bearer token for a bind. An explicit env token is honoured on any
+// host (the operator chose it and can rotate it by unset/reset + restart). With no explicit token, a
+// LOOPBACK bind auto-generates one for convenience, but a NON-LOOPBACK bind is REFUSED — we never
+// expose an ephemeral, printed-once secret to the network; a LAN operator must set TALYVOR_MCP_TOKEN so
+// the token is deliberate and rotatable. (There is intentionally no live rotation: the token is
+// memory-only and a restart rotates it; a rotate endpoint would be new attack surface on a single-user
+// local server.)
+func ResolveServeToken(envToken, host string) (token string, generated bool, err error) {
+	if t := strings.TrimSpace(envToken); t != "" {
+		return t, false, nil
+	}
+	if !IsLoopbackHost(host) {
+		return "", false, fmt.Errorf("refusing to bind MCP server to non-loopback host %q without an explicit TALYVOR_MCP_TOKEN "+
+			"(an auto-generated token must not be exposed to the network; set TALYVOR_MCP_TOKEN so it is operator-chosen and rotatable)", host)
+	}
+	t, gerr := GenerateToken()
+	if gerr != nil {
+		return "", false, gerr
+	}
+	return t, true, nil
+}
+
 // IsLoopbackHost reports whether host is a loopback interface.
 // `serve` warns loudly when binding anywhere else, since a
 // non-loopback bind exposes the server to other machines (still

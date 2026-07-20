@@ -4,8 +4,58 @@
 
 import * as vscode from "vscode";
 import { LensConfig } from "./lens/types";
+import {
+  SECRET_KEYS,
+  loadSecrets,
+  migrateSecrets,
+  type PlaintextStore,
+  type SecretKey,
+  type SecretStore,
+} from "./secrets-pure";
 
 const SECTION = "talyvor";
+
+// Credentials live in SecretStorage (the OS keychain), never in plaintext settings. getLensConfig is
+// synchronous and called from ~25 sites, so the migrated secrets are cached here at activation and
+// served synchronously; initSecrets (async) refreshes the cache. Empty until initSecrets runs — the
+// reader falls back to any legacy plaintext so a not-yet-migrated install still works.
+let secretCache: Record<SecretKey, string> = {
+  lensApiKey: "",
+  trackApiKey: "",
+  docsApiKey: "",
+  githubToken: "",
+};
+
+// vscodeSecretStore / vscodePlaintextStore bind the pure interfaces to the real VS Code APIs.
+function vscodeSecretStore(secrets: vscode.SecretStorage): SecretStore {
+  return {
+    get: (k) => Promise.resolve(secrets.get(k)),
+    store: (k, v) => Promise.resolve(secrets.store(k, v)),
+    delete: (k) => Promise.resolve(secrets.delete(k)),
+  };
+}
+
+function vscodePlaintextStore(): PlaintextStore {
+  return {
+    read: (k) => vscode.workspace.getConfiguration(SECTION).get<string>(k, ""),
+    // Remove the plaintext from EVERY scope it might be persisted in (Global + Workspace +
+    // WorkspaceFolder), so a synced/committed copy can't linger. undefined deletes the key.
+    clear: async (k) => {
+      const cfg = vscode.workspace.getConfiguration(SECTION);
+      for (const target of [
+        vscode.ConfigurationTarget.Global,
+        vscode.ConfigurationTarget.Workspace,
+        vscode.ConfigurationTarget.WorkspaceFolder,
+      ]) {
+        try {
+          await cfg.update(k, undefined, target);
+        } catch {
+          // updating a scope that doesn't apply (e.g. WorkspaceFolder with no folder) throws — ignore.
+        }
+      }
+    },
+  };
+}
 
 // safeBaseUrl returns raw only if it is a safe Talyvor endpoint, else "". The config is WORKSPACE-scoped,
 // so a hostile repo's .vscode/settings.json could point a URL at an attacker host (with the user's API
@@ -28,20 +78,50 @@ export function safeBaseUrl(raw: string): string {
 }
 
 export class TalyvorConfig {
+  // secret reads the cached SecretStorage value; it falls back to a legacy plaintext setting so an
+  // install whose migration hasn't run yet still authenticates (that plaintext is cleared the moment
+  // initSecrets runs). The cache is authoritative post-migration.
+  private static secret(cfg: vscode.WorkspaceConfiguration, key: SecretKey): string {
+    return secretCache[key] || cfg.get<string>(key, "");
+  }
+
   static getLensConfig(): LensConfig {
     const cfg = vscode.workspace.getConfiguration(SECTION);
     return {
       url: safeBaseUrl(cfg.get<string>("lensUrl", "")),
-      apiKey: cfg.get<string>("lensApiKey", ""),
+      apiKey: this.secret(cfg, "lensApiKey"),
       workspaceId: cfg.get<string>("workspaceId", ""),
       activeIssue: cfg.get<string>("activeIssue", ""),
       model: cfg.get<string>("model", "claude-haiku-4-6"),
       trackUrl: safeBaseUrl(cfg.get<string>("trackUrl", "")),
-      trackApiKey: cfg.get<string>("trackApiKey", ""),
+      trackApiKey: this.secret(cfg, "trackApiKey"),
       docsUrl: safeBaseUrl(cfg.get<string>("docsUrl", "")),
-      docsApiKey: cfg.get<string>("docsApiKey", ""),
+      docsApiKey: this.secret(cfg, "docsApiKey"),
       enableCompletions: cfg.get<boolean>("enableCompletions", true),
     };
+  }
+
+  // githubToken returns the GitHub PAT from SecretStorage (fallback: legacy plaintext, then
+  // $GITHUB_TOKEN). Used by the PR creator, which previously read the plaintext setting directly.
+  static githubToken(): string {
+    const cfg = vscode.workspace.getConfiguration(SECTION);
+    const fromSecret = this.secret(cfg, "githubToken").trim();
+    if (fromSecret !== "") return fromSecret;
+    return (process.env.GITHUB_TOKEN ?? "").trim();
+  }
+
+  // initSecrets runs the one-time plaintext→SecretStorage migration, then loads every credential into
+  // the synchronous cache. Idempotent and loss-free (see secrets-pure). Returns the count migrated so
+  // the caller can surface a one-time notice. Call it BEFORE building any client.
+  static async initSecrets(secrets: vscode.SecretStorage): Promise<number> {
+    const migrated = await migrateSecrets(vscodePlaintextStore(), vscodeSecretStore(secrets));
+    secretCache = await loadSecrets(vscodeSecretStore(secrets));
+    return migrated.length;
+  }
+
+  // secretKeys exposes the credential setting keys so callers can detect a plaintext re-entry.
+  static get secretKeys(): readonly string[] {
+    return SECRET_KEYS;
   }
 
   // setActiveIssue persists to the workspace-scoped config so the

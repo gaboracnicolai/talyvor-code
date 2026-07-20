@@ -48,7 +48,17 @@ import { generateShellCommand } from "./commands/shell-command";
 import { selectModelCommand } from "./commands/model-selector";
 import { reviewPRCommand, reviewSelectionCommand } from "./commands/pr-review";
 
-export function activate(context: vscode.ExtensionContext): void {
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+  // Move any plaintext API keys into SecretStorage and populate the credential cache BEFORE any client
+  // is built, so every synchronous getLensConfig() below sees the migrated keys. One-time notice when
+  // something was actually migrated.
+  const migratedCount = await TalyvorConfig.initSecrets(context.secrets);
+  if (migratedCount > 0) {
+    void vscode.window.showInformationMessage(
+      `Talyvor: moved ${migratedCount} API credential(s) from plaintext settings into the OS keychain (SecretStorage). Your settings.json no longer contains them.`,
+    );
+  }
+
   let config = TalyvorConfig.getLensConfig();
   let lensClient = new LensClient(config.url, config.apiKey);
   let trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
@@ -244,8 +254,13 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(
-    vscode.workspace.onDidChangeConfiguration((e) => {
+    vscode.workspace.onDidChangeConfiguration(async (e) => {
       if (!e.affectsConfiguration("talyvor")) return;
+      // If the user re-typed a credential into settings.json, migrate it back out and refresh the
+      // cache before rebuilding clients (idempotent; a no-op when no plaintext key changed).
+      if (TalyvorConfig.secretKeys.some((k) => e.affectsConfiguration(`talyvor.${k}`))) {
+        await TalyvorConfig.initSecrets(context.secrets);
+      }
       config = TalyvorConfig.getLensConfig();
       lensClient = new LensClient(config.url, config.apiKey);
       trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
