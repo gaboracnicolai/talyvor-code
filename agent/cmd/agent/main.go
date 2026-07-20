@@ -3176,15 +3176,13 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 	// server is never reachable without a secret. A malicious local
 	// page or process can reach 127.0.0.1 but cannot learn this
 	// token, which is what actually closes SEC-1.
-	token := strings.TrimSpace(os.Getenv("TALYVOR_MCP_TOKEN"))
-	generated := false
-	if token == "" {
-		t, err := mcp.GenerateToken()
-		if err != nil {
-			return fmt.Errorf("serve: %w", err)
-		}
-		token = t
-		generated = true
+	// Resolve the bearer token for THIS bind: an explicit TALYVOR_MCP_TOKEN is honoured anywhere; a
+	// loopback bind auto-generates one; a non-loopback bind without an explicit token is refused (fail
+	// closed — an ephemeral, printed-once token must never be exposed to the network). The token is
+	// memory-only; a restart rotates it (there is deliberately no live rotation endpoint).
+	token, generated, err := mcp.ResolveServeToken(os.Getenv("TALYVOR_MCP_TOKEN"), host)
+	if err != nil {
+		return fmt.Errorf("serve: %w", err)
 	}
 
 	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
@@ -3213,8 +3211,9 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 	fmt.Fprintf(stdout, "Talyvor Code MCP server running on %s\n", addr)
 	if generated {
 		fmt.Fprintf(stderr, "MCP auth token (generated): %s\n", token)
+		fmt.Fprintln(stderr, "  This token is held in memory only — to ROTATE it, restart `serve` (or set TALYVOR_MCP_TOKEN for a stable one).")
 	} else {
-		fmt.Fprintln(stderr, "MCP auth token: using TALYVOR_MCP_TOKEN")
+		fmt.Fprintln(stderr, "MCP auth token: using TALYVOR_MCP_TOKEN (rotate by changing the env value and restarting)")
 	}
 	fmt.Fprintln(stderr, "Clients must send: Authorization: Bearer <token>")
 	if !mcp.IsLoopbackHost(host) {

@@ -1,15 +1,27 @@
 {
   "name": "talyvor-code",
   "displayName": "Talyvor Code",
-  "description": "AI coding assistant powered by Talyvor Lens — track AI costs per issue",
+  "description": "AI coding assistant powered by Talyvor Lens \u2014 track AI costs per issue",
   "version": "0.1.0",
   "publisher": "talyvor",
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["AI", "Programming Languages", "Other"],
-  "keywords": ["ai", "copilot", "coding assistant", "talyvor", "lens"],
-  "activationEvents": ["onStartupFinished"],
+  "categories": [
+    "AI",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "ai",
+    "copilot",
+    "coding assistant",
+    "talyvor",
+    "lens"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
@@ -23,7 +35,8 @@
         "talyvor.lensApiKey": {
           "type": "string",
           "default": "",
-          "description": "Talyvor Lens API key"
+          "description": "Talyvor Lens API key. DEPRECATED as a storage location: on activation this value is moved into the OS keychain (SecretStorage) and cleared from settings. Set it here once to migrate, or it will be migrated automatically.",
+          "markdownDeprecationMessage": "Stored in the OS keychain (SecretStorage) now; this setting is cleared automatically after migration."
         },
         "talyvor.trackUrl": {
           "type": "string",
@@ -33,22 +46,25 @@
         "talyvor.trackApiKey": {
           "type": "string",
           "default": "",
-          "description": "Talyvor Track API key"
+          "description": "Talyvor Track API key. DEPRECATED storage location \u2014 migrated to the OS keychain (SecretStorage) on activation and cleared from settings.",
+          "markdownDeprecationMessage": "Stored in the OS keychain (SecretStorage) now; this setting is cleared automatically after migration."
         },
         "talyvor.docsUrl": {
           "type": "string",
           "default": "",
-          "description": "Talyvor Docs URL (optional — enables doc hover + panel)"
+          "description": "Talyvor Docs URL (optional \u2014 enables doc hover + panel)"
         },
         "talyvor.docsApiKey": {
           "type": "string",
           "default": "",
-          "description": "Talyvor Docs API key"
+          "description": "Talyvor Docs API key. DEPRECATED storage location \u2014 migrated to the OS keychain (SecretStorage) on activation and cleared from settings.",
+          "markdownDeprecationMessage": "Stored in the OS keychain (SecretStorage) now; this setting is cleared automatically after migration."
         },
         "talyvor.githubToken": {
           "type": "string",
           "default": "",
-          "description": "GitHub personal-access token used for `Create PR` from the agent panel (falls back to $GITHUB_TOKEN). Requires `repo` scope."
+          "description": "GitHub personal-access token for `Create PR` (falls back to $GITHUB_TOKEN). Requires `repo` scope. DEPRECATED storage location \u2014 migrated to the OS keychain (SecretStorage) on activation and cleared from settings.",
+          "markdownDeprecationMessage": "Stored in the OS keychain (SecretStorage) now; this setting is cleared automatically after migration."
         },
         "talyvor.workspaceId": {
           "type": "string",
@@ -81,57 +97,192 @@
         "talyvor.agentIterative": {
           "type": "boolean",
           "default": false,
-          "description": "Run the Agent panel with the ITERATIVE observe/act loop (search → read → edit → run → re-plan, retrieval-grounded via the local semantic index) instead of the single-pass plan→approve→apply pipeline. The iterative agent applies edits directly to disk (no per-file approval — review via git); its turn-by-turn trace appears in the 'Talyvor Agent — Iterative' output channel. Opt-in / reversible."
+          "description": "Run the Agent panel with the ITERATIVE observe/act loop (search \u2192 read \u2192 edit \u2192 run \u2192 re-plan, retrieval-grounded via the local semantic index) instead of the single-pass plan\u2192approve\u2192apply pipeline. The iterative agent applies edits directly to disk (no per-file approval \u2014 review via git); its turn-by-turn trace appears in the 'Talyvor Agent \u2014 Iterative' output channel. Opt-in / reversible."
         }
       }
     },
     "commands": [
-      {"command": "talyvor.setActiveIssue", "title": "Talyvor: Set Active Issue"},
-      {"command": "talyvor.showCostDashboard", "title": "Talyvor: Show AI Cost Dashboard"},
-      {"command": "talyvor.testConnection", "title": "Talyvor: Test Lens Connection"},
-      {"command": "talyvor.openChat", "title": "Talyvor: Open AI Chat"},
-      {"command": "talyvor.explainCode", "title": "Talyvor: Explain Code"},
-      {"command": "talyvor.fixError", "title": "Talyvor: Fix Error"},
-      {"command": "talyvor.refactorCode", "title": "Talyvor: Refactor Code"},
-      {"command": "talyvor.generateTests", "title": "Talyvor: Generate Tests"},
-      {"command": "talyvor.generateTestsForFile", "title": "Talyvor: Generate Tests for File"},
-      {"command": "talyvor.startAgentTask", "title": "Talyvor: Start Agent Task"},
-      {"command": "talyvor.agentFromIssue", "title": "Talyvor: Run Agent from Active Issue"},
-      {"command": "talyvor.showActiveIssue", "title": "Talyvor: Show Active Issue"},
-      {"command": "talyvor.createIssueFromCode", "title": "Talyvor: Create Track Issue from Code"},
-      {"command": "talyvor.openDocs", "title": "Talyvor: Open Docs"},
-      {"command": "talyvor.searchDocs", "title": "Talyvor: Search in Docs"},
-      {"command": "talyvor.askDocs", "title": "Talyvor: Ask Docs"},
-      {"command": "talyvor.linkDocToIssue", "title": "Talyvor: Link Docs Page to Active Issue"},
-      {"command": "talyvor.generateShellCommand", "title": "Talyvor: Generate Shell Command"},
-      {"command": "talyvor.selectModel", "title": "Talyvor: Select AI Model"},
-      {"command": "talyvor.reviewPR", "title": "Talyvor: Review Current PR"},
-      {"command": "talyvor.reviewSelection", "title": "Talyvor: Review Selected Code"},
-      {"command": "talyvor.generateContext", "title": "Talyvor: Generate Project Context"},
-      {"command": "talyvor.buildIndex", "title": "Talyvor: Build Semantic Index"},
-      {"command": "talyvor.setScope", "title": "Talyvor: Set Context Scope"}
+      {
+        "command": "talyvor.setActiveIssue",
+        "title": "Talyvor: Set Active Issue"
+      },
+      {
+        "command": "talyvor.showCostDashboard",
+        "title": "Talyvor: Show AI Cost Dashboard"
+      },
+      {
+        "command": "talyvor.testConnection",
+        "title": "Talyvor: Test Lens Connection"
+      },
+      {
+        "command": "talyvor.openChat",
+        "title": "Talyvor: Open AI Chat"
+      },
+      {
+        "command": "talyvor.explainCode",
+        "title": "Talyvor: Explain Code"
+      },
+      {
+        "command": "talyvor.fixError",
+        "title": "Talyvor: Fix Error"
+      },
+      {
+        "command": "talyvor.refactorCode",
+        "title": "Talyvor: Refactor Code"
+      },
+      {
+        "command": "talyvor.generateTests",
+        "title": "Talyvor: Generate Tests"
+      },
+      {
+        "command": "talyvor.generateTestsForFile",
+        "title": "Talyvor: Generate Tests for File"
+      },
+      {
+        "command": "talyvor.startAgentTask",
+        "title": "Talyvor: Start Agent Task"
+      },
+      {
+        "command": "talyvor.agentFromIssue",
+        "title": "Talyvor: Run Agent from Active Issue"
+      },
+      {
+        "command": "talyvor.showActiveIssue",
+        "title": "Talyvor: Show Active Issue"
+      },
+      {
+        "command": "talyvor.createIssueFromCode",
+        "title": "Talyvor: Create Track Issue from Code"
+      },
+      {
+        "command": "talyvor.openDocs",
+        "title": "Talyvor: Open Docs"
+      },
+      {
+        "command": "talyvor.searchDocs",
+        "title": "Talyvor: Search in Docs"
+      },
+      {
+        "command": "talyvor.askDocs",
+        "title": "Talyvor: Ask Docs"
+      },
+      {
+        "command": "talyvor.linkDocToIssue",
+        "title": "Talyvor: Link Docs Page to Active Issue"
+      },
+      {
+        "command": "talyvor.generateShellCommand",
+        "title": "Talyvor: Generate Shell Command"
+      },
+      {
+        "command": "talyvor.selectModel",
+        "title": "Talyvor: Select AI Model"
+      },
+      {
+        "command": "talyvor.reviewPR",
+        "title": "Talyvor: Review Current PR"
+      },
+      {
+        "command": "talyvor.reviewSelection",
+        "title": "Talyvor: Review Selected Code"
+      },
+      {
+        "command": "talyvor.generateContext",
+        "title": "Talyvor: Generate Project Context"
+      },
+      {
+        "command": "talyvor.buildIndex",
+        "title": "Talyvor: Build Semantic Index"
+      },
+      {
+        "command": "talyvor.setScope",
+        "title": "Talyvor: Set Context Scope"
+      }
     ],
     "menus": {
       "editor/context": [
-        {"command": "talyvor.explainCode", "group": "talyvor@1", "when": "editorHasSelection"},
-        {"command": "talyvor.fixError", "group": "talyvor@2"},
-        {"command": "talyvor.refactorCode", "group": "talyvor@3", "when": "editorHasSelection"},
-        {"command": "talyvor.generateTests", "group": "talyvor@4", "when": "editorHasSelection"},
-        {"command": "talyvor.generateTestsForFile", "group": "talyvor@5"},
-        {"command": "talyvor.startAgentTask", "group": "talyvor@6"},
-        {"command": "talyvor.createIssueFromCode", "group": "talyvor@7", "when": "editorHasSelection"},
-        {"command": "talyvor.searchDocs", "group": "talyvor@8"},
-        {"command": "talyvor.askDocs", "group": "talyvor@9", "when": "editorHasSelection"},
-        {"command": "talyvor.reviewSelection", "group": "talyvor@10", "when": "editorHasSelection"}
+        {
+          "command": "talyvor.explainCode",
+          "group": "talyvor@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "talyvor.fixError",
+          "group": "talyvor@2"
+        },
+        {
+          "command": "talyvor.refactorCode",
+          "group": "talyvor@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "talyvor.generateTests",
+          "group": "talyvor@4",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "talyvor.generateTestsForFile",
+          "group": "talyvor@5"
+        },
+        {
+          "command": "talyvor.startAgentTask",
+          "group": "talyvor@6"
+        },
+        {
+          "command": "talyvor.createIssueFromCode",
+          "group": "talyvor@7",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "talyvor.searchDocs",
+          "group": "talyvor@8"
+        },
+        {
+          "command": "talyvor.askDocs",
+          "group": "talyvor@9",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "talyvor.reviewSelection",
+          "group": "talyvor@10",
+          "when": "editorHasSelection"
+        }
       ]
     },
     "keybindings": [
-      {"command": "talyvor.openChat", "key": "ctrl+shift+l", "mac": "cmd+shift+l"},
-      {"command": "talyvor.explainCode", "key": "ctrl+shift+e", "mac": "cmd+shift+e", "when": "editorHasSelection"},
-      {"command": "talyvor.fixError", "key": "ctrl+shift+f1", "mac": "cmd+shift+f1", "when": "editorTextFocus"},
-      {"command": "talyvor.generateTests", "key": "ctrl+shift+t", "mac": "cmd+shift+t", "when": "editorTextFocus"},
-      {"command": "talyvor.startAgentTask", "key": "ctrl+shift+a", "mac": "cmd+shift+a"},
-      {"command": "talyvor.searchDocs", "key": "ctrl+shift+d", "mac": "cmd+shift+d"}
+      {
+        "command": "talyvor.openChat",
+        "key": "ctrl+shift+l",
+        "mac": "cmd+shift+l"
+      },
+      {
+        "command": "talyvor.explainCode",
+        "key": "ctrl+shift+e",
+        "mac": "cmd+shift+e",
+        "when": "editorHasSelection"
+      },
+      {
+        "command": "talyvor.fixError",
+        "key": "ctrl+shift+f1",
+        "mac": "cmd+shift+f1",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "talyvor.generateTests",
+        "key": "ctrl+shift+t",
+        "mac": "cmd+shift+t",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "talyvor.startAgentTask",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a"
+      },
+      {
+        "command": "talyvor.searchDocs",
+        "key": "ctrl+shift+d",
+        "mac": "cmd+shift+d"
+      }
     ]
   },
   "scripts": {

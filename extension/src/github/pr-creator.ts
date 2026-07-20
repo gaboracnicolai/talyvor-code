@@ -9,6 +9,7 @@
 // handles the QuickPick UX; this file is the IO layer.
 
 import * as vscode from "vscode";
+import { TalyvorConfig } from "../config";
 import { execFile } from "child_process";
 import { promisify } from "util";
 import {
@@ -87,16 +88,11 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
   return stdout.trim();
 }
 
-// resolveToken reads the token from the `talyvor.githubToken`
-// setting (workspace-scoped) and falls back to GITHUB_TOKEN.
-// Returns empty when neither is set; callers must prompt or
-// error out cleanly.
+// resolveToken reads the GitHub token from SecretStorage (via the credential cache), falling back to
+// any legacy plaintext setting and then $GITHUB_TOKEN. Returns empty when none is set; callers must
+// prompt or error out cleanly. The keychain read lives in TalyvorConfig so this stays synchronous.
 export function resolveToken(): string {
-  const setting = vscode.workspace
-    .getConfiguration("talyvor")
-    .get<string>("githubToken", "");
-  if (setting.trim() !== "") return setting.trim();
-  return (process.env.GITHUB_TOKEN ?? "").trim();
+  return TalyvorConfig.githubToken();
 }
 
 // createPR posts to api.github.com/repos/<owner>/<repo>/pulls.
