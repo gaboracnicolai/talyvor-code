@@ -79,7 +79,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&docsKey, "docs-key", "", "Docs API key (or TALYVOR_DOCS_API_KEY)")
 	fs.StringVar(&workspaceID, "workspace", "", "Workspace ID (or TALYVOR_WORKSPACE_ID)")
 	fs.StringVar(&issue, "issue", "", "Active issue identifier, e.g. ENG-42 (or TALYVOR_ISSUE)")
-	fs.StringVar(&model, "model", "", "Model (default claude-haiku-4-6)")
+	fs.StringVar(&model, "model", "", "Model (default claude-haiku-4-5)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ FLAGS
   --docs-key        Docs API key (or TALYVOR_DOCS_API_KEY)
   --workspace       Workspace ID (or TALYVOR_WORKSPACE_ID)
   --issue           Active issue, e.g. ENG-42 (or TALYVOR_ISSUE)
-  --model           Model (default claude-haiku-4-6)`)
+  --model           Model (default claude-haiku-4-5)`)
 }
 
 func runCheck(w io.Writer, cfg config.Config) error {

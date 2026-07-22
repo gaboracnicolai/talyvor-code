@@ -30,7 +30,7 @@ func TestComplete_SendsAttributionHeaders(t *testing.T) {
 	c := New(srv.URL, "tlv_k")
 	out, err := c.Complete(context.Background(),
 		[]Message{{Role: "user", Content: "say hi"}},
-		"claude-haiku-4-6", "chat", "ws-1", "ENG-42")
+		"claude-haiku-4-5", "chat", "ws-1", "ENG-42")
 	if err != nil {
 		t.Fatalf("Complete: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestCompleteStream_HandlesDoneOnly(t *testing.T) {
 	go func() {
 		_ = c.CompleteStream(context.Background(),
 			[]Message{{Role: "user", Content: "x"}},
-			"claude-haiku-4-6", "chat", "ws-1", "i",
+			"claude-haiku-4-5", "chat", "ws-1", "i",
 			chunks)
 	}()
 	got := []StreamChunk{}
@@ -148,7 +148,7 @@ func TestCompleteStream_BubblesErrorEvent(t *testing.T) {
 	go func() {
 		_ = c.CompleteStream(context.Background(),
 			[]Message{{Role: "user", Content: "x"}},
-			"claude-haiku-4-6", "chat", "ws-1", "i",
+			"claude-haiku-4-5", "chat", "ws-1", "i",
 			chunks)
 	}()
 	var sawErr bool
@@ -186,7 +186,7 @@ func TestCompleteStream_ContextCancelStopsStream(t *testing.T) {
 	go func() {
 		_ = c.CompleteStream(ctx,
 			[]Message{{Role: "user", Content: "x"}},
-			"claude-haiku-4-6", "chat", "ws-1", "i",
+			"claude-haiku-4-5", "chat", "ws-1", "i",
 			chunks)
 	}()
 	// Drain a couple of chunks then cancel.
@@ -288,7 +288,7 @@ func TestCompleteAuto_RoutesOpenAIVsAnthropic(t *testing.T) {
 		t.Fatal("expected at least one OpenAI route hit")
 	}
 	hitAnthropic = false
-	for _, m := range []string{"claude-haiku-4-6", "claude-sonnet-4-6", "mistral-large"} {
+	for _, m := range []string{"claude-haiku-4-5", "claude-sonnet-4-6", "mistral-large"} {
 		chunks := make(chan StreamChunk, StreamChunkBuffer)
 		go func() {
 			_ = c.CompleteAuto(context.Background(), nil, m, "chat", "ws-1", "i", chunks)
@@ -307,7 +307,7 @@ func TestIsOpenAIModel(t *testing.T) {
 			t.Errorf("expected OpenAI: %s", m)
 		}
 	}
-	for _, m := range []string{"claude-haiku-4-6", "mistral-large", "llama-3.1"} {
+	for _, m := range []string{"claude-haiku-4-5", "mistral-large", "llama-3.1"} {
 		if isOpenAIModel(m) {
 			t.Errorf("expected non-OpenAI: %s", m)
 		}
@@ -328,5 +328,28 @@ func TestComplete_BubblesLensErrors(t *testing.T) {
 			t.Errorf("status %d: expected lens error, got %v", code, err)
 		}
 		srv.Close()
+	}
+}
+
+// TestEstimateCostUSD pins the estimate table to the Lens catalog rates
+// (internal/catalog/seed.go is the source of truth; Lens reconciles
+// authoritatively). The haiku bucket is the DEFAULT case, so it also
+// prices unknown models — it must carry the real claude-haiku-4-5 rates
+// (0.80/4.00 per 1M), not the retired 0.25/1.25 pair that under-reported
+// estimates ~3x.
+func TestEstimateCostUSD(t *testing.T) {
+	cases := []struct {
+		model string
+		want  float64
+	}{
+		{"claude-haiku-4-5", 0.80 + 4.00}, // 1M in + 1M out at catalog rates
+		{"claude-sonnet-4-6", 3.00 + 15.00},
+		{"totally-unknown", 0.80 + 4.00}, // unknown falls back to the haiku bucket
+	}
+	for _, tc := range cases {
+		got := EstimateCostUSD(tc.model, 1_000_000, 1_000_000)
+		if diff := got - tc.want; diff > 1e-9 || diff < -1e-9 {
+			t.Errorf("EstimateCostUSD(%s) = %v, want %v", tc.model, got, tc.want)
+		}
 	}
 }

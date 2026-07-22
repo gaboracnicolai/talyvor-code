@@ -159,7 +159,7 @@ export class TalyvorCompletionProvider
       [
         { role: "user", content: `${systemPrompt}\n\n${userPrompt}` },
       ],
-      cfg.model || "claude-haiku-4-6",
+      cfg.model || "claude-haiku-4-5",
       "completion",
       cfg.workspaceId,
       cfg.activeIssue,

@@ -27,7 +27,7 @@ type ModelProfile struct {
 // don't sprinkle literals through the codebase.
 var KnownModels = []ModelProfile{
 	{
-		ID:          "claude-haiku-4-6",
+		ID:          "claude-haiku-4-5",
 		DisplayName: "Claude Haiku",
 		Provider:    "Anthropic",
 		SpeedTier:   "fast",
@@ -113,13 +113,13 @@ func ListModels() []ModelProfile {
 func DefaultForCommand(command string) string {
 	switch strings.ToLower(strings.TrimSpace(command)) {
 	case "completion", "completions":
-		return "claude-haiku-4-6"
+		return "claude-haiku-4-5"
 	case "shell", "shell-explain", "shell-fix":
-		return "claude-haiku-4-6"
+		return "claude-haiku-4-5"
 	case "commit":
-		return "claude-haiku-4-6"
+		return "claude-haiku-4-5"
 	case "ask":
-		return "claude-haiku-4-6"
+		return "claude-haiku-4-5"
 	case "chat":
 		return "claude-sonnet-4-6"
 	case "test", "tests", "test-gen", "test-generation":
@@ -132,7 +132,7 @@ func DefaultForCommand(command string) string {
 	// Conservative fallback: Haiku is cheap; if we don't know
 	// the command we shouldn't surprise the user with a
 	// premium-tier bill.
-	return "claude-haiku-4-6"
+	return "claude-haiku-4-5"
 }
 
 // ResolveModel applies the documented priority:

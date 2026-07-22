@@ -47,7 +47,7 @@ In your JetBrains IDE:
 | Lens API key | Your `tlv_…` key |
 | Workspace ID | The workspace this IDE belongs to |
 | Active issue | e.g. `ENG-42` — every call gets attributed |
-| Model | Defaults to `claude-haiku-4-6`; pick any Lens-supported model |
+| Model | Defaults to `claude-haiku-4-5`; pick any Lens-supported model |
 
 ## Features
 

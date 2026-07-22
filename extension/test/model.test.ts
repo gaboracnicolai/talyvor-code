@@ -18,7 +18,7 @@ function assert(cond: unknown, msg: string): asserts cond {
 function testListContainsExpectedModels(): void {
   const ids = listModels().map((m) => m.id);
   for (const want of [
-    "claude-haiku-4-6",
+    "claude-haiku-4-5",
     "claude-sonnet-4-6",
     "claude-opus-4-6",
     "gpt-4o",
@@ -45,18 +45,18 @@ function testDefaultsMatchAgentBehavior(): void {
   // These pairings must match agent/internal/model/selector.go
   // exactly so the CLI and extension don't drift.
   const cases: Record<string, string> = {
-    completion: "claude-haiku-4-6",
-    completions: "claude-haiku-4-6",
-    shell: "claude-haiku-4-6",
-    commit: "claude-haiku-4-6",
-    ask: "claude-haiku-4-6",
+    completion: "claude-haiku-4-5",
+    completions: "claude-haiku-4-5",
+    shell: "claude-haiku-4-5",
+    commit: "claude-haiku-4-5",
+    ask: "claude-haiku-4-5",
     chat: "claude-sonnet-4-6",
     test: "claude-sonnet-4-6",
     tests: "claude-sonnet-4-6",
     review: "claude-sonnet-4-6",
     run: "claude-sonnet-4-6",
     agent: "claude-sonnet-4-6",
-    unknown: "claude-haiku-4-6",
+    unknown: "claude-haiku-4-5",
   };
   for (const [cmd, want] of Object.entries(cases)) {
     const got = defaultForCommand(cmd);
@@ -70,7 +70,7 @@ function testResolveModelPriority(): void {
   // 2. Default applied when setting is empty
   assert(resolveModel("", "tests") === "claude-sonnet-4-6", "default for tests");
   // 3. Whitespace-only setting treated as empty
-  assert(resolveModel("   ", "completions") === "claude-haiku-4-6", "whitespace → default");
+  assert(resolveModel("   ", "completions") === "claude-haiku-4-5", "whitespace → default");
   // 4. Trimmed setting wins
   assert(resolveModel("  gpt-4o  ", "chat") === "gpt-4o", "trim setting");
 }

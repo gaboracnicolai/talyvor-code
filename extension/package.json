@@ -78,9 +78,9 @@
         },
         "talyvor.model": {
           "type": "string",
-          "default": "claude-haiku-4-6",
+          "default": "claude-haiku-4-5",
           "enum": [
-            "claude-haiku-4-6",
+            "claude-haiku-4-5",
             "claude-sonnet-4-6",
             "gpt-4o",
             "gpt-4o-mini",

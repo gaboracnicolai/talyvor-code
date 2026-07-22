@@ -7,7 +7,7 @@ import (
 
 func TestGetModel_KnownReturnsProfile(t *testing.T) {
 	for _, id := range []string{
-		"claude-haiku-4-6",
+		"claude-haiku-4-5",
 		"claude-sonnet-4-6",
 		"claude-opus-4-6",
 		"gpt-4o",
@@ -34,25 +34,25 @@ func TestGetModel_UnknownReturnsErrorWithList(t *testing.T) {
 	if !strings.Contains(err.Error(), "not-a-model") {
 		t.Errorf("error should echo the bad id: %v", err)
 	}
-	if !strings.Contains(err.Error(), "claude-haiku-4-6") {
+	if !strings.Contains(err.Error(), "claude-haiku-4-5") {
 		t.Errorf("error should list valid models: %v", err)
 	}
 }
 
 func TestDefaultForCommand(t *testing.T) {
 	cases := map[string]string{
-		"completion":  "claude-haiku-4-6",
-		"completions": "claude-haiku-4-6",
-		"shell":       "claude-haiku-4-6",
-		"commit":      "claude-haiku-4-6",
-		"ask":         "claude-haiku-4-6",
+		"completion":  "claude-haiku-4-5",
+		"completions": "claude-haiku-4-5",
+		"shell":       "claude-haiku-4-5",
+		"commit":      "claude-haiku-4-5",
+		"ask":         "claude-haiku-4-5",
 		"chat":        "claude-sonnet-4-6",
 		"test":        "claude-sonnet-4-6",
 		"tests":       "claude-sonnet-4-6",
 		"review":      "claude-sonnet-4-6",
 		"run":         "claude-sonnet-4-6",
 		"agent":       "claude-sonnet-4-6",
-		"unknown":     "claude-haiku-4-6", // safe default
+		"unknown":     "claude-haiku-4-5", // safe default
 	}
 	for cmd, want := range cases {
 		if got := DefaultForCommand(cmd); got != want {
@@ -115,7 +115,7 @@ func TestValidate_ReturnsErrorOnUnknown(t *testing.T) {
 
 func TestProvider_IsCorrect(t *testing.T) {
 	cases := map[string]string{
-		"claude-haiku-4-6":  "Anthropic",
+		"claude-haiku-4-5":  "Anthropic",
 		"claude-sonnet-4-6": "Anthropic",
 		"claude-opus-4-6":   "Anthropic",
 		"gpt-4o":            "OpenAI",

@@ -132,7 +132,7 @@ func TestChat_SlashClearAndIssueAffectsState(t *testing.T) {
 		LensAPIKey:  "tlv_k",
 		WorkspaceID: "ws-1",
 		ActiveIssue: "ENG-1",
-		Model:       "claude-haiku-4-6",
+		Model:       "claude-haiku-4-5",
 	}
 	stdin := strings.NewReader("/clear\n/issue ENG-99\nexit\n")
 	var stdout, stderr bytes.Buffer
@@ -163,7 +163,7 @@ func TestChat_SendMessageRoundTrip(t *testing.T) {
 		LensAPIKey:  "tlv_k",
 		WorkspaceID: "ws-1",
 		ActiveIssue: "ENG-42",
-		Model:       "claude-haiku-4-6",
+		Model:       "claude-haiku-4-5",
 	}
 	stdin := strings.NewReader("ping\nexit\n")
 	var stdout, stderr bytes.Buffer
@@ -727,7 +727,7 @@ func TestModels_PrintsTable(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
-		"claude-haiku-4-6", "claude-sonnet-4-6", "claude-opus-4-6",
+		"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-6",
 		"gpt-4o", "gpt-4o-mini", "mistral-large",
 		"Provider", "Speed", "Cost",
 	} {
@@ -849,7 +849,7 @@ func TestShell_PrintsCommandAndUsesHaiku(t *testing.T) {
 	if len(srv.requests) != 1 {
 		t.Fatalf("expected 1 lens request, got %d", len(srv.requests))
 	}
-	if srv.requests[0]["model"] != "claude-haiku-4-6" {
+	if srv.requests[0]["model"] != "claude-haiku-4-5" {
 		t.Errorf("expected haiku, got %v", srv.requests[0]["model"])
 	}
 }
@@ -1487,7 +1487,7 @@ func TestCommit_HappyPathConfirmsAndCommits(t *testing.T) {
 	if err := runCommit(stdin, &stdout, &stderr, config.Load(config.Config{}), nil); err != nil {
 		t.Fatalf("runCommit: %v", err)
 	}
-	if gotModel != "claude-haiku-4-6" {
+	if gotModel != "claude-haiku-4-5" {
 		t.Errorf("expected haiku model, got %v", gotModel)
 	}
 	if !strings.Contains(stdout.String(), "feat: add hello file") {
