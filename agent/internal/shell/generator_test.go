@@ -211,7 +211,7 @@ func TestGenerate_CallsLensWithHaiku(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
-	if gotModel != "claude-haiku-4-6" {
+	if gotModel != "claude-haiku-4-5" {
 		t.Errorf("expected haiku, got %q", gotModel)
 	}
 	if !strings.Contains(cmd, "lsof") {

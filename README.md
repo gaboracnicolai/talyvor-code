@@ -53,7 +53,7 @@ Open VS Code settings (⌘/Ctrl + `,`) and search for **talyvor**:
 
 | Setting | Purpose |
 | --- | --- |
-| `talyvor.lensUrl` | Your Lens URL (e.g. `http://localhost:8080`) |
+| `talyvor.lensUrl` | Your Lens URL (e.g. `https://lens.talyvor.com`, or `http://localhost:8080` for local dev — remote URLs must be https) |
 | `talyvor.lensApiKey` | Lens API key |
 | `talyvor.trackUrl` | (optional) Track base URL for issue lookup |
 | `talyvor.trackApiKey` | (optional) Track API key |
@@ -98,7 +98,7 @@ cd agent && go install ./cmd/agent
 ### Configure
 
 ```bash
-export TALYVOR_LENS_URL=http://your-lens:8080
+export TALYVOR_LENS_URL=https://lens.talyvor.com  # or http://localhost:8080 for local dev (remote URLs must be https)
 export TALYVOR_LENS_API_KEY=tlv_...
 export TALYVOR_WORKSPACE_ID=ws-1
 export TALYVOR_ISSUE=ENG-42

@@ -224,7 +224,7 @@ func CombinedPrefix(rulesPrefix string, pc *ProjectContext) string {
 
 // ─── GenerateContext ─────────────────────────────────
 
-const generatorModel = "claude-haiku-4-6"
+const generatorModel = "claude-haiku-4-5"
 
 // GenerateContext synthesises a starter .talyvor-context from
 // the codebase. Reads the index + README + dependency manifest,

@@ -36,7 +36,7 @@ fi
 cat <<'EOF'
 
 Configure by setting environment variables:
-  export TALYVOR_LENS_URL=http://your-lens:8080
+  export TALYVOR_LENS_URL=https://lens.talyvor.com   # remote URLs must be https; http is allowed only for localhost
   export TALYVOR_LENS_API_KEY=tlv_...
   export TALYVOR_WORKSPACE_ID=ws-1
   export TALYVOR_ISSUE=ENG-42

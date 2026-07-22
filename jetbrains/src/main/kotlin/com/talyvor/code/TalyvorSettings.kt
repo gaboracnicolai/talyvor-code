@@ -40,7 +40,7 @@ class TalyvorSettings : PersistentStateComponent<TalyvorSettings.State> {
         var trackUrl: String = "",
         var workspaceId: String = "",
         var activeIssue: String = "",
-        var model: String = "claude-haiku-4-6"
+        var model: String = "claude-haiku-4-5"
     )
 
     private var state = State()
@@ -158,7 +158,7 @@ class TalyvorSettingsConfigurable : Configurable {
         s.lensApiKey = String(lensApiKeyField.password).trim()
         s.workspaceId = workspaceIdField.text.trim()
         s.activeIssue = activeIssueField.text.trim()
-        s.model = modelField.text.trim().ifEmpty { "claude-haiku-4-6" }
+        s.model = modelField.text.trim().ifEmpty { "claude-haiku-4-5" }
     }
 
     override fun reset() {

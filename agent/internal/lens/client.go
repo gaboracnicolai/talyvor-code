@@ -218,8 +218,9 @@ func EstimateCostUSD(model string, inputTokens, outputTokens int) float64 {
 	case "claude-opus-4-7":
 		inRate, outRate = 15.0, 75.0
 	default:
-		// claude-haiku-4-6 and unknown models fall back to haiku rates.
-		inRate, outRate = 0.25, 1.25
+		// claude-haiku-4-5 and unknown models fall back to haiku rates
+		// (0.80/4.00 per 1M — Lens catalog seed.go is the source of truth).
+		inRate, outRate = 0.80, 4.00
 	}
 	return (float64(inputTokens)*inRate + float64(outputTokens)*outRate) / 1_000_000
 }

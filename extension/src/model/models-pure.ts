@@ -18,7 +18,7 @@ export interface ModelProfile {
 
 export const KNOWN_MODELS: ModelProfile[] = [
   {
-    id: "claude-haiku-4-6",
+    id: "claude-haiku-4-5",
     displayName: "Claude Haiku",
     provider: "Anthropic",
     speedTier: "fast",
@@ -94,7 +94,7 @@ export function defaultForCommand(command: string): string {
     case "shell-fix":
     case "commit":
     case "ask":
-      return "claude-haiku-4-6";
+      return "claude-haiku-4-5";
     case "chat":
     case "test":
     case "tests":
@@ -108,7 +108,7 @@ export function defaultForCommand(command: string): string {
     case "agent-execute":
       return "claude-sonnet-4-6";
   }
-  return "claude-haiku-4-6";
+  return "claude-haiku-4-5";
 }
 
 // resolveModel applies the documented priority — settings ≈ env

@@ -9,7 +9,7 @@ import type { LensConfig } from "../lens/types";
 import { CostTracker, estimateCostUSD } from "../providers/cost-tracker";
 import { buildShellPrompt, detectOS, detectShell, isCommandSafe, stripGenerated } from "./shell-pure";
 
-const SHELL_MODEL = "claude-haiku-4-6";
+const SHELL_MODEL = "claude-haiku-4-5";
 
 export async function generateShellCommand(
   lens: LensClient,

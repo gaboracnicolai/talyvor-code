@@ -67,7 +67,7 @@ func TestAsk_InjectsRetrievedContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	cfg := config.Config{LensURL: srv.URL, LensAPIKey: "k", WorkspaceID: "ws", Model: "claude-haiku-4-6"}
+	cfg := config.Config{LensURL: srv.URL, LensAPIKey: "k", WorkspaceID: "ws", Model: "claude-haiku-4-5"}
 	if err := runAsk(io.Discard, cfg, []string{"how", "does", "seeding", "work"}); err != nil {
 		t.Fatalf("runAsk: %v", err)
 	}

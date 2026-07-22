@@ -59,7 +59,7 @@ export async function generateContextCommand(
         const userMsg = SYSTEM_PROMPT + "\n\n" + summary;
         const res = await lens.completeWithUsage(
           [{ role: "user", content: userMsg }],
-          "claude-haiku-4-6",
+          "claude-haiku-4-5",
           "context-generate",
           config.workspaceId,
           config.activeIssue,

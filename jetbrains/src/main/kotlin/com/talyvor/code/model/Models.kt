@@ -28,7 +28,7 @@ data class ModelProfile(
 )
 
 object Models {
-    const val DEFAULT_MODEL: String = "claude-haiku-4-6"
+    const val DEFAULT_MODEL: String = "claude-haiku-4-5"
 
     // KNOWN mirrors KNOWN_MODELS in models-pure.ts exactly (same ids,
     // providers, tiers, order). The VS Code package.json model enum
@@ -37,7 +37,7 @@ object Models {
     // the one the model-picker + tests consume on all surfaces.
     val KNOWN: List<ModelProfile> = listOf(
         ModelProfile(
-            id = "claude-haiku-4-6",
+            id = "claude-haiku-4-5",
             displayName = "Claude Haiku",
             provider = "Anthropic",
             speedTier = SpeedTier.FAST,
@@ -105,7 +105,7 @@ object Models {
         when ((command ?: "").trim().lowercase()) {
             "completion", "completions", "shell", "shell-explain",
             "shell-fix", "commit", "ask",
-            -> "claude-haiku-4-6"
+            -> "claude-haiku-4-5"
             "chat", "test", "tests", "test-gen", "test-generation",
             "review", "code-review", "run", "agent", "agent-plan",
             "agent-execute",

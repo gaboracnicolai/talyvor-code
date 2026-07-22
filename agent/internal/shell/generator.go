@@ -31,7 +31,7 @@ import (
 // DefaultModel is the historical Haiku pin. Kept exported so the
 // MCP server and other in-process callers have a stable default;
 // the CLI passes its resolved model via the function arguments.
-const DefaultModel = "claude-haiku-4-6"
+const DefaultModel = "claude-haiku-4-5"
 
 // DetectShell extracts the shell binary name from $SHELL. Returns
 // "bash" when nothing usable is in the environment so callers

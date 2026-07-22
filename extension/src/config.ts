@@ -92,7 +92,7 @@ export class TalyvorConfig {
       apiKey: this.secret(cfg, "lensApiKey"),
       workspaceId: cfg.get<string>("workspaceId", ""),
       activeIssue: cfg.get<string>("activeIssue", ""),
-      model: cfg.get<string>("model", "claude-haiku-4-6"),
+      model: cfg.get<string>("model", "claude-haiku-4-5"),
       trackUrl: safeBaseUrl(cfg.get<string>("trackUrl", "")),
       trackApiKey: this.secret(cfg, "trackApiKey"),
       docsUrl: safeBaseUrl(cfg.get<string>("docsUrl", "")),
