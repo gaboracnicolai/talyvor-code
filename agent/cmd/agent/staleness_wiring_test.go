@@ -29,7 +29,10 @@ func TestLoadRetriever_WarnsWhenStale(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := config.Config{WorkspaceID: "ws"}
-	lc := lens.New("http://127.0.0.1:1", "k") // never dialed on the load/staleness path
+	lc, lerr := lens.New("http://127.0.0.1:1", "k")
+	if lerr != nil {
+		t.Fatalf("lens.New: %v", lerr)
+	} // never dialed on the load/staleness path
 
 	// Fresh: a retriever is returned and NO staleness warning is written.
 	var fresh strings.Builder

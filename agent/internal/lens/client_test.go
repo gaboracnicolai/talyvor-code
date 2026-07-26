@@ -11,10 +11,10 @@ import (
 )
 
 func TestIsConfigured(t *testing.T) {
-	if New("", "").IsConfigured() {
+	if mustNew(t, "", "").IsConfigured() {
 		t.Fatal("expected unconfigured for empty url+key")
 	}
-	if !New("http://lens", "tlv_k").IsConfigured() {
+	if !mustNew(t, "https://lens", "tlv_k").IsConfigured() {
 		t.Fatal("expected configured for url+key")
 	}
 }
@@ -27,7 +27,7 @@ func TestComplete_SendsAttributionHeaders(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	out, err := c.Complete(context.Background(),
 		[]Message{{Role: "user", Content: "say hi"}},
 		"claude-haiku-4-5", "chat", "ws-1", "ENG-42")
@@ -52,7 +52,7 @@ func TestComplete_SendsAttributionHeaders(t *testing.T) {
 }
 
 func TestComplete_ErrorsWhenUnconfigured(t *testing.T) {
-	_, err := New("", "").Complete(context.Background(), nil, "m", "f", "w", "i")
+	_, err := mustNew(t, "", "").Complete(context.Background(), nil, "m", "f", "w", "i")
 	if err == nil || !strings.Contains(err.Error(), "not configured") {
 		t.Fatalf("expected unconfigured error, got %v", err)
 	}
@@ -86,7 +86,7 @@ func TestCompleteStream_EmitsAnthropicDeltas(t *testing.T) {
 		`[DONE]`,
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	chunks := make(chan StreamChunk, StreamChunkBuffer)
 	go func() {
 		_ = c.CompleteStream(context.Background(),
@@ -120,7 +120,7 @@ func TestCompleteStream_EmitsAnthropicDeltas(t *testing.T) {
 func TestCompleteStream_HandlesDoneOnly(t *testing.T) {
 	srv := httptest.NewServer(sseAnthropic([]string{`[DONE]`}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	chunks := make(chan StreamChunk, StreamChunkBuffer)
 	go func() {
 		_ = c.CompleteStream(context.Background(),
@@ -143,7 +143,7 @@ func TestCompleteStream_BubblesErrorEvent(t *testing.T) {
 		`[DONE]`,
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	chunks := make(chan StreamChunk, StreamChunkBuffer)
 	go func() {
 		_ = c.CompleteStream(context.Background(),
@@ -180,7 +180,7 @@ func TestCompleteStream_ContextCancelStopsStream(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	ctx, cancel := context.WithCancel(context.Background())
 	chunks := make(chan StreamChunk, StreamChunkBuffer)
 	go func() {
@@ -237,7 +237,7 @@ func TestCompleteStreamOpenAI_EmitsDeltas(t *testing.T) {
 		`[DONE]`,
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	chunks := make(chan StreamChunk, StreamChunkBuffer)
 	go func() {
 		_ = c.CompleteStreamOpenAI(context.Background(),
@@ -274,7 +274,7 @@ func TestCompleteAuto_RoutesOpenAIVsAnthropic(t *testing.T) {
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 
 	for _, m := range []string{"gpt-4o", "gpt-4o-mini", "o1-mini"} {
 		chunks := make(chan StreamChunk, StreamChunkBuffer)
@@ -322,7 +322,7 @@ func TestComplete_BubblesLensErrors(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "denied", code)
 		}))
-		c := New(srv.URL, "tlv_k")
+		c := mustNew(t, srv.URL, "tlv_k")
 		_, err := c.Complete(context.Background(), nil, "m", "f", "w", "i")
 		if err == nil || !strings.Contains(err.Error(), "lens:") {
 			t.Errorf("status %d: expected lens error, got %v", code, err)
@@ -352,4 +352,17 @@ func TestEstimateCostUSD(t *testing.T) {
 			t.Errorf("EstimateCostUSD(%s) = %v, want %v", tc.model, got, tc.want)
 		}
 	}
+}
+
+// mustNew builds a client for a test fixture and fails loudly if the URL is one the
+// construction guard refuses. Tests use httptest servers (loopback) and the empty URL, both
+// of which are legal — so a failure here means a fixture drifted onto an address that would
+// leak the key, which is worth failing on rather than papering over.
+func mustNew(t *testing.T, url, key string) *Client {
+	t.Helper()
+	c, err := New(url, key)
+	if err != nil {
+		t.Fatalf("New(%q): %v", url, err)
+	}
+	return c
 }

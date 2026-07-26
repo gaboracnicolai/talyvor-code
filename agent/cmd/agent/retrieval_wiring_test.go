@@ -95,7 +95,11 @@ func captureLens(t *testing.T, captured *string) *lens.Client {
 		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"package x\nfunc F(){}\n"}],"usage":{"input_tokens":1,"output_tokens":1}}`)
 	}))
 	t.Cleanup(srv.Close)
-	return lens.New(srv.URL, "k")
+	c, err := lens.New(srv.URL, "k")
+	if err != nil {
+		t.Fatalf("lens.New: %v", err)
+	}
+	return c
 }
 
 // TestGenerateChange_FeedsRetrievedSiblingContext — the recon's gap #2 fix: the

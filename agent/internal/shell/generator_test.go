@@ -155,7 +155,7 @@ func TestSuggestFix_CallsLensWithErrorContext(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lc := lens.New(srv.URL, "tlv_k")
+	lc := mustLens(t, srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
 	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "ls: unknown option --bogus", "bash", "macOS", "")
 	if err != nil {
@@ -176,7 +176,7 @@ func TestSuggestFix_StripsFencesAndBackticks(t *testing.T) {
 		_, _ = w.Write([]byte("{\"content\":[{\"type\":\"text\",\"text\":\"```bash\\nls -la\\n```\"}],\"usage\":{\"input_tokens\":40,\"output_tokens\":4}}"))
 	}))
 	defer srv.Close()
-	lc := lens.New(srv.URL, "tlv_k")
+	lc := mustLens(t, srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
 	got, err := SuggestFix(context.Background(), lc, cfg, "ls --bogus", "err", "bash", "macOS", "")
 	if err != nil {
@@ -205,7 +205,7 @@ func TestGenerate_CallsLensWithHaiku(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	lc := lens.New(srv.URL, "tlv_k")
+	lc := mustLens(t, srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
 	cmd, cost, err := Generate(context.Background(), lc, cfg, "kill process on port 8080", "zsh", "macOS", "")
 	if err != nil {
@@ -228,7 +228,7 @@ func TestGenerate_StripsFencesAndDescriptions(t *testing.T) {
 		_, _ = w.Write([]byte("{\"content\":[{\"type\":\"text\",\"text\":\"Here is the command:\\n```bash\\ndocker ps -a\\n```\"}],\"usage\":{\"input_tokens\":40,\"output_tokens\":4}}"))
 	}))
 	defer srv.Close()
-	lc := lens.New(srv.URL, "tlv_k")
+	lc := mustLens(t, srv.URL, "tlv_k")
 	cfg := &config.Config{WorkspaceID: "ws-1"}
 	cmd, _, err := Generate(context.Background(), lc, cfg, "list containers", "bash", "macOS", "")
 	if err != nil {
@@ -237,4 +237,15 @@ func TestGenerate_StripsFencesAndDescriptions(t *testing.T) {
 	if cmd != "docker ps -a" {
 		t.Fatalf("expected stripped command, got %q", cmd)
 	}
+}
+
+// mustLens builds a Lens client for a test fixture, failing loudly if the construction
+// guard refuses the URL (see internal/safeurl).
+func mustLens(t *testing.T, url, key string) *lens.Client {
+	t.Helper()
+	c, err := lens.New(url, key)
+	if err != nil {
+		t.Fatalf("lens.New(%q): %v", url, err)
+	}
+	return c
 }

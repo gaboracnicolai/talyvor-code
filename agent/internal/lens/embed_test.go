@@ -31,7 +31,7 @@ func TestEmbed_RoutesThroughLensWithAttribution(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tkey")
+	c := mustNew(t, srv.URL, "tkey")
 	vecs, err := c.Embed(context.Background(), []string{"first", "second"}, "text-embedding-3-small", "embed", "ws1", "ENG-1")
 	if err != nil {
 		t.Fatalf("Embed: %v", err)
@@ -58,7 +58,7 @@ func TestEmbed_RoutesThroughLensWithAttribution(t *testing.T) {
 
 // TestEmbed_NotConfigured — no URL/key ⇒ a clean error, no panic (callers degrade).
 func TestEmbed_NotConfigured(t *testing.T) {
-	if _, err := (New("", "")).Embed(context.Background(), []string{"x"}, "m", "embed", "", ""); err == nil {
+	if _, err := (mustNew(t, "", "")).Embed(context.Background(), []string{"x"}, "m", "embed", "", ""); err == nil {
 		t.Error("Embed on an unconfigured client must error")
 	}
 }
@@ -69,7 +69,7 @@ func TestEmbed_ServerError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
-	if _, err := (New(srv.URL, "k")).Embed(context.Background(), []string{"x"}, "m", "embed", "", ""); err == nil {
+	if _, err := (mustNew(t, srv.URL, "k")).Embed(context.Background(), []string{"x"}, "m", "embed", "", ""); err == nil {
 		t.Error("a 500 from Lens must return an error")
 	}
 }

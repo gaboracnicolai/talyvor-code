@@ -14,10 +14,10 @@ import (
 // url+key the agent is allowed to call into Track without it
 // blowing up (the methods return zero values).
 func TestIsConfigured(t *testing.T) {
-	if New("", "").IsConfigured() {
+	if mustNew(t, "", "").IsConfigured() {
 		t.Fatal("expected unconfigured for empty url+key")
 	}
-	if !New("http://track", "tlv_k").IsConfigured() {
+	if !mustNew(t, "https://track", "tlv_k").IsConfigured() {
 		t.Fatal("expected configured for url+key")
 	}
 }
@@ -27,7 +27,7 @@ func TestGetIssue_Returns404AsNil(t *testing.T) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	got, err := c.GetIssue(context.Background(), "ws-1", "ENG-42")
 	if err != nil {
 		t.Fatalf("GetIssue: unexpected error %v", err)
@@ -46,7 +46,7 @@ func TestGetIssue_DecodesPayload(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"i1","identifier":"ENG-42","title":"Bug","status":"In Progress","description":"d","ai_cost_usd":1.5}`))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	got, err := c.GetIssue(context.Background(), "ws-1", "ENG-42")
 	if err != nil || got == nil {
 		t.Fatalf("GetIssue: err=%v got=%v", err, got)
@@ -74,7 +74,7 @@ func TestAddComment_PostsToCorrectEndpoint(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	if err := c.AddComment(context.Background(), "ws-1", "ENG-42", "agent done"); err != nil {
 		t.Fatalf("AddComment: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestAddComment_UnconfiguredIsNoOp(t *testing.T) {
 	// Unconfigured Track must not error — the agent always tries
 	// to comment but the user may not have set Track up. The CLI
 	// shouldn't fail because of that.
-	c := New("", "")
+	c := mustNew(t, "", "")
 	if err := c.AddComment(context.Background(), "ws-1", "ENG-42", "x"); err != nil {
 		t.Fatalf("AddComment unconfigured: %v", err)
 	}
@@ -116,7 +116,7 @@ func TestListIssues_ReturnsIssuesWithLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	out, err := c.ListIssues(context.Background(), "ws-1", 25)
 	if err != nil {
 		t.Fatalf("ListIssues: %v", err)
@@ -133,7 +133,7 @@ func TestListIssues_ReturnsIssuesWithLimit(t *testing.T) {
 }
 
 func TestListIssues_UnconfiguredReturnsEmpty(t *testing.T) {
-	c := New("", "")
+	c := mustNew(t, "", "")
 	out, err := c.ListIssues(context.Background(), "ws-1", 10)
 	if err != nil {
 		t.Fatalf("ListIssues unconfigured: %v", err)
@@ -141,4 +141,17 @@ func TestListIssues_UnconfiguredReturnsEmpty(t *testing.T) {
 	if len(out) != 0 {
 		t.Fatalf("expected empty, got %d", len(out))
 	}
+}
+
+// mustNew builds a client for a test fixture and fails loudly if the URL is one the
+// construction guard refuses. Tests use httptest servers (loopback) and the empty URL, both
+// of which are legal — so a failure here means a fixture drifted onto an address that would
+// leak the key, which is worth failing on rather than papering over.
+func mustNew(t *testing.T, url, key string) *Client {
+	t.Helper()
+	c, err := New(url, key)
+	if err != nil {
+		t.Fatalf("New(%q): %v", url, err)
+	}
+	return c
 }

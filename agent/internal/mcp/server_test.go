@@ -76,7 +76,11 @@ func newServerForTest(t *testing.T, lensSrv *httptest.Server, trackC *track.Clie
 	cfg := &config.Config{WorkspaceID: "ws-1"}
 	var lc *lens.Client
 	if lensSrv != nil {
-		lc = lens.New(lensSrv.URL, "tlv_k")
+		var lerr error
+		lc, lerr = lens.New(lensSrv.URL, "tlv_k")
+		if lerr != nil {
+			t.Fatalf("lens.New: %v", lerr)
+		}
 	}
 	s := New(lc, trackC, docsC, cfg, "test-0.1")
 	s.SetAuthToken(testToken)

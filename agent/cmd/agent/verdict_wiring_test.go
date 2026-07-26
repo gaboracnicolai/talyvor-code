@@ -15,7 +15,10 @@ import (
 // installs NO observer (the loop's Observer stays nil ⇒ byte-identical to before); ON
 // installs one.
 func TestVerdictObserverFor_GatedOnFlag(t *testing.T) {
-	lc := lens.New("http://127.0.0.1:1", "k")
+	lc, lerr := lens.New("http://127.0.0.1:1", "k")
+	if lerr != nil {
+		t.Fatalf("lens.New: %v", lerr)
+	}
 	if o := verdictObserverFor(context.Background(), config.Config{ReportVerdicts: false}, lc, nil); o != nil {
 		t.Error("ReportVerdicts=false must install NO observer (byte-identical loop)")
 	}
@@ -85,7 +88,11 @@ func TestLensModel_CapturesOutputIdFromHeader(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	m := newLensModel(lens.New(srv.URL, "k"), "model", "ws", "ENG-1")
+	lc2, lerr2 := lens.New(srv.URL, "k")
+	if lerr2 != nil {
+		t.Fatalf("lens.New: %v", lerr2)
+	}
+	m := newLensModel(lc2, "model", "ws", "ENG-1")
 	reply, err := m.Complete(context.Background(), []agentloop.Message{{Role: "user", Content: "x"}})
 	if err != nil {
 		t.Fatal(err)

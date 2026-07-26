@@ -91,7 +91,10 @@ func TestGenerateChange_CapturesOutputId(t *testing.T) {
 	defer srv.Close()
 
 	cfg := config.Config{LensURL: srv.URL, LensAPIKey: "k", WorkspaceID: "ws"}
-	lc := lens.New(srv.URL, "k")
+	lc, lerr := lens.New(srv.URL, "k")
+	if lerr != nil {
+		t.Fatalf("lens.New: %v", lerr)
+	}
 	pf := PlannedFile{Path: "x.go", Operation: "create", Description: "add X"}
 
 	change, err := generateChange(context.Background(), lc, cfg, "task", pf, t.TempDir(), "model", nil)

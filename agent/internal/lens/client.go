@@ -12,6 +12,8 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+
+	"github.com/talyvor/code/internal/safeurl"
 	"time"
 )
 
@@ -26,12 +28,26 @@ type Client struct {
 	httpClient *http.Client
 }
 
-func New(url, apiKey string) *Client {
+// New builds a client, REFUSING any base URL that would leak the attached API key.
+//
+// The validation is part of construction, not a step a caller must remember. It used to
+// live behind Config.Validate(), which eleven subcommands called and two did not — so
+// `serve` and `init` sent the key in cleartext to whatever host was configured. There is
+// deliberately no exported constructor that skips this: a new subcommand cannot
+// reintroduce the leak by forgetting a call, because the only way to get a *Client is
+// through a function that has already checked.
+//
+// An empty url is allowed and yields an unconfigured client (IsConfigured() == false) —
+// Track and Docs are optional integrations.
+func New(url, apiKey string) (*Client, error) {
+	if err := safeurl.Validate("lens-url", url); err != nil {
+		return nil, err
+	}
 	return &Client{
 		url:        strings.TrimRight(url, "/"),
 		apiKey:     apiKey,
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-	}
+	}, nil
 }
 
 func (c *Client) IsConfigured() bool {
