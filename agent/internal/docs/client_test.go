@@ -11,10 +11,10 @@ import (
 )
 
 func TestIsConfigured(t *testing.T) {
-	if New("", "").IsConfigured() {
+	if mustNew(t, "", "").IsConfigured() {
 		t.Fatal("expected unconfigured for empty url+key")
 	}
-	if !New("http://docs", "tlv_k").IsConfigured() {
+	if !mustNew(t, "https://docs", "tlv_k").IsConfigured() {
 		t.Fatal("expected configured for url+key")
 	}
 }
@@ -29,7 +29,7 @@ func TestSearch_HitsCorrectEndpointWithLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	out, err := c.Search(context.Background(), "ws-1", "auth", 5)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
@@ -55,7 +55,7 @@ func TestSearch_EncodesQueryWithSpaces(t *testing.T) {
 		_, _ = w.Write([]byte(`{"results":[],"total":0}`))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	if _, err := c.Search(context.Background(), "ws-1", "JWT refresh tokens", 5); err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestSearch_EncodesQueryWithSpaces(t *testing.T) {
 }
 
 func TestSearch_UnconfiguredReturnsEmpty(t *testing.T) {
-	c := New("", "")
+	c := mustNew(t, "", "")
 	out, err := c.Search(context.Background(), "ws-1", "auth", 5)
 	if err != nil {
 		t.Fatalf("Search unconfigured: %v", err)
@@ -91,7 +91,7 @@ func TestAskDocs_PostsQuestionWithBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	got, err := c.AskDocs(context.Background(), "ws-1", "How does JWT refresh work?")
 	if err != nil {
 		t.Fatalf("AskDocs: %v", err)
@@ -114,7 +114,7 @@ func TestAskDocs_PostsQuestionWithBody(t *testing.T) {
 }
 
 func TestAskDocs_UnconfiguredReturnsNil(t *testing.T) {
-	c := New("", "")
+	c := mustNew(t, "", "")
 	got, err := c.AskDocs(context.Background(), "ws-1", "q?")
 	if err != nil {
 		t.Fatalf("unconfigured AskDocs: %v", err)
@@ -132,7 +132,7 @@ func TestGetPage_DecodesPayload(t *testing.T) {
 		_, _ = w.Write([]byte(`{"id":"p1","space_id":"s1","title":"Auth flow","content_text":"How auth works","ai_cost_usd":2.5,"updated_at":"2026-05-20T10:00:00Z"}`))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	got, err := c.GetPage(context.Background(), "s1", "p1")
 	if err != nil || got == nil {
 		t.Fatalf("GetPage: err=%v got=%v", err, got)
@@ -147,7 +147,7 @@ func TestGetPage_404ReturnsNil(t *testing.T) {
 		http.Error(w, "not found", http.StatusNotFound)
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_k")
+	c := mustNew(t, srv.URL, "tlv_k")
 	got, err := c.GetPage(context.Background(), "s1", "missing")
 	if err != nil {
 		t.Fatalf("GetPage: %v", err)
@@ -155,4 +155,17 @@ func TestGetPage_404ReturnsNil(t *testing.T) {
 	if got != nil {
 		t.Fatalf("expected nil on 404, got %+v", got)
 	}
+}
+
+// mustNew builds a client for a test fixture and fails loudly if the URL is one the
+// construction guard refuses. Tests use httptest servers (loopback) and the empty URL, both
+// of which are legal — so a failure here means a fixture drifted onto an address that would
+// leak the key, which is worth failing on rather than papering over.
+func mustNew(t *testing.T, url, key string) *Client {
+	t.Helper()
+	c, err := New(url, key)
+	if err != nil {
+		t.Fatalf("New(%q): %v", url, err)
+	}
+	return c
 }

@@ -4,31 +4,17 @@ package config
 
 import (
 	"errors"
-	"fmt"
-	"net"
-	"net/url"
 	"os"
+
+	"github.com/talyvor/code/internal/safeurl"
 )
 
-// validateBaseURL rejects a Talyvor base URL that would leak the attached API key: it must be https
-// (except an explicit localhost host over http, for local dev), and must never resolve to a link-local /
-// cloud-metadata / unspecified address. A hostile config that pointed the client at http://attacker or
-// http://169.254.169.254 would otherwise send the user's key there.
-func validateBaseURL(name, raw string) error {
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
-		return fmt.Errorf("%s: invalid URL %q", name, raw)
-	}
-	host := u.Hostname()
-	isLocal := host == "localhost" || host == "127.0.0.1" || host == "::1"
-	if u.Scheme != "https" && !isLocal {
-		return fmt.Errorf("%s must be https (got %q) — the API key must not be sent in cleartext", name, raw)
-	}
-	if ip := net.ParseIP(host); ip != nil && (ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()) {
-		return fmt.Errorf("%s: refusing link-local/metadata host %q", name, host)
-	}
-	return nil
-}
+// validateBaseURL delegates to internal/safeurl, which is now the single definition of
+// the rule. It used to be implemented here and reachable ONLY through Config.Validate() —
+// which made the guard opt-in at the call site, and two subcommands opted out. The
+// client constructors apply the same rule at construction, so this boot check is the
+// friendly early failure with a per-flag name, not the guard.
+func validateBaseURL(name, raw string) error { return safeurl.Validate(name, raw) }
 
 type Config struct {
 	LensURL     string

@@ -27,7 +27,7 @@ func TestCommitArtifact(t *testing.T) {
 		_, _ = w.Write([]byte(respBody))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_secret")
+	c := mustNew(t, srv.URL, "tlv_secret")
 
 	manifest := []ManifestEntry{{Path: "go.mod", ContentSHA256: "gomodhash"}}
 	committed, err := c.CommitArtifact(context.Background(), "oid-1", "main.go", manifest)
@@ -68,7 +68,7 @@ func TestCommitArtifact(t *testing.T) {
 	if committed, err := c.CommitArtifact(context.Background(), "", "main.go", manifest); err != nil || committed {
 		t.Errorf("empty output_id must be a no-op (false, nil); got (%v, %v)", committed, err)
 	}
-	if committed, err := New("", "").CommitArtifact(context.Background(), "oid", "main.go", manifest); err != nil || committed {
+	if committed, err := mustNew(t, "", "").CommitArtifact(context.Background(), "oid", "main.go", manifest); err != nil || committed {
 		t.Errorf("unconfigured client must be a no-op (false, nil); got (%v, %v)", committed, err)
 	}
 }

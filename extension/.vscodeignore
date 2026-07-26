@@ -1,0 +1,23 @@
+# What NOT to ship in the .vsix.
+#
+# This file has to exist. Without it vsce falls back to .gitignore — which lists `out/`,
+# because compiled output is a build artifact — so the packager dropped the very directory
+# the entrypoint lives in and refused to build with "Extension entrypoint(s) missing".
+# The rule is inverted between the two files: git must ignore out/, the package must contain
+# it and nothing else.
+
+# TypeScript sources and build config — the .vsix ships compiled JS only.
+src/**
+test/**
+out/test/**
+out/**/*.test.js
+out/**/*.map
+**/*.ts
+tsconfig.json
+.vscode/**
+.vscode-test/**
+.gitignore
+.vscodeignore
+
+# Dev-only dependency tree; the extension bundles no runtime deps.
+node_modules/**

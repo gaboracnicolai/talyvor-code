@@ -36,7 +36,10 @@ func runIndex(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 	if err != nil {
 		return err
 	}
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	emb := newLensEmbedder(lc, cfg)
 	path := codebase.IndexPath(root)
 

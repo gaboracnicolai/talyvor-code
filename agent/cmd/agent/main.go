@@ -186,7 +186,10 @@ func runCheck(w io.Writer, cfg config.Config) error {
 		return err
 	}
 	ctx := context.Background()
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ok, err := lc.Status(ctx)
 	if err != nil || !ok {
 		return fmt.Errorf("Lens unreachable at %s", cfg.LensURL)
@@ -197,7 +200,10 @@ func runCheck(w io.Writer, cfg config.Config) error {
 	// Track — cost attribution rides on the X-Talyvor-Issue header
 	// that Lens itself records.
 	if cfg.ActiveIssue != "" {
-		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		tc, terr := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if terr != nil {
+			return terr
+		}
 		if tc.IsConfigured() {
 			iss, err := tc.GetIssue(ctx, cfg.WorkspaceID, cfg.ActiveIssue)
 			if err != nil {
@@ -254,7 +260,10 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	}
 
 	ctx := context.Background()
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	// Retrieval-grounded context: pull the chunks most relevant to the question from
 	// the semantic index (built by `talyvor-code index`). Silent no-op when absent.
 	ret := loadRetriever(lc, cfg, ".", nil, os.Stderr)
@@ -448,7 +457,10 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel)
 	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/model <id>" to swap model, "/file <path>" to attach a file.`)
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	// Retrieval-grounded chat: each turn pulls the chunks most relevant to the user's
 	// message from the semantic index (built by `talyvor-code index`). Absent → nil,
 	// chat behaves exactly as before.
@@ -666,7 +678,10 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 		return err
 	}
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// ── Iterative agent (opt-in via --iterative) ──
@@ -914,7 +929,10 @@ func runAgent(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	// automated change. Failures here never fail the CLI — the
 	// user already has the change applied locally.
 	if applied > 0 && cfg.ActiveIssue != "" {
-		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		tc, terr := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if terr != nil {
+			return terr
+		}
 		if tc.IsConfigured() {
 			comment := buildAgentCompletionComment(taskDesc, applied, chosenModel)
 			if prURL != "" {
@@ -1256,7 +1274,10 @@ func runReview(_ io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	system := combinedPrefix(".", "review", "") + reviewSystemPrompt(reviewType, prMode)
 	userMsg := buildReviewUserMessage(system, body, commits, changedFiles, prMode)
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	feature := "code-review"
@@ -1479,7 +1500,10 @@ func runCommit(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, arg
 		"Types: feat, fix, docs, refactor, test, chore. Keep the subject under 72 characters. " +
 		"Return ONLY the commit message — no explanation, no markdown fences, no quotes."
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	raw, err := lc.Complete(ctx,
@@ -1602,7 +1626,10 @@ func runDocs(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	if cfg.WorkspaceID == "" && sub != "get" {
 		return fmt.Errorf("docs: --workspace (or TALYVOR_WORKSPACE_ID) required")
 	}
-	dc := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+	dc, derr := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+	if derr != nil {
+		return derr
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	switch sub {
@@ -2012,7 +2039,10 @@ func runTest(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	)
 
 	ctx := context.Background()
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	reply, err := lc.Complete(ctx,
 		[]lens.Message{{Role: "user", Content: system + "\n\n" + user}},
 		chosenModel, "test-gen", cfg.WorkspaceID, cfg.ActiveIssue,
@@ -2360,7 +2390,10 @@ func runPR(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args []
 	// Fetch issue title from Track (best-effort) for the body.
 	issueTitle := ""
 	if cfg.ActiveIssue != "" && cfg.TrackURL != "" && cfg.TrackAPIKey != "" {
-		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		tc, terr := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if terr != nil {
+			return terr
+		}
 		ictx, icancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer icancel()
 		if iss, _ := tc.GetIssue(ictx, cfg.WorkspaceID, cfg.ActiveIssue); iss != nil {
@@ -2468,7 +2501,10 @@ func runPRAfterAgent(
 
 	issueTitle := ""
 	if cfg.ActiveIssue != "" && cfg.TrackURL != "" && cfg.TrackAPIKey != "" {
-		tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		tc, terr := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if terr != nil {
+			return "", terr
+		}
 		if iss, _ := tc.GetIssue(ctx, cfg.WorkspaceID, cfg.ActiveIssue); iss != nil {
 			issueTitle = iss.Title
 		}
@@ -2520,7 +2556,10 @@ func generatePRTitle(ctx context.Context, cfg config.Config, modelOpt, diff stri
 	if strings.TrimSpace(diff) == "" {
 		return "", nil
 	}
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return "", err
+	}
 	chosen, err := resolveAndValidate(modelOpt, cfg.Model, "commit")
 	if err != nil {
 		return "", err
@@ -2684,7 +2723,10 @@ func runShell(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config, args
 	// commands, so we pass section="" — context-only prefix.
 	descWithCtx := combinedPrefix(".", "", "") + description
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 	command, cost, err := shell.Generate(ctx, lc, &cfg, descWithCtx, shellName, osName, chosenModel)
 	if err != nil {
@@ -2832,7 +2874,10 @@ func generateAndWriteContext(stdout, stderr io.Writer, cfg config.Config) error 
 	if cfg.LensURL == "" || cfg.LensAPIKey == "" {
 		return errors.New("Lens not configured")
 	}
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	fmt.Fprintln(stdout, "▸ Generating .talyvor-context from codebase…")
@@ -2927,7 +2972,10 @@ func runContextGenerate(stdin io.Reader, stdout, stderr io.Writer, cfg config.Co
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	fmt.Fprintln(stdout, "▸ Generating .talyvor-context from codebase…")
@@ -3185,9 +3233,18 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 		return fmt.Errorf("serve: %w", err)
 	}
 
-	lc := lens.New(cfg.LensURL, cfg.LensAPIKey)
-	tc := track.New(cfg.TrackURL, cfg.TrackAPIKey)
-	dc := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
+	if err != nil {
+		return err
+	}
+	tc, terr := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+	if terr != nil {
+		return terr
+	}
+	dc, derr := docs.New(cfg.DocsURL, cfg.DocsAPIKey)
+	if derr != nil {
+		return derr
+	}
 
 	server := mcp.New(lc, tc, dc, &cfg, version)
 	server.SetRoot(root)

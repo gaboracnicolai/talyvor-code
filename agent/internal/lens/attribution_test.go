@@ -23,7 +23,7 @@ func TestReportAttribution(t *testing.T) {
 		w.WriteHeader(status)
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "tlv_secret")
+	c := mustNew(t, srv.URL, "tlv_secret")
 
 	if err := c.ReportAttribution(context.Background(), "oid-1", "pr", "https://gh/o/r/pull/5"); err != nil {
 		t.Fatalf("2xx must be nil; got %v", err)
@@ -53,7 +53,7 @@ func TestReportAttribution(t *testing.T) {
 	if err := c.ReportAttribution(context.Background(), "", "pr", "ref"); err != nil {
 		t.Errorf("empty output_id must be a no-op nil; got %v", err)
 	}
-	if err := New("", "").ReportAttribution(context.Background(), "oid", "pr", "ref"); err != nil {
+	if err := mustNew(t, "", "").ReportAttribution(context.Background(), "oid", "pr", "ref"); err != nil {
 		t.Errorf("unconfigured client must be a no-op nil; got %v", err)
 	}
 }

@@ -2,6 +2,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -18,7 +19,41 @@ jobs:
       - run: cd extension && npm install
       - run: cd extension && npm run compile
       - run: cd extension && npx tsc --noEmit
-      - run: cd extension && npm test
+      # Two suites, named separately so the CI log shows each one executing rather than a
+      # single opaque green tick. `npm test` runs both (see package.json) — the split here
+      # is for legibility, not coverage.
+      #
+      # AUDIT FINDING: the path-confinement tests live under src/ and CI only ever ran
+      # out/test/**, so the five tests proving the agent REFUSES to write outside a
+      # customer's workspace root had never executed. They compiled, and that was all.
+      # The .vsix ships extension/LICENSE, not the repo root one — vsce packages only the
+      # extension directory. A copied licence that drifts from the root would mean the
+      # published extension states different terms from the repository, which is a legal
+      # hazard rather than a tidiness one. Assert they are byte-identical.
+      - name: extension licence matches the repo licence
+        run: |
+          cmp LICENSE extension/LICENSE
+          node -e "const l=require('./extension/package.json').license; if(!l){console.error('::error::extension/package.json has no license field — VS Code Marketplace rejects unlicensed extensions'); process.exit(1)} console.log('extension license field:', l)"
+
+      - name: unit tests (includes agent path confinement)
+        run: cd extension && npm run test:unit
+      - name: VS Code integration tests
+        run: cd extension && npm run test:integration
+
+      # BUILD the .vsix — do not publish. Packaging was broken three independent ways and
+      # each was invisible until someone tried: `vsce` was not installed, `main` pointed at
+      # ./out/extension.js while tsc emits out/src/extension.js, and no .vscodeignore existed
+      # so vsce fell back to .gitignore and dropped the whole out/ directory. Building it on
+      # every PR is what stops that drifting back.
+      - name: package the extension (build only, never publish)
+        run: |
+          cd extension && npm run package
+          ls -la ./*.vsix
+          # vsce renames LICENSE -> LICENSE.txt inside the package, so match that exact name
+          # rather than relying on a substring happening to align.
+          unzip -l ./*.vsix | grep -q 'extension/LICENSE.txt' || { echo "::error::.vsix does not contain the licence"; exit 1; }
+          unzip -l ./*.vsix | grep -q 'out/src/extension.js' || { echo "::error::.vsix is missing its entrypoint"; exit 1; }
+          echo "vsix contains its licence and entrypoint"
 
   agent:
     runs-on: ubuntu-latest
@@ -53,7 +88,12 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Scan for secrets
         run: |
-          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+          # PINNED BY DIGEST. This was ghcr.io/gitleaks/gitleaks:latest — the only unpinned
+          # dependency in a workflow where every actions/* is pinned to a full commit SHA.
+          # An unpinned scanner is a scanner somebody else controls: a bad :latest can turn
+          # the secret gate green (or red) without a commit here. v8.30.1 at time of pinning.
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             detect --source=/repo --no-git --redact --config=/repo/.gitleaks.toml
 
   jetbrains:
@@ -77,3 +117,78 @@ jobs:
       # self-provisions Gradle 8.7 — no `gradle` preinstall / wrapper-generation step.
       - name: Test + build JetBrains plugin
         run: cd jetbrains && ./gradlew test buildPlugin --no-daemon
+
+  # THE RELEASE JOB THE README ALREADY DOCUMENTED.
+  #
+  # README:241 described this job — "Tagged builds (v*) trigger the release job, which
+  # cross-compiles talyvor-code for darwin/arm64, darwin/amd64, linux/amd64, and
+  # windows/amd64, then attaches the binaries to a GitHub release" — and it did not exist.
+  # Zero releases, zero tags, nothing to install. Same shape as the Lens comment that
+  # asserted a business model the code never had: a documented capability that isn't.
+  #
+  # It is built rather than the claim deleted, because install.sh needs real artifacts to
+  # download and there is otherwise no way for a customer to obtain the CLI at all.
+  #
+  # `needs: [agent, extension]` so a tag can never publish a binary that failed its tests.
+  # checksums.txt is part of the release, not a nicety: install.sh REFUSES to install
+  # without a matching SHA-256, so a release without it installs nothing.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [agent, extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: agent/go.sum
+
+      - name: Cross-compile the four documented targets
+        run: |
+          cd agent
+          mkdir -p ../dist
+          # Asset names must match what install.sh derives from uname:
+          #   talyvor-code-${OS}-${ARCH}   (darwin|linux × amd64|arm64)
+          # Windows keeps the .exe suffix and is fetched manually from the release page.
+          build() {
+            local goos="$1" goarch="$2" suffix="${3:-}"
+            echo "  → ${goos}/${goarch}"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+              go build -trimpath -ldflags="-w -s -X main.version=${GITHUB_REF_NAME}" \
+              -o "../dist/talyvor-code-${goos}-${goarch}${suffix}" ./cmd/agent
+          }
+          build darwin arm64
+          build darwin amd64
+          build linux  amd64
+          build linux  arm64
+          build windows amd64 .exe
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          echo "── checksums.txt ──"
+          cat checksums.txt
+
+      # Verify the artifacts the way install.sh will, before publishing rather than after a
+      # customer reports it. Catches a truncated build or a stale dist/ entry.
+      - name: Self-check — every asset verifies against checksums.txt
+        run: |
+          cd dist
+          sha256sum -c checksums.txt
+          test -s talyvor-code-linux-amd64
+          echo "all assets present and verified"
+
+      - name: Publish release with binaries + checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*
