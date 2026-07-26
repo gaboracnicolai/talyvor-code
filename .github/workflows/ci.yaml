@@ -26,10 +26,34 @@ jobs:
       # AUDIT FINDING: the path-confinement tests live under src/ and CI only ever ran
       # out/test/**, so the five tests proving the agent REFUSES to write outside a
       # customer's workspace root had never executed. They compiled, and that was all.
+      # The .vsix ships extension/LICENSE, not the repo root one — vsce packages only the
+      # extension directory. A copied licence that drifts from the root would mean the
+      # published extension states different terms from the repository, which is a legal
+      # hazard rather than a tidiness one. Assert they are byte-identical.
+      - name: extension licence matches the repo licence
+        run: |
+          cmp LICENSE extension/LICENSE
+          node -e "const l=require('./extension/package.json').license; if(!l){console.error('::error::extension/package.json has no license field — VS Code Marketplace rejects unlicensed extensions'); process.exit(1)} console.log('extension license field:', l)"
+
       - name: unit tests (includes agent path confinement)
         run: cd extension && npm run test:unit
       - name: VS Code integration tests
         run: cd extension && npm run test:integration
+
+      # BUILD the .vsix — do not publish. Packaging was broken three independent ways and
+      # each was invisible until someone tried: `vsce` was not installed, `main` pointed at
+      # ./out/extension.js while tsc emits out/src/extension.js, and no .vscodeignore existed
+      # so vsce fell back to .gitignore and dropped the whole out/ directory. Building it on
+      # every PR is what stops that drifting back.
+      - name: package the extension (build only, never publish)
+        run: |
+          cd extension && npm run package
+          ls -la ./*.vsix
+          # vsce renames LICENSE -> LICENSE.txt inside the package, so match that exact name
+          # rather than relying on a substring happening to align.
+          unzip -l ./*.vsix | grep -q 'extension/LICENSE.txt' || { echo "::error::.vsix does not contain the licence"; exit 1; }
+          unzip -l ./*.vsix | grep -q 'out/src/extension.js' || { echo "::error::.vsix is missing its entrypoint"; exit 1; }
+          echo "vsix contains its licence and entrypoint"
 
   agent:
     runs-on: ubuntu-latest

@@ -4,6 +4,11 @@
   "description": "AI coding assistant powered by Talyvor Lens \u2014 track AI costs per issue",
   "version": "0.1.0",
   "publisher": "talyvor",
+  "license": "BUSL-1.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gaboracnicolai/talyvor-code.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -22,7 +27,7 @@
   "activationEvents": [
     "onStartupFinished"
   ],
-  "main": "./out/extension.js",
+  "main": "./out/src/extension.js",
   "contributes": {
     "configuration": {
       "title": "Talyvor Code",
@@ -288,7 +293,7 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "vsce package",
+    "package": "npx @vscode/vsce package --no-dependencies",
     "test": "npm run test:unit && node ./out/test/runTest.js",
     "test:unit": "tsc -p ./ && node --test $(find out/src -name '*.test.js')",
     "test:integration": "node ./out/test/runTest.js"
