@@ -2,6 +2,7 @@ name: CI
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
     branches: [main]
 
@@ -63,7 +64,12 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - name: Scan for secrets
         run: |
-          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:latest \
+          # PINNED BY DIGEST. This was ghcr.io/gitleaks/gitleaks:latest — the only unpinned
+          # dependency in a workflow where every actions/* is pinned to a full commit SHA.
+          # An unpinned scanner is a scanner somebody else controls: a bad :latest can turn
+          # the secret gate green (or red) without a commit here. v8.30.1 at time of pinning.
+          docker run --rm -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
             detect --source=/repo --no-git --redact --config=/repo/.gitleaks.toml
 
   jetbrains:
@@ -87,3 +93,78 @@ jobs:
       # self-provisions Gradle 8.7 — no `gradle` preinstall / wrapper-generation step.
       - name: Test + build JetBrains plugin
         run: cd jetbrains && ./gradlew test buildPlugin --no-daemon
+
+  # THE RELEASE JOB THE README ALREADY DOCUMENTED.
+  #
+  # README:241 described this job — "Tagged builds (v*) trigger the release job, which
+  # cross-compiles talyvor-code for darwin/arm64, darwin/amd64, linux/amd64, and
+  # windows/amd64, then attaches the binaries to a GitHub release" — and it did not exist.
+  # Zero releases, zero tags, nothing to install. Same shape as the Lens comment that
+  # asserted a business model the code never had: a documented capability that isn't.
+  #
+  # It is built rather than the claim deleted, because install.sh needs real artifacts to
+  # download and there is otherwise no way for a customer to obtain the CLI at all.
+  #
+  # `needs: [agent, extension]` so a tag can never publish a binary that failed its tests.
+  # checksums.txt is part of the release, not a nicety: install.sh REFUSES to install
+  # without a matching SHA-256, so a release without it installs nothing.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [agent, extension]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.25"
+          cache-dependency-path: agent/go.sum
+
+      - name: Cross-compile the four documented targets
+        run: |
+          cd agent
+          mkdir -p ../dist
+          # Asset names must match what install.sh derives from uname:
+          #   talyvor-code-${OS}-${ARCH}   (darwin|linux × amd64|arm64)
+          # Windows keeps the .exe suffix and is fetched manually from the release page.
+          build() {
+            local goos="$1" goarch="$2" suffix="${3:-}"
+            echo "  → ${goos}/${goarch}"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+              go build -trimpath -ldflags="-w -s -X main.version=${GITHUB_REF_NAME}" \
+              -o "../dist/talyvor-code-${goos}-${goarch}${suffix}" ./cmd/agent
+          }
+          build darwin arm64
+          build darwin amd64
+          build linux  amd64
+          build linux  arm64
+          build windows amd64 .exe
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          echo "── checksums.txt ──"
+          cat checksums.txt
+
+      # Verify the artifacts the way install.sh will, before publishing rather than after a
+      # customer reports it. Catches a truncated build or a stale dist/ entry.
+      - name: Self-check — every asset verifies against checksums.txt
+        run: |
+          cd dist
+          sha256sum -c checksums.txt
+          test -s talyvor-code-linux-amd64
+          echo "all assets present and verified"
+
+      - name: Publish release with binaries + checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/*

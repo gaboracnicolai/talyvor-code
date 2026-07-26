@@ -89,11 +89,20 @@ The status-bar item cycles through `$(warning) Talyvor: Setup required` → `$(s
 curl -sSL https://raw.githubusercontent.com/gaboracnicolai/talyvor-code/main/install.sh | bash
 ```
 
-Or build from source:
+Downloads the binary for your platform from the latest GitHub release and **verifies its
+SHA-256 against the release's `checksums.txt` before installing**. A mismatch, or a missing
+checksums file, aborts — there is no flag to bypass it. Installs to `/usr/local/bin`
+(override with `INSTALL_DIR`); pin a version with `TALYVOR_VERSION=v0.1.0`.
+
+Or build from source (needs Go 1.25+), from a checkout:
 
 ```bash
 cd agent && go install ./cmd/agent
 ```
+
+Note that `go install` names the binary after its directory — `agent`. `install.sh` renames it
+to `talyvor-code` for you; if you run `go install` directly, either rename it yourself or invoke
+it as `agent`.
 
 ### Configure
 
@@ -238,7 +247,16 @@ cd extension && npm run compile && npx tsc --noEmit
 cd agent && go vet ./... && go test -race -count=1 ./...
 ```
 
-Both gates run on every PR via [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml). Tagged builds (`v*`) trigger the release job, which cross-compiles `talyvor-code` for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, and `windows/amd64`, then attaches the binaries to a GitHub release.
+Five jobs run via [`.github/workflows/ci.yaml`](.github/workflows/ci.yaml): `extension`
+(compile, typecheck, unit tests **including the agent path-confinement suite**, and the VS Code
+integration harness), `agent` (gofmt, vet, `go test -race`), `gitleaks` (pinned by digest),
+`jetbrains` (test + buildPlugin), and `release`.
+
+`release` fires only on a `v*` tag, requires `agent` and `extension` to have passed, and
+cross-compiles `talyvor-code` for `darwin/arm64`, `darwin/amd64`, `linux/amd64`, `linux/arm64`,
+and `windows/amd64`. It publishes a `checksums.txt` alongside the binaries and verifies every
+asset against it before publishing — `install.sh` refuses to install without a matching SHA-256,
+so a release missing that file installs nothing.
 
 ## The moat
 
