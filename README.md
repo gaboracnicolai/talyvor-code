@@ -245,3 +245,15 @@ Both gates run on every PR via [`.github/workflows/ci.yaml`](.github/workflows/c
 Every AI call carries an `X-Talyvor-Issue` header. Lens credits the spend to that issue; Track surfaces the running total on the issue page. When you implement `ENG-42`, every completion, every test, every agentic task, every code review — all of it — gets rolled up to that issue.
 
 No other coding assistant does this.
+
+---
+
+## License
+
+[Business Source License 1.1](LICENSE) (BUSL-1.1). **Not an open-source licence today.**
+
+You may read, modify and self-host Talyvor Code, including in production, for your own
+organisation's purposes, and an integrator may run it on behalf of a single client. You may
+**not** run one deployment serving two or more unrelated organisations — that needs a
+commercial licence (`hello@talyvor.com`). See the `Additional Use Grant` in [LICENSE](LICENSE)
+for the exact boundary, and the `Change Date`, on which this converts to Apache License 2.0.
