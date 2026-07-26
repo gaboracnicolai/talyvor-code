@@ -18,7 +18,17 @@ jobs:
       - run: cd extension && npm install
       - run: cd extension && npm run compile
       - run: cd extension && npx tsc --noEmit
-      - run: cd extension && npm test
+      # Two suites, named separately so the CI log shows each one executing rather than a
+      # single opaque green tick. `npm test` runs both (see package.json) — the split here
+      # is for legibility, not coverage.
+      #
+      # AUDIT FINDING: the path-confinement tests live under src/ and CI only ever ran
+      # out/test/**, so the five tests proving the agent REFUSES to write outside a
+      # customer's workspace root had never executed. They compiled, and that was all.
+      - name: unit tests (includes agent path confinement)
+        run: cd extension && npm run test:unit
+      - name: VS Code integration tests
+        run: cd extension && npm run test:integration
 
   agent:
     runs-on: ubuntu-latest

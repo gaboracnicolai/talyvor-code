@@ -289,8 +289,9 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package",
-    "test": "node ./out/test/runTest.js",
-    "test:unit": "tsc -p ./ && node --test \"out/src/**/*.test.js\""
+    "test": "npm run test:unit && node ./out/test/runTest.js",
+    "test:unit": "tsc -p ./ && node --test \"out/src/**/*.test.js\"",
+    "test:integration": "node ./out/test/runTest.js"
   },
   "devDependencies": {
     "@types/vscode": "^1.85.0",
