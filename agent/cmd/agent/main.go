@@ -39,7 +39,15 @@ import (
 	"github.com/talyvor/code/internal/track"
 )
 
-const version = "0.1.0"
+// version is the binary's reported version.
+//
+// ⚠ IT MUST BE A var, NOT A const. The release job stamps it with
+// -ldflags="-X main.version=$GITHUB_REF_NAME", and the Go linker SILENTLY IGNORES -X on a
+// constant: the build exits 0, prints no warning, and the binary keeps this literal. Measured on
+// this repo before the fix — a binary built with -X main.version=v9.9.9 still reported 0.1.0.
+// Every published release would have claimed to be 0.1.0 forever, and nothing in CI would say so.
+// version_guard_test.go pins the declaration kind, because only an AST check can see this.
+var version = "0.1.0"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
