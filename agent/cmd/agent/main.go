@@ -24,8 +24,10 @@ import (
 	"github.com/talyvor/code/internal/config"
 	diffPkg "github.com/talyvor/code/internal/diff"
 	"github.com/talyvor/code/internal/docs"
+	"github.com/talyvor/code/internal/git"
 	gitpkg "github.com/talyvor/code/internal/git"
 	"github.com/talyvor/code/internal/github"
+	"github.com/talyvor/code/internal/issueref"
 	"github.com/talyvor/code/internal/lens"
 	"github.com/talyvor/code/internal/mcp"
 	modelpkg "github.com/talyvor/code/internal/model"
@@ -99,6 +101,21 @@ func run(args []string, stdout, stderr io.Writer) error {
 		ActiveIssue: issue,
 		Model:       model,
 	})
+
+	// ⚠ AUTOMATIC ISSUE ATTRIBUTION. Developers already name branches after the issue, so the
+	// identifier is sitting there for free — no manual tagging, no model call. Precedence is
+	// EXPLICIT → DETECTED → NOTHING: --issue is a statement and always wins; a branch name is an
+	// inference and never overrides one; and no match sends NO header, which Track records as
+	// unattributed. Guessing would produce a wrong bill, which is worse than no bill.
+	//
+	// ⚠ ONLY THE IDENTIFIER IS EVER USED. The branch name itself is not stored, logged or sent —
+	// branch names carry customer names, incidents and codenames. See internal/issueref.
+	resolvedIssue, issueSource := issueref.Resolve(cfg.ActiveIssue, git.GetCurrentBranch)
+	cfg.ActiveIssue = resolvedIssue
+	// ⚠ SHOWN, INCLUDING WHEN IT RESOLVED TO NOTHING: a wrong identifier is only noticeable if it
+	// is displayed, and "my costs are not appearing in Track" is only diagnosable if the tool says
+	// it attributed nothing.
+	fmt.Fprintln(os.Stderr, "  "+issueref.Describe(resolvedIssue, issueSource))
 
 	cmd, rest := tail[0], tail[1:]
 	switch cmd {
