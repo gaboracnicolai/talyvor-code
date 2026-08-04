@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/talyvor/code/internal/cmdguard"
 	"github.com/talyvor/code/internal/codebase"
 	"github.com/talyvor/code/internal/diff"
 	"github.com/talyvor/code/internal/runner"
@@ -73,11 +74,20 @@ func (r Registry) Names() []string {
 // retriever: search_codebase, read_file, edit_file, run. A nil retriever leaves
 // search available but note-only (no index built).
 func DefaultTools(root string, ret codebase.Retriever) Registry {
+	return DefaultToolsWithConfirm(root, ret, ttyConfirm)
+}
+
+// DefaultToolsWithConfirm is DefaultTools with the run tool's confirmation function supplied.
+//
+// A nil confirm means unattended — commands outside the build/test/lint/vcs-read allowlist are
+// REFUSED rather than approved. Callers that genuinely have a human (the interactive CLI) pass
+// ttyConfirm; callers that do not (CI, a server) should pass nil and get the safe behaviour.
+func DefaultToolsWithConfirm(root string, ret codebase.Retriever, confirm func(command, reason string) bool) Registry {
 	reg := Registry{}
 	reg.Register(NewSearchTool(ret, 6))
 	reg.Register(NewReadTool(root))
 	reg.Register(NewEditTool(root))
-	reg.Register(NewRunTool(root))
+	reg.Register(NewRunToolWithConfirm(root, confirm))
 	return reg
 }
 
@@ -180,12 +190,45 @@ type runTool struct {
 	timeout  time.Duration
 	lastExit int  // exit code of the most recent Run (for LastRun)
 	lastRan  bool // whether Run has executed a command (for LastRun)
+	// confirm asks the human. nil means NO INTERACTIVE CONFIRMATION IS POSSIBLE, which is a
+	// refusal — never an auto-approval. Injected so tests can drive both answers.
+	confirm func(command, reason string) bool
 }
 
 // NewRunTool returns the confined command runner (build/test/shell), reusing the
 // injection-safe runner primitive; the command executes in the repo root. Returned as
 // a pointer so it can record its most recent exit code (LastRun) for verdict attribution.
-func NewRunTool(root string) Tool { return &runTool{root: root, timeout: defaultRunTimeout} }
+func NewRunTool(root string) Tool {
+	return &runTool{root: root, timeout: defaultRunTimeout, confirm: ttyConfirm}
+}
+
+// NewRunToolWithConfirm builds the runner with an explicit confirmation function. A nil confirm
+// means unattended: anything outside the allowlist is REFUSED rather than approved.
+func NewRunToolWithConfirm(root string, confirm func(command, reason string) bool) Tool {
+	return &runTool{root: root, timeout: defaultRunTimeout, confirm: confirm}
+}
+
+// ttyConfirm asks once, showing the EXACT command and what is unusual about it.
+//
+// ⚠ NO TTY IS A REFUSAL, NEVER AN AUTO-APPROVAL, and it says so in the output. An agent running in
+// CI, a pipe or a container is exactly where an unattended `curl | sh` would be least noticed, so
+// the absence of a human is the strongest reason to stop rather than the reason to proceed.
+func ttyConfirm(command, reason string) bool {
+	// Stdlib rather than a dependency: a security-critical path should not grow its supply chain
+	// for one predicate. A terminal is a character device; a pipe, a file and CI's stdin are not.
+	fi, err := os.Stdin.Stat()
+	if err != nil || (fi.Mode()&os.ModeCharDevice) == 0 {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "\n  the agent wants to run a command outside the build/test/lint allowlist\n")
+	fmt.Fprintf(os.Stderr, "    $ %s\n", command)
+	fmt.Fprintf(os.Stderr, "    why it is being asked: %s\n", reason)
+	fmt.Fprintf(os.Stderr, "  run it? [y/N] ")
+	var answer string
+	_, _ = fmt.Fscanln(os.Stdin, &answer)
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	return answer == "y" || answer == "yes"
+}
 
 func (*runTool) Name() string { return "run" }
 func (*runTool) Description() string {
@@ -208,6 +251,27 @@ func (t *runTool) Run(ctx context.Context, raw json.RawMessage) (string, error) 
 	if strings.TrimSpace(a.Cmd) == "" {
 		return "", fmt.Errorf("run: empty command")
 	}
+
+	// ⚠ THE BOUND. Until this, the only limits on a model-authored string reaching `sh -c` were a
+	// timeout and a cwd — neither of which stops a command, only a slow one. See internal/cmdguard
+	// for why this is an allowlist and why it parses instead of prefix-matching.
+	switch v := cmdguard.Check(a.Cmd); v.Decision {
+	case cmdguard.Allow:
+		// falls through to run
+	case cmdguard.Refuse:
+		// Returned as an OBSERVATION, not an error: the model re-plans on it and can propose
+		// something the guard can actually read, which is more useful than aborting the loop.
+		return fmt.Sprintf("$ %s\nREFUSED: %s\nThis command was not run. Rewrite it without that construct.", a.Cmd, v.Reason), nil
+	case cmdguard.Confirm:
+		if t.confirm == nil || !t.confirm(a.Cmd, v.Reason) {
+			why := "declined by the user"
+			if t.confirm == nil {
+				why = "no interactive terminal, so it could not be confirmed — commands outside the allowlist are refused unattended, never auto-approved"
+			}
+			return fmt.Sprintf("$ %s\nNOT RUN: %s (%s)", a.Cmd, why, v.Reason), nil
+		}
+	}
+
 	res, err := runner.Run(ctx, a.Cmd, t.root, t.timeout)
 	if err != nil {
 		return "", fmt.Errorf("run: %w", err)

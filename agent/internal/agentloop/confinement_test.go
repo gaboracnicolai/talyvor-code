@@ -73,7 +73,13 @@ func TestLoop_ConfinementHolds_UnderAdversarialModel(t *testing.T) {
 // rooted (not the process cwd).
 func TestRunTool_ExecutesInWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
-	tool := NewRunTool(root)
+	// ⚠ CONFIRMED, NOT ALLOWLISTED. This test drives `run` with an arbitrary shell command to prove
+	// the mechanics (cwd, captured output, exit code), and those commands now sit outside the
+	// build/test/lint/vcs-read allowlist. Approving them here keeps the test asserting what it
+	// always asserted; widening the allowlist to make it pass would have changed the product to
+	// suit the test.
+	alwaysYes := func(string, string) bool { return true }
+	tool := NewRunToolWithConfirm(root, alwaysYes)
 	args, _ := json.Marshal(map[string]any{"cmd": "printf hi > run_marker.txt"})
 	if _, err := tool.Run(context.Background(), args); err != nil {
 		t.Fatalf("run: %v", err)
