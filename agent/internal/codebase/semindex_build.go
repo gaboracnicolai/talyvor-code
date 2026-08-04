@@ -53,9 +53,51 @@ const (
 )
 
 // IndexPath is the LOCAL, confined location of the persisted semantic index under a
-// repo root: <root>/.talyvor/codebase-index.json. The index never leaves the repo.
+// repo root: <root>/.talyvor/codebase-index.json.
+//
+// ⚠ THIS FILE IS A FULL COPY OF THE USER'S SOURCE. Chunk.Content holds raw file text, not just
+// vectors. The previous comment here read "The index never leaves the repo", which reads as a
+// reassurance and is exactly backwards: the risk is not that it leaves, it is that it STAYS —
+// inside a directory people routinely `git add -A`. Committing it pushes the entire codebase to
+// whatever remote that repo has, which for a repo shared with a contractor or mirrored publicly is
+// a disclosure nobody chose. Callers must run EnsureIndexDirIgnored before writing here.
 func IndexPath(root string) string {
 	return filepath.Join(root, indexDir, indexFile)
+}
+
+// EnsureIndexDirIgnored makes the index directory uncommittable, by writing a .gitignore INSIDE it
+// that ignores everything.
+//
+// ⚠ WHY NOT THE USER'S ROOT .gitignore: it is a file they authored. Appending to it is a surprising
+// side effect from an `index` command, it merge-conflicts, and it silently diverges when someone
+// removes the line. git honours a .gitignore in ANY directory, so a self-ignoring directory needs
+// no cooperation from a file we do not own.
+//
+// ⚠ WHY NOT WRITE OUTSIDE THE REPO ENTIRELY (~/.cache/talyvor/<hash>): that is strictly safer
+// against commit, and it was the other real option. It was not chosen because it moves a full copy
+// of the user's source to a path they will never think to clear, survives `rm -rf` of the checkout,
+// and outlives the repo it came from. Keeping the copy beside the code it mirrors — and making that
+// location uncommittable — keeps the blast radius where the user can see it. If the index ever
+// starts leaving the machine, that trade changes and this decision should be revisited.
+//
+// Idempotent: indexing runs on every refresh, and a second call must not append.
+func EnsureIndexDirIgnored(root string) error {
+	dir := filepath.Join(root, indexDir)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("codebase: create index dir: %w", err)
+	}
+	p := filepath.Join(dir, ".gitignore")
+	// Written unconditionally rather than appended, so a truncated or hand-edited file is repaired
+	// rather than doubled. The content is fixed, so rewriting is idempotent by construction.
+	const body = "# Written by `talyvor-code index`.\n" +
+		"# This directory holds a semantic index whose chunks contain RAW SOURCE TEXT.\n" +
+		"# Ignoring it here — rather than in your .gitignore — keeps it uncommittable without\n" +
+		"# editing a file you own.\n" +
+		"*\n"
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		return fmt.Errorf("codebase: write index .gitignore: %w", err)
+	}
+	return nil
 }
 
 // fileEntry is one walked, confined, read file plus its content hash.

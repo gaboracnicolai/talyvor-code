@@ -43,6 +43,14 @@ func runIndex(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 	emb := newLensEmbedder(lc, cfg)
 	path := codebase.IndexPath(root)
 
+	// ⚠ BEFORE ANYTHING IS WRITTEN. The index chunks hold RAW SOURCE TEXT, so the directory is made
+	// uncommittable first — a self-ignoring .talyvor/.gitignore. Doing it here rather than at save
+	// time means an interrupted or failed build still leaves the directory ignored, and the window
+	// where a full copy of the user's code sits committable is never open.
+	if err := codebase.EnsureIndexDirIgnored(root); err != nil {
+		return err
+	}
+
 	// Load the existing index as the incremental base (unless --full). A version/parse
 	// error → fall back to a full rebuild loudly, never a silent mis-parse.
 	var prev *codebase.SemanticIndex
