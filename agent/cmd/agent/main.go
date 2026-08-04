@@ -303,7 +303,13 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	} else {
 		prompt.WriteString(combinedPrefix(".", "lang", ""))
 	}
-	if sec := retrievedContext(ctx, ret, question, filepath.Base(filePath)); sec != "" {
+	sec, retErr := retrievedContext(ctx, ret, question, filepath.Base(filePath))
+	if retErr != nil {
+		// ⚠ SAID, NOT SWALLOWED. The answer still gets produced — refusing outright would be worse
+		// for someone mid-task — but it is labelled as ungrounded before they read it.
+		warnUngrounded(os.Stderr, retErr)
+	}
+	if sec != "" {
 		prompt.WriteString(sec)
 		prompt.WriteString("\n")
 	}
@@ -547,7 +553,11 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 			userContent = pendingFile + "\n\n" + line
 			pendingFile = ""
 		}
-		if sec := retrievedContext(context.Background(), chatRet, line, ""); sec != "" {
+		sec, chatRetErr := retrievedContext(context.Background(), chatRet, line, "")
+		if chatRetErr != nil {
+			warnUngrounded(os.Stderr, chatRetErr)
+		}
+		if sec != "" {
 			userContent = sec + "\n" + userContent
 		}
 		history = append(history, lens.Message{Role: "user", Content: userContent})

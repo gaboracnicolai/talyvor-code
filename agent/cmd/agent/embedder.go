@@ -28,19 +28,36 @@ func (e lensEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, e
 // prompt.
 const askContextChunks = 6
 
-// retrievedContext retrieves the chunks most relevant to a query and renders them as
-// a prompt section (excluding `exclude`, a file already shown in full). Nil retriever
-// or any retrieval error → "" so callers concatenate unconditionally and degrade to
-// their prior no-retrieval behavior.
-func retrievedContext(ctx context.Context, ret codebase.Retriever, query, exclude string) string {
+// retrievedContext retrieves the chunks most relevant to a query and renders them as a prompt
+// section (excluding `exclude`, a file already shown in full).
+//
+// ⚠ IT RETURNS THE FAILURE INSTEAD OF SWALLOWING IT. This used to map any retrieval error to "",
+// so `ask` answered from the model's own knowledge with NO codebase grounding and said nothing
+// about it — the answer looked exactly like a grounded one. An agent answering without the context
+// it claims to use has to say so; a confidently wrong answer about someone's own repository is
+// worse than a refusal, because nothing about it invites checking.
+//
+// A NIL retriever is not an error: it means no index has been built, which callers already report
+// separately ("run `talyvor-code index`"). An error means an index exists and the lookup FAILED,
+// which is a different thing and the one that was invisible.
+func retrievedContext(ctx context.Context, ret codebase.Retriever, query, exclude string) (string, error) {
 	if ret == nil {
-		return ""
+		return "", nil
 	}
 	chunks, err := ret.Retrieve(ctx, query, askContextChunks)
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return codebase.RelevantContextSection(chunks, exclude, askContextChunks)
+	return codebase.RelevantContextSection(chunks, exclude, askContextChunks), nil
+}
+
+// warnUngrounded tells the user, on stderr, that the answer they are about to read is NOT grounded
+// in their codebase. Written where the answer is produced rather than logged quietly, because the
+// point is that the reader sees it next to the answer.
+func warnUngrounded(w io.Writer, err error) {
+	fmt.Fprintf(w, "⚠ codebase retrieval FAILED (%v)\n"+
+		"  The answer below is NOT grounded in your repository — it is the model's own knowledge.\n"+
+		"  Treat it as a guess about this codebase until the index is working again.\n", err)
 }
 
 func newLensEmbedder(lc *lens.Client, cfg config.Config) lensEmbedder {
