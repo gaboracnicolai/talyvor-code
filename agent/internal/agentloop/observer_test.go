@@ -50,7 +50,11 @@ func TestLoop_EmitsOutputIdAndRunExitToObserver(t *testing.T) {
 		oids: []string{"oid-edit", "oid-run", "oid-done"},
 	}
 	obs := &captureObserver{}
-	ag := New(model, DefaultTools(root, nil), Config{MaxSteps: 10, Observer: obs})
+	// ⚠ CONFIRMED, NOT ALLOWLISTED. This test is about the OBSERVER carrying a real exit code, and
+	// it uses `false` to produce one — a command outside the build/test/lint allowlist. Approving it
+	// here keeps the test asserting what it always asserted.
+	alwaysYes := func(string, string) bool { return true }
+	ag := New(model, DefaultToolsWithConfirm(root, nil, alwaysYes), Config{MaxSteps: 10, Observer: obs})
 	if _, err := ag.Run(context.Background(), "task"); err != nil {
 		t.Fatal(err)
 	}

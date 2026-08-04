@@ -65,7 +65,12 @@ func TestEndToEnd_LoopReportsCorrectVerdict(t *testing.T) {
 	}
 	rep := &fakeReporter{}
 	obs := newVerdictObserver(context.Background(), rep, nil)
-	ag := agentloop.New(model, agentloop.DefaultTools(root, nil), agentloop.Config{MaxSteps: 10, Observer: obs})
+	// ⚠ CONFIRMED, NOT ALLOWLISTED. This test drives `run` with `echo` to produce a build/test
+	// verdict end to end; `echo` is outside the build/test/lint/vcs-read allowlist the run tool now
+	// enforces. Approving it here keeps the test asserting the VERDICT WIRING, which is its subject.
+	// Widening the allowlist to make it pass would have changed the product to suit the test.
+	alwaysYes := func(string, string) bool { return true }
+	ag := agentloop.New(model, agentloop.DefaultToolsWithConfirm(root, nil, alwaysYes), agentloop.Config{MaxSteps: 10, Observer: obs})
 	if _, err := ag.Run(context.Background(), "task"); err != nil {
 		t.Fatal(err)
 	}

@@ -76,7 +76,13 @@ func TestEditTool_ConfinedWrite_Diffs(t *testing.T) {
 // + captured output; a non-zero exit is captured, not an error (the model re-plans).
 func TestRunTool_CapturesExitAndOutput(t *testing.T) {
 	root := t.TempDir()
-	tool := NewRunTool(root)
+	// ⚠ CONFIRMED, NOT ALLOWLISTED. This test drives `run` with an arbitrary shell command to prove
+	// the mechanics (cwd, captured output, exit code), and those commands now sit outside the
+	// build/test/lint/vcs-read allowlist. Approving them here keeps the test asserting what it
+	// always asserted; widening the allowlist to make it pass would have changed the product to
+	// suit the test.
+	alwaysYes := func(string, string) bool { return true }
+	tool := NewRunToolWithConfirm(root, alwaysYes)
 	obs, err := tool.Run(context.Background(), jsonArgs(t, map[string]any{"cmd": "echo RUN_MARKER"}))
 	if err != nil || !strings.Contains(obs, "RUN_MARKER") || !strings.Contains(obs, "exit 0") {
 		t.Errorf("run must capture stdout + exit 0; obs=%q err=%v", obs, err)
@@ -111,7 +117,13 @@ func TestSearchTool_FormatsRetrieval(t *testing.T) {
 func TestRegistry_Dispatch(t *testing.T) {
 	root := t.TempDir()
 	reg := Registry{}
-	reg.Register(NewRunTool(root))
+	// ⚠ CONFIRMED, NOT ALLOWLISTED. This test drives `run` with an arbitrary shell command to prove
+	// the mechanics (cwd, captured output, exit code), and those commands now sit outside the
+	// build/test/lint/vcs-read allowlist. Approving them here keeps the test asserting what it
+	// always asserted; widening the allowlist to make it pass would have changed the product to
+	// suit the test.
+	alwaysYes := func(string, string) bool { return true }
+	reg.Register(NewRunToolWithConfirm(root, alwaysYes))
 	if _, err := reg.Dispatch(context.Background(), "run", jsonArgs(t, map[string]any{"cmd": "echo ok"})); err != nil {
 		t.Errorf("dispatch known tool: %v", err)
 	}
