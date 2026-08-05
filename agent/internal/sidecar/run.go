@@ -64,6 +64,19 @@ func Run(cfg Config, command []string, io_ Stdio, started func(*Sidecar)) (int, 
 		}
 	}()
 
+	// ⚠ ANNOUNCED AFTER THE HANDLER, BEFORE THE CHILD — and both halves of that are load-bearing.
+	//
+	// After the handler, because announcing readiness while a Ctrl-C would still kill us on the
+	// default disposition advertises a protection that is not yet in place.
+	//
+	// Before the child, because from cmd.Start onwards os/exec runs goroutines copying the child's
+	// stdout and stderr into these same writers. Writing the banner alongside them is a genuine
+	// data race — caught by -race in CI, not locally — and it is not merely a test artifact: any
+	// buffered or non-atomic stderr would interleave the banner with the child's own first output.
+	if started != nil {
+		started(s)
+	}
+
 	cmd := exec.Command(command[0], command[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = io_.In, io_.Out, io_.Err
 	cmd.Env = s.ChildEnv(os.Environ())
@@ -74,12 +87,6 @@ func Run(cfg Config, command []string, io_ Stdio, started func(*Sidecar)) (int, 
 
 	if err := cmd.Start(); err != nil {
 		return 1, fmt.Errorf("could not start %s: %w", command[0], err)
-	}
-
-	// Announced only once everything is live: the proxy is listening, the handler is installed and
-	// the child is running. Anything earlier would report readiness the process cannot yet honour.
-	if started != nil {
-		started(s)
 	}
 
 	err = cmd.Wait()
