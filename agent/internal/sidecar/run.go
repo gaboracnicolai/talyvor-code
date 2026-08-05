@@ -59,8 +59,18 @@ func Run(cfg Config, command []string, io_ Stdio, started func(*Sidecar)) (int, 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 	defer signal.Stop(sigs)
+	// The drain ends with this call rather than blocking on a channel nobody closes. `for range
+	// sigs` leaks one goroutine per Run — harmless in a one-shot CLI and still wrong, and it is the
+	// kind of thing that stops being harmless the moment something calls Run twice.
+	stopDraining := make(chan struct{})
+	defer close(stopDraining)
 	go func() {
-		for range sigs {
+		for {
+			select {
+			case <-sigs:
+			case <-stopDraining:
+				return
+			}
 		}
 	}()
 

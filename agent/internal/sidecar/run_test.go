@@ -153,7 +153,10 @@ func TestCtrlCKillsBothTheChildAndTheProxy(t *testing.T) {
 	cmd := exec.Command(exe, "-test.run", "^TestCtrlCKillsBothTheChildAndTheProxy$")
 	childCmd := os.Getenv("SIDECAR_CHILD_CMD")
 	if childCmd == "" {
-		childCmd = "sleep 30"
+		// ⚠ exec: see the note below. Each child command owns its own exec so the wrapper does not
+		// prepend one to a compound command — prepending it turned the SIGINT-ignoring control into
+		// `exec trap ""`, which is not a program, so the control exited instantly and passed.
+		childCmd = "exec sleep 30"
 	}
 	// ⚠ THE CHILD ANNOUNCES ITSELF BEFORE IT IS SIGNALLED, and that is not ceremony. Ctrl-C
 	// arrives here under a millisecond after launch, which is early enough that a shell has not
@@ -161,6 +164,18 @@ func TestCtrlCKillsBothTheChildAndTheProxy(t *testing.T) {
 	// `trap` was installed, so the control child died like an ordinary one and the control passed
 	// while proving nothing. A human pressing Ctrl-C is never that fast; waiting for the child to
 	// say it is up removes the race instead of papering over it with a sleep.
+	// ⚠ THE CHILD COMMANDS exec, SO THE CHILD IS ONE PROCESS AND NOT A SHELL WAITING ON A GRANDCHILD.
+	//
+	// This is what made the test fail on CI and pass everywhere else. `echo READY; sleep 30` makes
+	// dash fork a grandchild AFTER announcing readiness, so a Ctrl-C landing in that window is
+	// delivered to the group before `sleep` exists. The new `sleep` never sees it, and dash — which
+	// did — defers its own death until its foreground child finishes. Measured directly: a shell
+	// signalled that way took 29.7s to exit a 30s sleep, reporting "signal: interrupt" at the end.
+	// The window is microseconds wide on an idle machine and wide enough on a loaded CI runner.
+	//
+	// exec removes the grandchild: the signal either arrives before it and kills the shell, or after
+	// it and kills the sleep. Both are prompt, so readiness now means what the test reads it to
+	// mean. SIG_IGN survives exec, so a SIGINT-ignoring control child still ignores it.
 	childCmd = "echo " + childReady + "; " + childCmd
 	cmd.Env = append(os.Environ(), "SIDECAR_SIGNAL_CHILD=1", "SIDECAR_LENS="+lensStub(t), "SIDECAR_CHILD_CMD="+childCmd)
 	// Its own process group, so the test can deliver SIGINT to the whole tree exactly as a tty
