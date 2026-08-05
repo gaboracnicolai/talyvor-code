@@ -6,7 +6,7 @@
 // panel emit) over this.
 
 import { Agent, type Result } from "./loop-pure";
-import { defaultTools, lensLoopModel, type CompleteCapable } from "./loop-tools";
+import { defaultTools, lensLoopModel, type CompleteCapable, type Confirm } from "./loop-tools";
 import { lensEmbedder, loadRetriever, type LensEmbedCapable } from "./retrieval-pure";
 
 // IterativeDeps injects everything the loop needs — the Lens client is the only
@@ -21,6 +21,10 @@ export interface IterativeDeps {
   maxSteps?: number;
   signal?: AbortSignal;
   onUsage?: (inputTokens: number, outputTokens: number) => void;
+  // ⚠ THE CONFIRMATION SURFACE, INJECTED. Omitting it does not widen what may run: the runner
+  // refuses anything outside the allowlist rather than auto-approving it. It is optional so this
+  // module stays vscode-free and headless-testable, not so that callers may skip the bound.
+  confirm?: Confirm;
 }
 
 export interface IterativeOutcome {
@@ -35,7 +39,7 @@ export interface IterativeOutcome {
 export async function runIterativeLoop(deps: IterativeDeps): Promise<IterativeOutcome> {
   const emb = lensEmbedder(deps.lens, deps.workspaceId, deps.issueId);
   const retriever = await loadRetriever(deps.root, emb); // null when no index on disk (honest)
-  const tools = defaultTools(deps.root, retriever);
+  const tools = defaultTools(deps.root, retriever, deps.confirm);
   const model = lensLoopModel(deps.lens, {
     model: deps.model,
     workspaceId: deps.workspaceId,

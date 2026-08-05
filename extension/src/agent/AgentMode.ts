@@ -202,6 +202,23 @@ export class AgentMode {
         issueId: config.activeIssue,
         onUsage: (inTok, outTok) =>
           this.recordCost(inTok, outTok, config.activeIssue, "agent-loop"),
+        // ⚠ THE CONFIRMATION SURFACE. The agent's `run` tool hands a model-authored string to
+        // `sh -c`; anything outside the build/test/lint/vcs-read allowlist stops here and is shown
+        // to the user EXACTLY as it would run, with what is unusual about it named — a prompt that
+        // showed the whole command and asked the user to spot the problem is how people learn to
+        // click yes. Commands that cannot be parsed never reach this at all: they are refused,
+        // because nobody could know what they were agreeing to.
+        confirm: async (command, reason) => {
+          channel.appendLine(`  ⏸ waiting for confirmation: ${command}\n     (${reason})`);
+          const choice = await vscode.window.showWarningMessage(
+            `Run this command?\n\n${command}`,
+            { modal: true, detail: `Outside the allowlist: ${reason}` },
+            "Run once",
+          );
+          const approved = choice === "Run once";
+          channel.appendLine(approved ? "  ▸ approved" : "  ▸ declined — not run");
+          return approved;
+        },
       });
 
       if (!indexed) {
