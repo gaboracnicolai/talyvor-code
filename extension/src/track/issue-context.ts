@@ -12,7 +12,6 @@ import {
   buildAgentCompletionComment,
   formatIssueContext,
   isValidIssueIdentifier,
-  pickIssuesForSync,
 } from "./issue-context-pure";
 
 export class IssueContextProvider {
@@ -106,27 +105,14 @@ export class IssueContextProvider {
     return new Map(this.sessionCostByIssue);
   }
 
-  // syncCostToTrack reads the current rollup, GETs each issue's
-  // stored cost, adds the session delta, PATCHes back, then
-  // zeros the local bucket so we don't double-apply on the next
-  // tick. Best-effort throughout — any HTTP failure is swallowed.
-  async syncCostToTrack(workspaceId: string): Promise<{ synced: number }> {
-    const targets = pickIssuesForSync(this.sessionCostByIssue);
-    let synced = 0;
-    for (const { issueId, costUsd } of targets) {
-      try {
-        const issue = await this.trackClient.getIssue(workspaceId, issueId);
-        if (!issue || !issue.id) continue;
-        const next = issue.aiCostUsd + costUsd;
-        await this.trackClient.updateIssueCost(workspaceId, issue.id, next);
-        this.sessionCostByIssue.set(issueId, 0);
-        synced++;
-      } catch {
-        // best-effort — leave the bucket so the next tick retries
-      }
-    }
-    return { synced };
-  }
+  // ⚠ syncCostToTrack WAS HERE AND IS DELETED ON PURPOSE.
+  //
+  // It read each issue's stored cost, added a locally-ESTIMATED session delta, and PATCHed the sum
+  // back — an absolute write derived from a number that hardcoded one price for every model. Lens
+  // writes the same column from the real per-request cost. Two writers, one column, no ordering.
+  //
+  // Nothing replaces it here: the correct writer is Lens, and it is already deployed.
+
 
   // pushAgentCompletionComment writes the standard "agent task
   // completed" comment to Track. Called from AgentMode after a

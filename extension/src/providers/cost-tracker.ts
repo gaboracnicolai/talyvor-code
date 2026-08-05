@@ -29,6 +29,12 @@ export interface RecordEvent {
 // estimate cost without waiting on Lens to report back. Real cost
 // reconciliation still happens via Lens analytics; this is the
 // "what did I just spend?" indicator the status bar shows.
+// ⚠ ONE PRICE FOR EVERY MODEL, AND THAT IS WHY THE OUTPUT MUST BE LABELLED. These are Haiku's
+// rates. A Sonnet call is understated ~4x and an Opus call ~20x. This function survives ONLY to
+// drive the status-bar indicator ("what did I just spend?"), which now renders it as `~$x.xx` and
+// says in its tooltip that it is a local estimate and not the bill. It no longer feeds any WRITE:
+// the client-side PATCH to Track that used it is deleted, because Lens records the real
+// per-request cost server-side and Track credits the issue from it.
 const HAIKU_INPUT_PER_TOKEN_USD = 0.25 / 1_000_000;
 const HAIKU_OUTPUT_PER_TOKEN_USD = 1.25 / 1_000_000;
 

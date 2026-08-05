@@ -88,28 +88,16 @@ export class TrackClient {
     }
   }
 
-  // updateIssueCost is best-effort. Lens normally writes back to
-  // Track on its own; the IDE only calls this when the user
-  // explicitly requests a re-sync from the cost dashboard.
-  async updateIssueCost(
-    workspaceId: string,
-    issueId: string,
-    costUsd: number,
-  ): Promise<void> {
-    if (!this.isConfigured() || !workspaceId || !issueId) return;
-    try {
-      await fetch(
-        `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues/${encodeURIComponent(issueId)}`,
-        {
-          method: "PATCH",
-          headers: this.headers(),
-          body: JSON.stringify({ ai_cost_usd: costUsd }),
-        },
-      );
-    } catch {
-      // Best-effort — swallowed.
-    }
-  }
+  // ⚠ updateIssueCost WAS HERE AND IS DELETED ON PURPOSE — do not reintroduce it.
+  //
+  // It PATCHed an ABSOLUTE total (issue.aiCostUsd + delta) computed from a LOCAL estimate, racing
+  // Lens's own exactly-once syncer for the same column. Both wrote issues.ai_cost_usd; last writer
+  // won; the `catch {}` beneath it made every loss silent.
+  //
+  // Lens now records the issue itself: request_attribution gained request_id (Lens migration 0116)
+  // and /v1/api/spend/by-request emits issue_id, and Track's syncer prefers that issue over the
+  // feature (Track a962b0c). Attribution arrives server-side from the authoritative cost, so a
+  // second client-side writer is not a redundancy — it is a double-count with a worse number.
 
   // addComment posts a comment to a Track issue. Used by the
   // agent flow to leave "agent task completed" notes alongside
