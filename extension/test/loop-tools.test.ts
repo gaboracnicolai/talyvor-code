@@ -88,13 +88,20 @@ async function testEditTool_RefusesEscape(): Promise<void> {
 
 // ─── run ───────────────────────────────────────────────
 
+// ⚠ THESE PASS AN EXPLICIT ALWAYS-YES CONFIRMER RATHER THAN THE ALLOWLIST BEING WIDENED TO SUIT
+// THEM. `echo` and `exit` are not build, test, lint or vcs-read commands, so the bound added in
+// cmdguard-pure correctly stops them unattended. Adding them to the allowlist would have changed
+// the product to make a test pass; supplying the confirmation these tests are simulating keeps the
+// assertion about what it was always about — that run captures an exit code and stdout.
+const alwaysConfirm = async (): Promise<boolean> => true;
+
 async function testRunTool_CapturesExitAndOutput(): Promise<void> {
   const root = tmpRoot();
   try {
-    const ok = await newRunTool(root).run(JSON.stringify({ cmd: "echo hello-run" }));
+    const ok = await newRunTool(root, undefined, alwaysConfirm).run(JSON.stringify({ cmd: "echo hello-run" }));
     assert(ok.includes("exit 0") && ok.includes("hello-run"), "run captures exit 0 + stdout");
     // A non-zero exit is an OBSERVATION, not a thrown error (the model re-plans on it).
-    const bad = await newRunTool(root).run(JSON.stringify({ cmd: "exit 3" }));
+    const bad = await newRunTool(root, undefined, alwaysConfirm).run(JSON.stringify({ cmd: "exit 3" }));
     assert(bad.includes("exit 3"), "run reports a non-zero exit as an observation, not an error");
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -178,7 +185,7 @@ async function testIntegration_LoopDrivesRealTools(): Promise<void> {
     ];
     let i = 0;
     const model: Model = { complete: async () => replies[i++] ?? `{"tool":"done","args":{"summary":"x"}}` };
-    const res = await new Agent(model, defaultTools(root, null), { maxSteps: 10 }).run("build out.go");
+    const res = await new Agent(model, defaultTools(root, null, alwaysConfirm), { maxSteps: 10 }).run("build out.go");
 
     assert(res.done && res.stop === StopReason.Done, "loop finishes cleanly against real tools");
     assert(res.editedFiles.includes("out.go"), "edited file tracked");

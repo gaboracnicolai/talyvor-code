@@ -13,6 +13,7 @@ import * as path from "path";
 import { spawn } from "child_process";
 import { absolutise } from "./confine-pure";
 import { renderUnifiedDiff, type DiffLine } from "./agent-pure";
+import { check } from "./cmdguard-pure";
 import { Registry, type Message, type Model, type Tool } from "./loop-pure";
 import type { RetrievedChunk } from "./retrieval-pure";
 
@@ -138,7 +139,17 @@ function runCommand(cmd: string, cwd: string, timeoutMs: number): Promise<RunRes
   });
 }
 
-export function newRunTool(root: string, timeoutMs = DEFAULT_RUN_TIMEOUT_MS): Tool {
+// Confirm asks the user about ONE command, showing the exact string and what is unusual about it.
+// It resolves true only on an explicit approval.
+export type Confirm = (command: string, reason: string) => Promise<boolean>;
+
+// newRunTool builds the runner.
+//
+// ⚠ AN OMITTED confirm MEANS UNATTENDED, AND UNATTENDED MEANS REFUSE — never auto-approve.
+// A loop running with nobody watching is exactly where an unattended `curl | sh` would be least
+// noticed, so the absence of a human is the strongest reason to stop rather than a reason to
+// proceed. This mirrors NewRunToolWithConfirm in the Go agent, deliberately.
+export function newRunTool(root: string, timeoutMs = DEFAULT_RUN_TIMEOUT_MS, confirm?: Confirm): Tool {
   return {
     name: () => "run",
     description: () =>
@@ -147,6 +158,28 @@ export function newRunTool(root: string, timeoutMs = DEFAULT_RUN_TIMEOUT_MS): To
       const a = JSON.parse(argsRaw) as { cmd?: string };
       const cmd = (a.cmd ?? "").trim();
       if (cmd === "") throw new Error("run: empty command");
+
+      // ⚠ THE BOUND. Until this, the only limits on a model-authored string reaching `sh -c` were a
+      // timeout and a cwd — neither of which stops a command, only a slow one. See cmdguard-pure
+      // for why this is an allowlist and why it parses instead of prefix-matching.
+      const v = check(cmd);
+      if (v.decision === "refuse") {
+        // An OBSERVATION, not a throw: the model re-plans on it and can propose something the
+        // guard can actually read, which is more useful than aborting the loop.
+        return `$ ${cmd}\nREFUSED: ${v.reason}\nThis command was not run. Rewrite it without that construct.`;
+      }
+      if (v.decision === "confirm") {
+        // ⚠ REFUSE IS NEVER DOWNGRADED TO CONFIRM — note this branch is unreachable for anything
+        // unparseable, so no prompt can ever be shown for a command whose effect is unknowable.
+        const why =
+          confirm === undefined
+            ? "no interactive surface, so it could not be confirmed — commands outside the allowlist are refused unattended, never auto-approved"
+            : "declined by the user";
+        if (confirm === undefined || !(await confirm(cmd, v.reason))) {
+          return `$ ${cmd}\nNOT RUN: ${why} (${v.reason})`;
+        }
+      }
+
       // A non-zero exit is a normal OBSERVATION (the model re-plans on it), never a throw.
       const res = await runCommand(cmd, root, timeoutMs);
       return truncate(`$ ${cmd}\nexit ${res.exitCode}\n${res.output}`);
@@ -185,12 +218,15 @@ export function newSearchTool(ret: RetrieverLike | null, k = 6): Tool {
 
 // defaultTools builds the standard agent tool set for a workspace root + (optional)
 // retriever. A null retriever leaves search available but note-only (no index built).
-export function defaultTools(root: string, ret: RetrieverLike | null): Registry {
+// ⚠ THE SEAM IS CARRIED THROUGH, not dropped here. A defaultTools that built an unconfirmed runner
+// would leave every real caller unbounded while the tests of newRunTool stayed green — the bound
+// would exist and protect nothing. Omitting confirm still means refuse, never auto-approve.
+export function defaultTools(root: string, ret: RetrieverLike | null, confirm?: Confirm): Registry {
   const reg = new Registry();
   reg.register(newSearchTool(ret, 6));
   reg.register(newReadTool(root));
   reg.register(newEditTool(root));
-  reg.register(newRunTool(root));
+  reg.register(newRunTool(root, DEFAULT_RUN_TIMEOUT_MS, confirm));
   return reg;
 }
 
