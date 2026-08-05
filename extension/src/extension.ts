@@ -100,10 +100,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     void issueProvider.setActiveIssue(config.activeIssue, config.workspaceId);
   }
 
-  if (config.workspaceId) {
-    statusBar.startCostSync(issueProvider, config.workspaceId);
-  }
-
   // Completion provider registered for every file. setOnUpdate
   // lets the provider refresh the status bar after each successful
   // completion without holding a reference to the bar itself.
@@ -266,12 +262,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       trackClient = new TrackClient(config.trackUrl, config.trackApiKey);
       docsClient = new DocsClient(config.docsUrl, config.docsApiKey);
       refreshStatusBar();
-      // Restart sync with the (possibly new) workspaceId.
-      if (config.workspaceId) {
-        statusBar.startCostSync(issueProvider, config.workspaceId);
-      } else {
-        statusBar.stopCostSync();
-      }
     }),
     statusBar,
   );

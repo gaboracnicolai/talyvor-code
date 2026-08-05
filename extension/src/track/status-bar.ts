@@ -4,15 +4,13 @@
 // the sync is in flight.
 
 import * as vscode from "vscode";
+import { costDisclaimerLines, formatSessionCost } from "./cost-label-pure";
 import type { LensConfig } from "../lens/types";
-import type { IssueContextProvider } from "./issue-context";
 import type { ScopeManager } from "../scope/scope-manager";
 import { getModel } from "../model/models-pure";
 
 export class TalyvorStatusBar implements vscode.Disposable {
   private readonly item: vscode.StatusBarItem;
-  private costSyncTimer: ReturnType<typeof setInterval> | undefined;
-  private syncing = false;
   private lastConfig: LensConfig | undefined;
   private lastSessionCost = 0;
   private lastTokens = 0;
@@ -54,19 +52,21 @@ export class TalyvorStatusBar implements vscode.Disposable {
       this.item.command = "workbench.action.openSettings";
       return;
     }
-    if (this.syncing) {
-      this.item.text = "$(sync~spin) Syncing…";
-      this.item.tooltip = "Syncing AI cost to Track…";
-      this.item.command = undefined;
-      return;
-    }
-    const cost = `$${this.lastSessionCost.toFixed(2)}`;
+    // ⚠ LABELLED AS AN ESTIMATE, because the bar renders this figure directly beside an ISSUE
+    // IDENTIFIER and Track shows a number for that same issue. A reader has every reason to take
+    // them for the same quantity, and they are not: this is a LOCAL estimate of THIS SESSION at one
+    // hardcoded price (Haiku's), so it understates Haiku by ~4x and Opus by ~20x, and it counts only
+    // what this editor did. Track's figure is the authoritative per-request cost for the whole
+    // issue, from Lens. The "~" and the tooltip are what keep a 20x-wrong number from reading as
+    // the bill.
+    const cost = formatSessionCost(this.lastSessionCost);
     const scopeName = this.scopeManager?.activeName() ?? "";
     const scopeChip = scopeName ? ` | $(filter) ${scopeName}` : "";
     if (!cfg.activeIssue) {
       this.item.text = `$(sparkle) Talyvor${scopeChip} | ${cost}`;
       this.item.tooltip = [
         `Session cost: ${cost} (${this.lastTokens.toLocaleString()} tokens)`,
+        ...costDisclaimerLines(),
         `Model: ${modelLabel(cfg.model)}`,
         scopeName ? `Scope: ${this.scopeDescription(scopeName)}` : "Scope: (all files)",
         "Click to set an active issue.",
@@ -91,51 +91,25 @@ export class TalyvorStatusBar implements vscode.Disposable {
     // accept the small coupling so the tooltip can show a title.
     const parts = [`Active issue: ${cfg.activeIssue}`];
     parts.push(`Session cost: ${costStr} (${this.lastTokens.toLocaleString()} tokens)`);
+    // ⚠ The two numbers a user can see for this issue are different quantities. Say so here, where
+    // they are looking, rather than trusting them to know.
+    parts.push(...costDisclaimerLines(cfg.activeIssue));
     parts.push(`Model: ${modelLabel(cfg.model)}`);
     parts.push(scopeName ? `Scope: ${this.scopeDescription(scopeName)}` : "Scope: (all files)");
     parts.push("Click to change issue · `Talyvor: Set Context Scope` to change scope · `Talyvor: Select AI Model` to change model");
     return parts.join("\n");
   }
 
-  // startCostSync wires the 5-minute timer that pushes session
-  // cost to Track. Best-effort throughout — sync failures show in
-  // the tooltip but never raise to the user.
-  startCostSync(
-    issueProvider: IssueContextProvider,
-    workspaceId: string,
-    intervalMs = 5 * 60 * 1000,
-  ): void {
-    this.stopCostSync();
-    if (!workspaceId) return;
-    this.costSyncTimer = setInterval(() => {
-      void this.runSync(issueProvider, workspaceId);
-    }, intervalMs);
-  }
-
-  stopCostSync(): void {
-    if (this.costSyncTimer) {
-      clearInterval(this.costSyncTimer);
-      this.costSyncTimer = undefined;
-    }
-  }
-
-  private async runSync(
-    provider: IssueContextProvider,
-    workspaceId: string,
-  ): Promise<void> {
-    this.syncing = true;
-    this.render();
-    try {
-      await provider.syncCostToTrack(workspaceId);
-    } catch {
-      // best-effort — never fail the editor
-    }
-    this.syncing = false;
-    this.render();
-  }
+  // ⚠ startCostSync / stopCostSync / runSync WERE HERE AND ARE DELETED.
+  //
+  // The five-minute timer existed only to drive the client-side cost PATCH, which is gone: Lens
+  // records per-issue spend server-side from the real cost (migration 0116 + issue_id on
+  // /v1/api/spend/by-request; Track a962b0c prefers it over the feature). Keeping a timer that
+  // calls nothing would be worse than deleting it — it reads as working sync to the next person.
+  //
+  // The "Syncing…" state went with it: there is nothing to sync from here any more.
 
   dispose(): void {
-    this.stopCostSync();
     this.item.dispose();
   }
 }
