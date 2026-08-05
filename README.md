@@ -185,6 +185,35 @@ Phase 1 ships:
 
 Roadmap: inline completions, streaming chat, full agent mode, Track + Docs integration parity. See [`jetbrains/README.md`](jetbrains/README.md) for the full plugin-side write-up.
 
+## Attributing other tools' spend — `talyvor-code exec`
+
+Talyvor Code attributes its own spend to the issue you are working on. Claude Code pointed straight
+at Lens attributes **nothing**: every request is recorded as unattributed, so the per-issue cost is
+empty for exactly the sessions that cost the most. The issue identifier only exists on your machine,
+next to the checkout, so this cannot be fixed on the server.
+
+```bash
+talyvor-code exec -- claude
+talyvor-code exec -- claude -p "explain internal/proxy"
+talyvor-code --issue ENG-42 exec -- claude   # explicit beats detected
+```
+
+It starts a proxy on a free loopback port, points the child at it with `ANTHROPIC_BASE_URL`, and
+adds the issue identifier and your Lens credential to each request. It prints what it detected —
+including when it detected nothing, which is recorded as unattributed rather than guessed.
+
+- **It never reads your prompts.** The request body is streamed to Lens without being parsed,
+  buffered, logged or inspected. Pinned by a test that fails if a prompt is ever written down.
+- **It never sends your branch name**, only the identifier — branch names carry customer names and
+  unreleased codenames.
+- **It does not touch your claude.ai login.** No API key is planted in the child's environment,
+  because setting one makes Claude Code disable your connectors. The proxy authenticates to Lens
+  itself, so the child needs no key of its own.
+- **Loopback only**, and it dies with the child on exit, crash and Ctrl-C.
+
+Supported today: **Claude Code**, via `ANTHROPIC_BASE_URL`. **Cursor and Codex are not supported** —
+see `internal/sidecar` for what would be needed.
+
 ## MCP integration
 
 Talyvor Code ships an MCP server (`talyvor-code serve`) so Claude Code, Cursor agents, and other MCP-aware clients can plug into your coding context. The server binds `127.0.0.1` by default and requires a bearer token on every request — set `TALYVOR_MCP_TOKEN` to a stable secret (or copy the token printed to stderr on start). Add to your client's MCP config, sending the token in the `Authorization` header:
