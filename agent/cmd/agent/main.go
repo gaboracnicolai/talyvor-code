@@ -51,6 +51,13 @@ var version = "0.1.0"
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout, os.Stderr); err != nil {
+		// ⚠ A CHILD'S EXIT STATUS IS REPRODUCED, NOT FLATTENED. `talyvor-code exec -- npm test`
+		// is worthless in CI if a failing child reports success, and it is not an "error:" to
+		// report either — the child already said what went wrong.
+		var code exitCode
+		if errors.As(err, &code) {
+			os.Exit(int(code))
+		}
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
@@ -150,6 +157,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runCommit(os.Stdin, stdout, stderr, cfg, rest)
 	case "serve":
 		return runServe(stdout, stderr, cfg, rest)
+	case "exec":
+		return runExec(stdout, stderr, cfg, rest)
 	case "init":
 		return runInit(os.Stdin, stdout, stderr, cfg)
 	case "context":
@@ -185,6 +194,7 @@ COMMANDS
   commit     Generate a conventional commit message from staged changes
   docs       Search and query Talyvor Docs
   serve      Start the Talyvor Code MCP server
+  exec       Run another AI tool (e.g. claude) with this repo's issue attached
   init       Write starter .talyvor-rules and .talyvor-context files
   context    Show / generate / validate / edit the .talyvor-context file
   scope      List / use / clear / show / add .talyvor-scopes entries
