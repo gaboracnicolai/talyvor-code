@@ -44,7 +44,12 @@ UNRELATED_TEST = "TestCloseReleasesThePort"
 PLANT = ('\tfor _, name := range emptiedCredentialVars {\n'
          '\t\tout = append(out, name+"=")\n'
          '\t}')
-CONCAT = "slices.Concat(RedirectVars, emptiedCredentialVars, droppedCredentialVars)"
+CONCAT = "slices.Concat(RedirectVars, OpenAIRedirectVars, emptiedCredentialVars, droppedCredentialVars)"
+# ⚠ THE EMPTIED LIST GREW A SECOND NAME when the OpenAI door landed, and these anchors are written
+# to MATCH THE WHOLE LIST rather than its last line — the previous form was `"ANTHROPIC_API_KEY",\n}`,
+# which found nothing the moment a name was added below it. Four controls reported NOT RUN rather
+# than passing quietly, which is the only reason the drift was visible at all.
+EMPTIED_LIST = '\t"ANTHROPIC_API_KEY",\n\t"OPENAI_API_KEY",\n}'
 
 
 def sha(p):
@@ -84,12 +89,12 @@ CONTROLS = [
 
     Control("C4", "stop replacing the name, so the developer's OWN key reaches the child and their "
                   "account is billed for work the banner attributes to Lens",
-            [(SIDECAR, CONCAT, "slices.Concat(RedirectVars, droppedCredentialVars)", 1)],
+            [(SIDECAR, CONCAT, "slices.Concat(RedirectVars, OpenAIRedirectVars, droppedCredentialVars)", 1)],
             REPLACE_TEST, VALUE_TEST),
 
     Control("C5", "'complete' the fix by emptying ANTHROPIC_AUTH_TOKEN too — measured to satisfy no "
                   "client, and a name Claude Code counts as an auth source",
-            [(SIDECAR, '\t"ANTHROPIC_API_KEY",\n}', '\t"ANTHROPIC_API_KEY",\n\t"ANTHROPIC_AUTH_TOKEN",\n}', 1)],
+            [(SIDECAR, EMPTIED_LIST, EMPTIED_LIST.replace('}', '\t"ANTHROPIC_AUTH_TOKEN",\n}'), 1)],
             TOKEN_TEST, VALUE_TEST),
 
     Control("C6", "plant the name twice — which value the child reads is exec(2)'s business",
@@ -107,14 +112,15 @@ CONTROLS = [
     Control("C7", "make the guard ask the package which name to check, then rename it (vacuity demo)",
             [(TEST, 'strings.CutPrefix(kv, "ANTHROPIC_API_KEY=")',
               'strings.CutPrefix(kv, emptiedCredentialVars[0]+"=")', 1),
-             (SIDECAR, '\t"ANTHROPIC_API_KEY",\n}', '\t"ANTHROPIC_NOT_A_NAME_ANY_CLIENT_READS",\n}', 1)],
+             (SIDECAR, EMPTIED_LIST,
+              EMPTIED_LIST.replace('"ANTHROPIC_API_KEY"', '"ANTHROPIC_NOT_A_NAME_ANY_CLIENT_READS"'), 1)],
             VALUE_TEST, REDIRECT_TEST, expect_red=False),
 
     # ⚠ THE REFACTOR REGRESSION. This merge rewrote the drop-set from a nested append() into
     # slices.Concat, and a rewrite that quietly stops covering the redirects would leave a
     # developer's stale ANTHROPIC_BASE_URL in place beside ours.
     Control("C8", "drop RedirectVars out of the replaced set — the previous merge's finding returns",
-            [(SIDECAR, CONCAT, "slices.Concat(emptiedCredentialVars, droppedCredentialVars)", 1)],
+            [(SIDECAR, CONCAT, "slices.Concat(OpenAIRedirectVars, emptiedCredentialVars, droppedCredentialVars)", 1)],
             REDIRECT_TEST, VALUE_TEST),
 ]
 

@@ -109,4 +109,11 @@ func printExecBanner(w io.Writer, s *sidecar.Sidecar, command, issue string) {
 	} else {
 		fmt.Fprintln(w, "  your claude.ai login and connectors are untouched")
 	}
+	// ⚠ THE SAME SENTENCE IS OWED FOR THE SECOND PROVIDER. `exec -- aider --model gpt-4o` reached
+	// api.openai.com on the developer's own key and put nothing on Lens; it now goes through the
+	// proxy, which moves the bill. Withholding someone's key is worth a line whichever key it is.
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		fmt.Fprintln(w, "  your OPENAI_API_KEY is NOT passed to the child either — OpenAI-shaped requests go")
+		fmt.Fprintln(w, "  through Lens too, so Lens is billed rather than your own OpenAI account")
+	}
 }

@@ -8,8 +8,12 @@
 // request reaches Lens the branch it came from is gone. So this is our job and nobody else's.
 //
 // ⚠ WHAT IT IS. `talyvor-code exec -- claude` starts a loopback proxy, points the child at it with
-// ANTHROPIC_BASE_URL, adds the issue identifier and the Lens credential to each request, and
-// forwards to Lens. The child needs no configuration and no key.
+// every redirect name it honours, adds the issue identifier and the Lens credential to each
+// request, and forwards to Lens. The child needs no configuration and no key.
+//
+// ⚠ IT HANDS OUT TWO DOORS AND ROUTES BY WHICH ONE WAS USED. The root is Anthropic's; openAIDoor
+// is OpenAI's. Nothing here sniffs a body or infers a protocol from a path — `/v1/models` is a
+// route both protocols define, and a guess there has no tie-breaker.
 //
 // ⚠ IT NEVER READS THE PROMPT. The request body is streamed from the child to Lens without being
 // parsed, buffered, logged or inspected — see forward(). This is the most sensitive thing in the
@@ -24,14 +28,15 @@
 // Stated plainly, because a tool that quietly covers less than it appears to is worse than one
 // with a documented edge.
 //
-//   - CURSOR IS NOT SUPPORTED. It is not installed on the machine this was built on, so what it
-//     honours could not be established rather than guessed. OPENAI_BASE_URL is an assumption, not
-//     a finding, and shipping an untested redirect would produce silent unattributed spend that
-//     looks like success.
+//   - CURSOR IS NOT SUPPORTED, AND THE OPENAI DOOR DOES NOT CHANGE THAT. What OPENAI_BASE_URL does
+//     for aider is now measured; what CURSOR honours is still unestablished, because it is not
+//     installed on the machine this was built on and is closed source. The obstacle below is the
+//     structural one and it stands whatever it honours: the redirect travels through the child's
+//     environment, so a GUI application not launched from this shell is out of reach.
 //   - CODEX IS NOT SUPPORTED. It is installed here but its platform binary is missing, so it could
-//     not be run at all. Lens does expose /v1/proxy/openai/*, so an OpenAI-format client is
-//     plausible — but this sidecar only maps onto the Anthropic passthrough, and no OpenAI-shaped
-//     client has been put through it.
+//     not be run at all. An OpenAI-shaped client HAS now been put through this sidecar (aider on
+//     /v1/proxy/openai/*), so the mapping it would need exists — what is missing is a codex that
+//     runs, not a route.
 //   - ANY TOOL WITH A HARDCODED ENDPOINT is out of reach by construction, as is any GUI application
 //     not launched from the shell this command runs in — the redirect travels through the child's
 //     environment and nowhere else.
@@ -45,10 +50,20 @@
 //     Same instrument, same prompt, one billable POST /v1/messages now reaches Lens carrying the
 //     Lens bearer token and X-Talyvor-Feature: code-exec, and Claude Code's rows are byte-for-byte
 //     what they were before the change.
-//     ⚠ WHAT IS STILL NOT CLAIMED: aider's OPENAI path is a SEPARATE mapping. This sidecar speaks
-//     only the Anthropic passthrough, so `aider --model anthropic/…` is metered and
-//     `aider --model gpt-4o` is not the same claim and is not made. Lens does expose
-//     /v1/proxy/openai/*, and no OpenAI-shaped client has ever been put through this sidecar.
+//     ⚠ AND ITS OPENAI PATH IS NOW METERED TOO, WHICH IT WAS NOT — the same defect one provider
+//     over, and the one this package had written down as "not claimed" rather than measured.
+//     `exec -- aider --model gpt-4o` reached api.openai.com ON THE DEVELOPER'S OWN KEY, put ZERO
+//     requests on Lens, exited 0 and printed the banner. Counted at loopback recorders with the
+//     real binary: 1 request at whatever destination the developer's environment named, 0 at Lens;
+//     with no redirect set at all the reply was `Incorrect API key provided: sk-not-a***…robe`,
+//     byte-identical to what curl gets from api.openai.com for that key, so the request left the
+//     machine. See OpenAIRedirectVars and openAIDoor; it now arrives at
+//     /v1/proxy/openai/v1/chat/completions carrying the Lens bearer token, X-Talyvor-Feature and
+//     the issue.
+//     ⚠ WHAT IS STILL NOT CLAIMED: that a given Lens deployment has an OpenAI provider key
+//     configured — without one the child gets an error, which is the loud direction. And every
+//     OTHER provider Lens exposes (google, bedrock, mistral, groq, vllm) is still unmapped: no
+//     client has been put through those doors, so no redirect is written for them.
 //     ⚠ AND THE SEAM WAS RE-CHECKED RATHER THAN ASSUMED SAFE: forward() copies an ALLOWLIST, so the
 //     child's x-api-key never reaches Lens — confirmed on the wire in the end-to-end run, where the
 //     request that arrived carried none.
@@ -198,6 +213,38 @@ var RedirectVars = []string{
 	"ANTHROPIC_API_BASE",
 }
 
+// openAIDoor is the path prefix the OpenAI redirect names are pointed at, and the prefix forward()
+// routes on. It is ONE constant because the two halves are one decision: hand out a door and route
+// what arrives at it.
+//
+// ⚠ THE DOOR DECIDES THE PROVIDER, NOT THE SHAPE OF THE REQUEST. Sniffing would have to name a
+// protocol from a path, and `/v1/models` is a route both protocols define — a guess with no
+// tie-breaker. Which door the child was given is a fact, not an inference.
+const openAIDoor = "/openai"
+
+// OpenAIRedirectVars are every environment variable MEASURED to name the endpoint an OpenAI-shaped
+// client dials. Like RedirectVars, all of them are set, so no precedence between them can send the
+// child somewhere else.
+//
+// ⚠ THIS WAS THE LAST WAY `exec` COULD ANNOUNCE ATTRIBUTION AND DELIVER NONE. Counted at loopback
+// recorders with the real binary and aider 0.86.2, one prompt per row: `exec -- aider --model
+// gpt-4o` put ZERO requests on Lens and ONE on whatever destination the developer's own environment
+// named, exited 0, and printed the banner. With no redirect set at all it reached api.openai.com
+// itself and came back `Incorrect API key provided: sk-not-a***…robe` — byte-identical to what curl
+// gets from api.openai.com for that key, so the request left the machine. The control row on the
+// same instrument (an `anthropic/…` model) put one POST on Lens, which is what makes those zeros
+// readable as "went elsewhere" rather than "never tried".
+//
+// The value carries openAIDoor plus `/v1`: measured, the prefix in a base URL survives verbatim
+// into the request line (`.../openai/v1` ⇒ POST /openai/v1/chat/completions), and `/v1` is the
+// client's own only when the base carries it — so this makes the forwarded suffix identical to what
+// a client pointed straight at api.openai.com/v1 would write, which is the shape Lens already sees
+// from talyvor-code's own semantic index.
+var OpenAIRedirectVars = []string{
+	"OPENAI_BASE_URL",
+	"OPENAI_API_BASE",
+}
+
 // emptiedCredentialVars are set to an EMPTY value in the child's environment: the NAME is present,
 // and there is no string behind it that could be mistaken for a credential.
 //
@@ -211,8 +258,20 @@ var RedirectVars = []string{
 // aider's requirement is litellm's PRESENCE check — unset, it raises AuthenticationError locally
 // before opening a socket. Claude Code's is for an auth SOURCE, and an empty string is not one. So
 // one value serves both and no per-child matcher is needed.
+//
+// ⚠ OPENAI_API_KEY IS HERE ON ITS OWN MEASUREMENT, not by analogy with the row above. Same
+// instrument, aider 0.86.2 straight at a recorder, `--model gpt-4o`:
+//
+//	unset      0 requests — litellm raises AuthenticationError locally
+//	""         1 POST /chat/completions, and NO Authorization header at all
+//	"sk-…"     1 POST, carrying the value
+//
+// The empty state is stronger here than in the Anthropic case: the client sends no credential
+// header whatsoever, so nothing of the developer's reaches the seam even before forward()'s
+// allowlist drops it.
 var emptiedCredentialVars = []string{
 	"ANTHROPIC_API_KEY",
+	"OPENAI_API_KEY",
 }
 
 // droppedCredentialVars are removed outright rather than emptied.
@@ -266,14 +325,14 @@ var BypassVars = []string{
 // that rule further — there is no string in there to read.
 func (s *Sidecar) ChildEnv(env []string) []string {
 	replaced := func(kv string) bool {
-		for _, name := range slices.Concat(RedirectVars, emptiedCredentialVars, droppedCredentialVars) {
+		for _, name := range slices.Concat(RedirectVars, OpenAIRedirectVars, emptiedCredentialVars, droppedCredentialVars) {
 			if strings.HasPrefix(kv, name+"=") {
 				return true
 			}
 		}
 		return false
 	}
-	out := make([]string, 0, len(env)+len(RedirectVars)+len(emptiedCredentialVars))
+	out := make([]string, 0, len(env)+len(RedirectVars)+len(OpenAIRedirectVars)+len(emptiedCredentialVars))
 	for _, kv := range env {
 		if replaced(kv) {
 			continue // re-added below, or deliberately dropped
@@ -284,6 +343,12 @@ func (s *Sidecar) ChildEnv(env []string) []string {
 	// developer's stale value is a redirect we do not control.
 	for _, name := range RedirectVars {
 		out = append(out, name+"="+s.BaseURL())
+	}
+	// ⚠ THE OPENAI NAMES GET A DIFFERENT VALUE, NOT THE SAME ONE. The prefix is what tells forward()
+	// which passthrough this child's traffic belongs to; pointing them at the root would send an
+	// OpenAI body to Lens's Anthropic passthrough.
+	for _, name := range OpenAIRedirectVars {
+		out = append(out, name+"="+s.BaseURL()+openAIDoor+"/v1")
 	}
 	// ⚠ THE NAME, WITH NOTHING BEHIND IT. Anything non-empty here disables the developer's
 	// connectors; anything absent stops aider dialling at all.
@@ -346,9 +411,19 @@ func (s *Sidecar) forward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Lens exposes provider-native passthrough routes, so no translation is needed: an Anthropic
-	// request goes to the Anthropic passthrough exactly as the client wrote it.
-	target := s.upstream + "/v1/proxy/anthropic" + r.URL.Path
+	// Lens exposes provider-native passthrough routes, so no translation is needed: a request goes
+	// to its provider's passthrough exactly as the client wrote it.
+	//
+	// ⚠ WHICH PROVIDER IS DECIDED BY THE DOOR, NOT BY THE REQUEST. The root is Anthropic's — it is
+	// what Claude Code has always been handed — and openAIDoor is the OpenAI one. Nothing here
+	// inspects the body or guesses a protocol from a path.
+	provider, path := "anthropic", r.URL.Path
+	if rest, ok := strings.CutPrefix(r.URL.Path, openAIDoor+"/"); ok {
+		provider, path = "openai", "/"+rest
+	} else if r.URL.Path == openAIDoor {
+		provider, path = "openai", "/"
+	}
+	target := s.upstream + "/v1/proxy/" + provider + path
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery
 	}
