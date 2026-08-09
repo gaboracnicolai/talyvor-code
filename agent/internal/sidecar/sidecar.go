@@ -35,23 +35,23 @@
 //   - ANY TOOL WITH A HARDCODED ENDPOINT is out of reach by construction, as is any GUI application
 //     not launched from the shell this command runs in — the redirect travels through the child's
 //     environment and nowhere else.
-//   - AIDER RUNS BUT SPENDS NOTHING, AND THAT IS THIS PACKAGE'S NEXT MERGE. aider 0.86.2 honours
-//     both redirect names (measured), so the routing half now works — but ChildEnv drops
-//     ANTHROPIC_API_KEY on purpose, and aider REFUSES TO DIAL without one ("Missing Anthropic API
-//     Key"). Measured through a loopback recorder: keyless, ZERO requests; with any placeholder
-//     value, one POST /v1/messages arrives. So `exec -- aider` starts, prints a banner, and makes
-//     no billable call at all.
-//     ⚠ THE TWO CLIENTS PLACE OPPOSITE REQUIREMENTS ON ONE VARIABLE, so no single default serves
-//     both: Claude Code loses every claude.ai connector if a key IS set, aider does nothing if one
-//     is NOT. The fix is a per-child placeholder — never the Lens key, which a subprocess
-//     environment would expose to anything the child spawns. It is deliberately not in this change
-//     because the DEFAULT is a shipped, documented behaviour: the measured asymmetry argues for
-//     leaving it DROPPED and opting individual clients in, because an unlisted client fails LOUDLY
-//     (aider prints its error and exits) while a wrongly-listed one fails SILENTLY (connectors
-//     vanish behind one line of banner text).
-//     ⚠ THE PLACEHOLDER IS SAFE AT THE SEAM, measured rather than assumed: forward() copies an
-//     ALLOWLIST, so a child's x-api-key never reaches Lens. Driven with sentinels — both the
-//     child's placeholder and its OAuth Authorization were absent from what arrived upstream.
+//   - AIDER IS METERED AND WAS NOT. aider 0.86.2 honours both redirect names, so the ROUTING half
+//     has worked since the previous merge — but ChildEnv removed ANTHROPIC_API_KEY, and litellm
+//     raises "Missing Anthropic API Key" LOCALLY, before opening a socket. Measured end to end
+//     through the real binary against a fake Lens: `exec -- aider` put ZERO requests on Lens, exited
+//     0, and printed a banner saying the spend was attributed.
+//     ⚠ IT IS FIXED BY GIVING THE CHILD THE NAME AND NOT A CREDENTIAL — see ChildEnv. The two
+//     clients were believed to place opposite requirements on this variable; measured, they do not.
+//     Same instrument, same prompt, one billable POST /v1/messages now reaches Lens carrying the
+//     Lens bearer token and X-Talyvor-Feature: code-exec, and Claude Code's rows are byte-for-byte
+//     what they were before the change.
+//     ⚠ WHAT IS STILL NOT CLAIMED: aider's OPENAI path is a SEPARATE mapping. This sidecar speaks
+//     only the Anthropic passthrough, so `aider --model anthropic/…` is metered and
+//     `aider --model gpt-4o` is not the same claim and is not made. Lens does expose
+//     /v1/proxy/openai/*, and no OpenAI-shaped client has ever been put through this sidecar.
+//     ⚠ AND THE SEAM WAS RE-CHECKED RATHER THAN ASSUMED SAFE: forward() copies an ALLOWLIST, so the
+//     child's x-api-key never reaches Lens — confirmed on the wire in the end-to-end run, where the
+//     request that arrived carried none.
 //   - CONNECTORS ARE UNVERIFIED BEYOND THE WARNING. Claude Code prints "claude.ai connectors are
 //     disabled…" when a key is set and prints nothing when one is not, which is why no key is
 //     planted. That the connectors then FUNCTION through the redirect was not tested.
@@ -68,6 +68,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -197,10 +198,29 @@ var RedirectVars = []string{
 	"ANTHROPIC_API_BASE",
 }
 
-// droppedCredentialVars are removed from the child's environment rather than replaced. See
-// ChildEnv for why the sidecar plants nothing.
-var droppedCredentialVars = []string{
+// emptiedCredentialVars are set to an EMPTY value in the child's environment: the NAME is present,
+// and there is no string behind it that could be mistaken for a credential.
+//
+// ⚠ THIS IS A MEASUREMENT, NOT A COMPROMISE BETWEEN TWO CLIENTS. Counting requests that ARRIVE at a
+// loopback recorder, aider 0.86.2 and Claude Code 2.1.226:
+//
+//	unset      aider dials NOTHING (0 requests) · Claude Code connectors intact
+//	""         aider dials (1 POST /v1/messages) · Claude Code connectors intact, sends no x-api-key
+//	"sk-ant-…" aider dials · CLAUDE CODE PRINTS THE CONNECTOR WARNING
+//
+// aider's requirement is litellm's PRESENCE check — unset, it raises AuthenticationError locally
+// before opening a socket. Claude Code's is for an auth SOURCE, and an empty string is not one. So
+// one value serves both and no per-child matcher is needed.
+var emptiedCredentialVars = []string{
 	"ANTHROPIC_API_KEY",
+}
+
+// droppedCredentialVars are removed outright rather than emptied.
+//
+// ⚠ MEASURED, so this is a decision and not an omission: with ANTHROPIC_AUTH_TOKEN set and
+// ANTHROPIC_API_KEY absent, aider still dialled NOTHING. Planting this name satisfies no client,
+// and it is a name Claude Code counts as an auth source.
+var droppedCredentialVars = []string{
 	"ANTHROPIC_AUTH_TOKEN",
 }
 
@@ -225,34 +245,38 @@ var BypassVars = []string{
 
 // ChildEnv returns env with the child redirected at this sidecar.
 //
-// ⚠ IT REMOVES CREDENTIALS RATHER THAN ADDING ONE, and that is the opposite of the obvious design.
-// Established empirically against Claude Code 2.1.221: when ANTHROPIC_API_KEY is set it prints
-// "claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and
-// takes precedence over your claude.ai login" and the user silently loses every connector. When it
-// is unset, the connectors keep working and Claude Code sends its own claude.ai token, which the
-// sidecar replaces with the Lens key on the way out. So the child needs no key, and planting one
-// would break something the developer did not ask us to touch.
+// ⚠ IT GIVES THE CHILD A CREDENTIAL NAME AND NO CREDENTIAL, which is neither of the two obvious
+// designs. Established empirically against Claude Code 2.1.221 and re-measured on 2.1.226: when
+// ANTHROPIC_API_KEY holds a VALUE it prints "claude.ai connectors are disabled because
+// ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login"
+// and the user silently loses every connector. So a placeholder VALUE is out.
 //
-// ⚠ THAT RULE HAS A MEASURED COST AND IT IS NOT HIDDEN: aider makes NO CALL AT ALL without a key
-// ("Missing Anthropic API Key"), so it currently runs under exec and spends nothing anywhere. A
-// per-child placeholder credential is the fix and is deliberately not in this change — see the
-// package doc.
+// ⚠ AND SIMPLY REMOVING THE NAME HAD A MEASURED COST THAT WENT UNPAID FOR TWO RELEASES: aider 0.86.2
+// makes NO CALL AT ALL when the name is absent — litellm raises "Missing Anthropic API Key" LOCALLY,
+// before opening a socket — so `exec -- aider` started, printed a banner claiming the spend was
+// attributed, and spent nothing anywhere. Counted at a loopback recorder: 0 requests.
+//
+// The measured third state serves both: the name PRESENT and EMPTY. aider's check is for presence
+// and passes; Claude Code's is for an auth SOURCE, and an empty string is not one — it printed no
+// warning and sent no x-api-key, authenticating with its own claude.ai login exactly as before.
+// See emptiedCredentialVars for the table and credential_test.go for what it does not establish.
 //
 // The Lens key is never placed in the child's environment: the child does not need it, and a
-// subprocess environment is readable by anything else the child spawns.
+// subprocess environment is readable by anything else the child spawns. The empty value carries
+// that rule further — there is no string in there to read.
 func (s *Sidecar) ChildEnv(env []string) []string {
-	drop := func(kv string) bool {
-		for _, name := range append(append([]string{}, RedirectVars...), droppedCredentialVars...) {
+	replaced := func(kv string) bool {
+		for _, name := range slices.Concat(RedirectVars, emptiedCredentialVars, droppedCredentialVars) {
 			if strings.HasPrefix(kv, name+"=") {
 				return true
 			}
 		}
 		return false
 	}
-	out := make([]string, 0, len(env)+len(RedirectVars))
+	out := make([]string, 0, len(env)+len(RedirectVars)+len(emptiedCredentialVars))
 	for _, kv := range env {
-		if drop(kv) {
-			continue // replaced below, or deliberately dropped
+		if replaced(kv) {
+			continue // re-added below, or deliberately dropped
 		}
 		out = append(out, kv)
 	}
@@ -260,6 +284,11 @@ func (s *Sidecar) ChildEnv(env []string) []string {
 	// developer's stale value is a redirect we do not control.
 	for _, name := range RedirectVars {
 		out = append(out, name+"="+s.BaseURL())
+	}
+	// ⚠ THE NAME, WITH NOTHING BEHIND IT. Anything non-empty here disables the developer's
+	// connectors; anything absent stops aider dialling at all.
+	for _, name := range emptiedCredentialVars {
+		out = append(out, name+"=")
 	}
 	return out
 }

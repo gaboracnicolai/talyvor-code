@@ -326,6 +326,13 @@ func TestCloseReleasesThePort(t *testing.T) {
 // "claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set" and
 // drop the user's connectors. Leaving it unset keeps them, and the sidecar supplies the Lens
 // credential itself. So the tool must never plant one.
+//
+// ⚠ THIS TEST USED TO ASSERT THE NAME WAS ABSENT, AND ITS REASON FOR IT WAS WRONG — the corrected
+// rule is about the VALUE. Re-measured against Claude Code 2.1.226 by counting requests at a
+// loopback recorder: an EMPTY ANTHROPIC_API_KEY prints NO warning and sends NO x-api-key, while a
+// non-empty one prints the warning on the same instrument. Asserting the name was the accident that
+// left aider unable to dial for two releases (see credential_test.go). What must never appear is a
+// VALUE; the name itself is now planted deliberately and is pinned there.
 func TestTheChildEnvironmentRedirectsWithoutPlantingAKey(t *testing.T) {
 	up := newUpstream(t, nil)
 	s, _ := start(t, Config{LensURL: up.URL, LensAPIKey: "lens-key"})
@@ -337,12 +344,15 @@ func TestTheChildEnvironmentRedirectsWithoutPlantingAKey(t *testing.T) {
 		t.Errorf("ANTHROPIC_BASE_URL was not pointed at the sidecar:\n%s", joined)
 	}
 	for _, line := range env {
-		if strings.HasPrefix(line, "ANTHROPIC_API_KEY=") {
-			t.Errorf("a key was left in the child environment (%q) — this silently disables the user's claude.ai connectors", line)
+		if v, ok := strings.CutPrefix(line, "ANTHROPIC_API_KEY="); ok && v != "" {
+			t.Errorf("a key VALUE was left in the child environment (%q) — this silently disables the user's claude.ai connectors", line)
 		}
 		if strings.HasPrefix(line, "ANTHROPIC_AUTH_TOKEN=") {
 			t.Errorf("an auth token was left in the child environment (%q)", line)
 		}
+	}
+	if !strings.Contains(joined, "ANTHROPIC_API_KEY=") {
+		t.Errorf("the name is gone entirely, so aider dials nothing and spends nothing:\n%s", joined)
 	}
 	if !strings.Contains(joined, "PATH=/usr/bin") || !strings.Contains(joined, "HOME=/home/dev") {
 		t.Errorf("the rest of the environment was not preserved:\n%s", joined)

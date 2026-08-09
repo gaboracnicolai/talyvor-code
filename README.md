@@ -206,13 +206,18 @@ including when it detected nothing, which is recorded as unattributed rather tha
   buffered, logged or inspected. Pinned by a test that fails if a prompt is ever written down.
 - **It never sends your branch name**, only the identifier — branch names carry customer names and
   unreleased codenames.
-- **It does not touch your claude.ai login.** No API key is planted in the child's environment,
-  because setting one makes Claude Code disable your connectors. The proxy authenticates to Lens
-  itself, so the child needs no key of its own.
+- **It does not touch your claude.ai login.** No API key *value* is ever planted in the child's
+  environment — a value is what makes Claude Code disable your connectors, and it is also what
+  anything the child spawns could read. `ANTHROPIC_API_KEY` is set and left EMPTY: measured, that
+  is enough for a client that checks whether the name is present, and Claude Code does not count it
+  as an auth source. Your own key is replaced rather than forwarded, so Lens is billed and not your
+  Anthropic account. The proxy authenticates to Lens itself.
 - **Loopback only**, and it dies with the child on exit, crash and Ctrl-C.
 
-Supported today: **Claude Code**, via `ANTHROPIC_BASE_URL`. **Cursor and Codex are not supported** —
-see `internal/sidecar` for what would be needed.
+Supported today: **Claude Code**, and **aider with an `anthropic/…` model** — both driven against a
+loopback recorder and counted, not inferred. `aider --model gpt-4o` goes out over aider's OpenAI
+path, which this sidecar does not speak, so it is **not** metered. **Cursor and Codex are not
+supported** — see `internal/sidecar` for what would be needed.
 
 ## MCP integration
 
