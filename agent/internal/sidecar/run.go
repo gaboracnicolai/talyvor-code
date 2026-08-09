@@ -37,6 +37,18 @@ func Run(cfg Config, command []string, io_ Stdio, started func(*Sidecar)) (int, 
 		return 1, errors.New("no Lens API key configured: set TALYVOR_LENS_API_KEY " +
 			"(the sidecar authenticates to Lens on the child's behalf, so the child needs no key of its own)")
 	}
+	// ⚠ REFUSED FOR THE SAME REASON, ONE DOOR OVER. The check above exists because a proxy that
+	// cannot authenticate turns every request into a 401 that reads as the model being broken. This
+	// one is worse, because it reads as SUCCESS: the child works perfectly, the banner says the
+	// spend is attributed, and not one request has come near Lens.
+	//
+	// Refusing rather than unsetting the variable is deliberate. Unsetting it would silently move
+	// the developer's traffic — and their bill — from their own AWS or GCP account onto Talyvor's
+	// Lens balance, which is a decision about whose money is spent and not ours to make in passing.
+	// Refusing costs one `unset` and states the situation; the developer keeps the choice.
+	if reason := BypassReason(os.Environ()); reason != "" {
+		return 1, errors.New(reason)
+	}
 
 	s, err := Start(cfg)
 	if err != nil {
