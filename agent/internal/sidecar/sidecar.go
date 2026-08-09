@@ -35,6 +35,23 @@
 //   - ANY TOOL WITH A HARDCODED ENDPOINT is out of reach by construction, as is any GUI application
 //     not launched from the shell this command runs in — the redirect travels through the child's
 //     environment and nowhere else.
+//   - AIDER RUNS BUT SPENDS NOTHING, AND THAT IS THIS PACKAGE'S NEXT MERGE. aider 0.86.2 honours
+//     both redirect names (measured), so the routing half now works — but ChildEnv drops
+//     ANTHROPIC_API_KEY on purpose, and aider REFUSES TO DIAL without one ("Missing Anthropic API
+//     Key"). Measured through a loopback recorder: keyless, ZERO requests; with any placeholder
+//     value, one POST /v1/messages arrives. So `exec -- aider` starts, prints a banner, and makes
+//     no billable call at all.
+//     ⚠ THE TWO CLIENTS PLACE OPPOSITE REQUIREMENTS ON ONE VARIABLE, so no single default serves
+//     both: Claude Code loses every claude.ai connector if a key IS set, aider does nothing if one
+//     is NOT. The fix is a per-child placeholder — never the Lens key, which a subprocess
+//     environment would expose to anything the child spawns. It is deliberately not in this change
+//     because the DEFAULT is a shipped, documented behaviour: the measured asymmetry argues for
+//     leaving it DROPPED and opting individual clients in, because an unlisted client fails LOUDLY
+//     (aider prints its error and exits) while a wrongly-listed one fails SILENTLY (connectors
+//     vanish behind one line of banner text).
+//     ⚠ THE PLACEHOLDER IS SAFE AT THE SEAM, measured rather than assumed: forward() copies an
+//     ALLOWLIST, so a child's x-api-key never reaches Lens. Driven with sentinels — both the
+//     child's placeholder and its OAuth Authorization were absent from what arrived upstream.
 //   - CONNECTORS ARE UNVERIFIED BEYOND THE WARNING. Claude Code prints "claude.ai connectors are
 //     disabled…" when a key is set and prints nothing when one is not, which is why no key is
 //     planted. That the connectors then FUNCTION through the redirect was not tested.
@@ -164,6 +181,48 @@ func (s *Sidecar) Close() error {
 	return nil
 }
 
+// RedirectVars are every environment variable MEASURED to name the endpoint an Anthropic-shaped
+// client dials. All of them are pointed at the sidecar, so no precedence order between them can
+// send the child somewhere else.
+//
+// ⚠ ONE NAME IS NOT ENOUGH, AND THAT WAS A DEFECT RATHER THAN A REFINEMENT. This list held only
+// ANTHROPIC_BASE_URL. Measured by counting requests that ARRIVE at a loopback recorder: aider
+// 0.86.2 honours ANTHROPIC_API_BASE **in preference to** ANTHROPIC_BASE_URL — driven both ways
+// round, so the answer is about the name and not about which value was written first. A developer
+// with that variable in their shell therefore had the redirect silently overruled while the exec
+// banner announced that the spend was going to Lens. Claude Code 2.1.226 ignores the name entirely,
+// which is why nothing here noticed for two releases: the supported client is blind to it.
+var RedirectVars = []string{
+	"ANTHROPIC_BASE_URL",
+	"ANTHROPIC_API_BASE",
+}
+
+// droppedCredentialVars are removed from the child's environment rather than replaced. See
+// ChildEnv for why the sidecar plants nothing.
+var droppedCredentialVars = []string{
+	"ANTHROPIC_API_KEY",
+	"ANTHROPIC_AUTH_TOKEN",
+}
+
+// BypassVars name a provider this sidecar cannot carry. Lens exposes an Anthropic-NATIVE
+// passthrough; Bedrock and Vertex are a different wire protocol with a different credential, so
+// there is no URL that could be substituted here — the traffic simply leaves.
+//
+// ⚠ MEASURED, WITH POSITIVE PROOF OF THE DESTINATION rather than an absence: with
+// CLAUDE_CODE_USE_BEDROCK=1 and the Bedrock endpoint pointed at a second recorder, Claude Code
+// 2.1.226 sent ZERO requests to the sidecar and FIVE to that recorder, beginning with
+// GET /inference-profiles?type=SYSTEM_DEFINED. The control run (neither variable set) put 3 on the
+// sidecar and 0 on the alternate, so the instrument reads.
+//
+// ⚠ CLAUDE_CODE_USE_VERTEX is recorded on weaker evidence AND IS LISTED ANYWAY: zero requests
+// reach the sidecar, but where they go instead was not established (that path wants GCP
+// credentials this machine has none of). "The spend does not reach Lens" is the whole question
+// here, and that half is measured.
+var BypassVars = []string{
+	"CLAUDE_CODE_USE_BEDROCK",
+	"CLAUDE_CODE_USE_VERTEX",
+}
+
 // ChildEnv returns env with the child redirected at this sidecar.
 //
 // ⚠ IT REMOVES CREDENTIALS RATHER THAN ADDING ONE, and that is the opposite of the obvious design.
@@ -174,20 +233,70 @@ func (s *Sidecar) Close() error {
 // sidecar replaces with the Lens key on the way out. So the child needs no key, and planting one
 // would break something the developer did not ask us to touch.
 //
+// ⚠ THAT RULE HAS A MEASURED COST AND IT IS NOT HIDDEN: aider makes NO CALL AT ALL without a key
+// ("Missing Anthropic API Key"), so it currently runs under exec and spends nothing anywhere. A
+// per-child placeholder credential is the fix and is deliberately not in this change — see the
+// package doc.
+//
 // The Lens key is never placed in the child's environment: the child does not need it, and a
 // subprocess environment is readable by anything else the child spawns.
 func (s *Sidecar) ChildEnv(env []string) []string {
-	out := make([]string, 0, len(env)+1)
+	drop := func(kv string) bool {
+		for _, name := range append(append([]string{}, RedirectVars...), droppedCredentialVars...) {
+			if strings.HasPrefix(kv, name+"=") {
+				return true
+			}
+		}
+		return false
+	}
+	out := make([]string, 0, len(env)+len(RedirectVars))
 	for _, kv := range env {
-		switch {
-		case strings.HasPrefix(kv, "ANTHROPIC_BASE_URL="),
-			strings.HasPrefix(kv, "ANTHROPIC_API_KEY="),
-			strings.HasPrefix(kv, "ANTHROPIC_AUTH_TOKEN="):
-			continue // replaced or deliberately dropped
+		if drop(kv) {
+			continue // replaced below, or deliberately dropped
 		}
 		out = append(out, kv)
 	}
-	return append(out, "ANTHROPIC_BASE_URL="+s.BaseURL())
+	// Every redirect is set, not just the one this tool used to know about. A name left at the
+	// developer's stale value is a redirect we do not control.
+	for _, name := range RedirectVars {
+		out = append(out, name+"="+s.BaseURL())
+	}
+	return out
+}
+
+// BypassReason reports why this environment would route the child past the sidecar, or "" when it
+// would not. env is in the exec(3) "NAME=value" form.
+//
+// ⚠ THE PREDICATE IS NOT "SET TO ANYTHING NON-EMPTY", which is the obvious implementation and is
+// wrong in the direction that costs a developer their day: it would refuse to run for someone who
+// had explicitly written CLAUDE_CODE_USE_BEDROCK=0. Measured against Claude Code 2.1.226 by
+// counting requests that reach the sidecar: unset, "", "0" and "false" all reached it (3 each);
+// "1", "true" and "yes" all sent it zero.
+func BypassReason(env []string) string {
+	for _, name := range BypassVars {
+		for _, kv := range env {
+			k, v, ok := strings.Cut(kv, "=")
+			if !ok || k != name || !engagesBypass(v) {
+				continue
+			}
+			return fmt.Sprintf(
+				"%s=%s sends this client to another provider entirely, so the sidecar would see no "+
+					"request and the spend would be recorded nowhere — while this command told you it "+
+					"was attributed. Measured: Claude Code makes ZERO calls to the proxy in that mode. "+
+					"Unset %s to run through Lens, or drop `talyvor-code exec` and run the tool "+
+					"directly, which is what is really happening today.",
+				name, v, name)
+		}
+	}
+	return ""
+}
+
+func engagesBypass(v string) bool {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "false":
+		return false
+	}
+	return true
 }
 
 // forward proxies one request to Lens.
