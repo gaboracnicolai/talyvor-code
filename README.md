@@ -198,9 +198,11 @@ talyvor-code exec -- claude -p "explain internal/proxy"
 talyvor-code --issue ENG-42 exec -- claude   # explicit beats detected
 ```
 
-It starts a proxy on a free loopback port, points the child at it with `ANTHROPIC_BASE_URL`, and
-adds the issue identifier and your Lens credential to each request. It prints what it detected —
-including when it detected nothing, which is recorded as unattributed rather than guessed.
+It starts a proxy on a free loopback port, points the child at it with every redirect name the
+measured clients honour (`ANTHROPIC_BASE_URL`, `ANTHROPIC_API_BASE`, `OPENAI_BASE_URL`,
+`OPENAI_API_BASE`), and adds the issue identifier and your Lens credential to each request. It
+prints what it detected — including when it detected nothing, which is recorded as unattributed
+rather than guessed.
 
 - **It never reads your prompts.** The request body is streamed to Lens without being parsed,
   buffered, logged or inspected. Pinned by a test that fails if a prompt is ever written down.
@@ -211,12 +213,18 @@ including when it detected nothing, which is recorded as unattributed rather tha
   anything the child spawns could read. `ANTHROPIC_API_KEY` is set and left EMPTY: measured, that
   is enough for a client that checks whether the name is present, and Claude Code does not count it
   as an auth source. Your own key is replaced rather than forwarded, so Lens is billed and not your
-  Anthropic account. The proxy authenticates to Lens itself.
+  Anthropic account. The proxy authenticates to Lens itself. **`OPENAI_API_KEY` is treated exactly
+  the same way**, and the banner says so when you have one set — OpenAI-shaped requests go through
+  Lens too, so that bill moves as well.
 - **Loopback only**, and it dies with the child on exit, crash and Ctrl-C.
 
-Supported today: **Claude Code**, and **aider with an `anthropic/…` model** — both driven against a
-loopback recorder and counted, not inferred. `aider --model gpt-4o` goes out over aider's OpenAI
-path, which this sidecar does not speak, so it is **not** metered. **Cursor and Codex are not
+Supported today: **Claude Code**, and **aider on both its Anthropic and its OpenAI models** — every
+row driven against a loopback recorder and counted, not inferred. `aider --model gpt-4o` used to
+reach `api.openai.com` on your own key while this command announced the spend as attributed; it now
+arrives at Lens's OpenAI passthrough with the issue attached. What that still assumes is that your
+Lens workspace has an OpenAI provider key configured — without one you get an error rather than a
+silent bill somewhere else. Every other provider Lens exposes (Google, Bedrock, Mistral, Groq,
+vLLM) is **not** mapped: no client has been put through those doors. **Cursor and Codex are not
 supported** — see `internal/sidecar` for what would be needed.
 
 ## MCP integration

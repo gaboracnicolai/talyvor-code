@@ -89,6 +89,64 @@ func TestTheBannerSaysWhatWasDetectedIncludingNothing(t *testing.T) {
 	}
 }
 
+// ⚠ THE BANNER MUST NAME EVERY ACCOUNT THAT STOPS BEING BILLED, not just the first one this tool
+// learned about.
+//
+// The Anthropic line has been on screen since the key was first withheld, for a stated reason: a
+// developer whose own key is being kept from the child is having the bill moved, and that is worth a
+// line rather than a surprise. The sidecar now does exactly the same thing to OPENAI_API_KEY —
+// measured, `exec -- aider --model gpt-4o` used to reach api.openai.com on the developer's own key
+// and now reaches Lens — so the same sentence is owed for the same reason.
+//
+// ⚠ IT ASSERTS ON THE ENVIRONMENT IT SETS, both directions. A banner line that appears whatever the
+// developer has set would say nothing; one that never appears would be the silence this merge is
+// about.
+func TestTheBannerNamesEveryAccountThatStopsBeingBilled(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		env      map[string]string
+		wantSaid []string
+		wantNot  []string
+	}{
+		{
+			name:     "an OpenAI key the developer set",
+			env:      map[string]string{"OPENAI_API_KEY": "sk-the-developers-own", "ANTHROPIC_API_KEY": ""},
+			wantSaid: []string{"OPENAI_API_KEY", "Lens is billed"},
+		},
+		{
+			name:     "an Anthropic key the developer set",
+			env:      map[string]string{"ANTHROPIC_API_KEY": "sk-ant-the-developers-own", "OPENAI_API_KEY": ""},
+			wantSaid: []string{"ANTHROPIC_API_KEY", "Lens is billed"},
+			wantNot:  []string{"OPENAI_API_KEY"},
+		},
+		{
+			name:    "neither",
+			env:     map[string]string{"ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "", "ANTHROPIC_AUTH_TOKEN": ""},
+			wantNot: []string{"OPENAI_API_KEY", "is NOT passed"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for k, v := range tc.env {
+				t.Setenv(k, v)
+			}
+			var out, errb bytes.Buffer
+			if err := runExec(&out, &errb, execCfg(t, "ENG-42"), []string{"--", "sh", "-c", "exit 0"}); err != nil {
+				t.Fatalf("runExec: %v", err)
+			}
+			for _, want := range tc.wantSaid {
+				if !strings.Contains(errb.String(), want) {
+					t.Errorf("banner does not say %q:\n%s", want, errb.String())
+				}
+			}
+			for _, unwanted := range tc.wantNot {
+				if strings.Contains(errb.String(), unwanted) {
+					t.Errorf("banner says %q when nothing of the developer's was withheld:\n%s", unwanted, errb.String())
+				}
+			}
+		})
+	}
+}
+
 // ⚠ THERE IS EXACTLY ONE ISSUE EXTRACTOR, AND IT IS internal/issueref.
 //
 // A second one would drift from the first, and the failure mode is invisible: two components
