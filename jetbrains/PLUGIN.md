@@ -66,12 +66,11 @@ manual in-IDE checks (it can't be exercised without an IDE sandbox).
 
 ## Build & test
 
-Requires JDK 17 and (first build only) a system Gradle to materialise
-the wrapper — see `README.md`.
+Requires JDK 17. Nothing else: the Gradle wrapper is committed, so
+`./gradlew` provisions Gradle 8.7 itself — see `README.md`.
 
 ```bash
 cd jetbrains
-gradle wrapper --gradle-version=8.7   # one-time, generates ./gradlew
 ./gradlew test          # run the JUnit pure-logic suites
 ./gradlew test buildPlugin   # tests + the installable .zip (what CI runs)
 ```

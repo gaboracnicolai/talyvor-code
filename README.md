@@ -169,9 +169,11 @@ TALYVOR_MCP_TOKEN=$(openssl rand -hex 32) talyvor-code serve --port 7777 --root 
 
 ## JetBrains plugin (IntelliJ IDEA, GoLand, PyCharm, …)
 
+Needs JDK 17. The Gradle wrapper is committed, so `./gradlew` provisions Gradle 8.7 itself — no
+system Gradle to install, and nothing to generate first.
+
 ```bash
 cd jetbrains
-gradle wrapper        # one-time, materialises ./gradlew + jar
 ./gradlew buildPlugin # → build/distributions/talyvor-code-0.1.0.zip
 ```
 

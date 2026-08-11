@@ -8,27 +8,21 @@ VS Code extension and the CLI agent.
 ## Requirements
 
 - JDK 17 (Temurin or any OpenJDK 17 build)
-- Gradle 8.7+ (or use IntelliJ's bundled Gradle by opening this
-  directory as a project)
 
-The repository **does not** ship `gradle-wrapper.jar` — it's a
-binary. Generate it once with a system Gradle:
-
-```bash
-cd jetbrains
-gradle wrapper        # one-time, materialises ./gradlew + jar
-```
-
-After that, all subsequent commands work via the wrapper.
+That is the whole list. The Gradle wrapper **is** committed —
+`gradlew`, `gradlew.bat` and `gradle/wrapper/gradle-wrapper.jar` are
+all tracked — so `./gradlew` downloads and runs the pinned Gradle 8.7
+on its own. Do not run `gradle wrapper`: without a system Gradle it
+fails outright, and with one it rewrites `gradle-wrapper.properties`
+to whatever version you happen to have installed, moving your build
+off the version CI provisions.
 
 ## Build
 
 ```bash
 cd jetbrains
-gradle buildPlugin    # → build/distributions/talyvor-code-0.1.0.zip
+./gradlew buildPlugin    # → build/distributions/talyvor-code-0.1.0.zip
 ```
-
-(or `./gradlew buildPlugin` once you've materialised the wrapper)
 
 ## Install
 
@@ -87,8 +81,10 @@ verification steps for the UI surfaces.
 
 ```bash
 cd jetbrains
-gradle buildPlugin verifyPlugin
+./gradlew buildPlugin verifyPlugin
 ```
 
-CI runs the same two tasks on every push — see
-`.github/workflows/ci.yaml` `jetbrains` job.
+CI runs `./gradlew test buildPlugin --no-daemon` on every push and PR
+— see `.github/workflows/ci.yaml`, `jetbrains` job. `verifyPlugin` is
+**not** among them: it is a local check, so a plugin-descriptor
+problem it would catch does not turn CI red.
