@@ -21,3 +21,9 @@ tsconfig.json
 
 # Dev-only dependency tree; the extension bundles no runtime deps.
 node_modules/**
+
+# Build/CI scripts. MEASURED, not assumed: without this line `vsce package` shipped
+# scripts/check-vsix-listing.sh inside the .vsix — a CI shell script delivered to every
+# customer's install. This file is an exclude-list, so a NEW top-level directory is shipped
+# by default; that is the direction it fails in.
+scripts/**
