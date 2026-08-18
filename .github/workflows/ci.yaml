@@ -55,6 +55,15 @@ jobs:
           unzip -l ./*.vsix | grep -q 'out/src/extension.js' || { echo "::error::.vsix is missing its entrypoint"; exit 1; }
           echo "vsix contains its licence and entrypoint"
 
+      # The two assertions above check the licence and the entrypoint. NEITHER CAN SEE A MISSING
+      # README — and `vsce package` does not warn about one, measured at 2124b47: the .vsix it
+      # built had zero readme entries and exited 0. On the Marketplace the README *is* the
+      # description page, so that artefact publishes a listing with a blank body. The script
+      # reads the ARCHIVE rather than the working tree, so a .vscodeignore that excludes the
+      # README cannot leave it green.
+      - name: the .vsix carries a listing (readme, changelog, correct extension id)
+        run: cd extension && ./scripts/check-vsix-listing.sh ./talyvor-code-*.vsix ./package.json
+
   agent:
     runs-on: ubuntu-latest
     steps:
