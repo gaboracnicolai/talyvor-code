@@ -1,0 +1,48 @@
+{
+  "note": "Every model the product offers, and the gateway endpoint each client actually POSTs it to. Read by agent/internal/lens/model_routing_parity_test.go and extension/src/model/model-routing.test.ts, both of which MEASURE the dispatch through their own real client rather than restating it. `routedProvider` is the provider Lens pins from the ROUTE (see cmd/lens/main.go: the /v1/proxy/<name>/* handlers each pin their upstream and credential by name). `dispatchable` is derived: lowercase(catalogProvider) == routedProvider. A case with dispatchable=false MUST carry a `why`.",
+  "cases": [
+    {
+      "id": "claude-haiku-4-5",
+      "catalogProvider": "Anthropic",
+      "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "routedProvider": "anthropic",
+      "dispatchable": true
+    },
+    {
+      "id": "claude-sonnet-4-6",
+      "catalogProvider": "Anthropic",
+      "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "routedProvider": "anthropic",
+      "dispatchable": true
+    },
+    {
+      "id": "claude-opus-4-6",
+      "catalogProvider": "Anthropic",
+      "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "routedProvider": "anthropic",
+      "dispatchable": true
+    },
+    {
+      "id": "gpt-4o",
+      "catalogProvider": "OpenAI",
+      "routedEndpoint": "/v1/proxy/openai/v1/chat/completions",
+      "routedProvider": "openai",
+      "dispatchable": true
+    },
+    {
+      "id": "gpt-4o-mini",
+      "catalogProvider": "OpenAI",
+      "routedEndpoint": "/v1/proxy/openai/v1/chat/completions",
+      "routedProvider": "openai",
+      "dispatchable": true
+    },
+    {
+      "id": "mistral-large",
+      "catalogProvider": "Mistral",
+      "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "routedProvider": "anthropic",
+      "dispatchable": false,
+      "why": "MEASURED, NOT FIXED — the product offers this model and cannot send it. Both clients classify by id prefix into exactly two endpoints (gpt-/o1/o3 -> openai, everything else -> anthropic), so a model whose catalogue Provider is Mistral is POSTed to /v1/proxy/anthropic/v1/messages with an Anthropic body and Lens forwards it to Anthropic's API under x-api-key. Lens is NOT the missing half: it registers /v1/proxy/mistral/* (cmd/lens/main.go) and no client here has ever called it. Fixing it is three coupled changes and at least one product call, which is why this is pinned rather than repaired: (a) route by the catalogue's Provider field instead of the id prefix, (b) send the OpenAI-shaped body the Mistral route expects, (c) the id is wrong too -- Lens's catalogue entry is `mistral-large-latest`, so today the request is also unpriced and bills on a fallback bound (W4.13 measured that half and left it). Whether Talyvor Code supports Mistral at all -- rather than dropping the entry -- is the call that has to be made first. This pin REDS the moment it is decided either way."
+    }
+  ]
+}

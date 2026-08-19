@@ -128,6 +128,15 @@ function parseOpenAI(obj: Record<string, unknown>): StreamEvent | undefined {
 
 // providerForModel mirrors agent/internal/lens.isOpenAIModel so
 // the IDE picks the same endpoint the CLI would.
+//
+// ⚠ IT IS TWO-VALUED AND THE CATALOGUE IS NOT. The `anthropic`
+// arm is a DEFAULT for every id that is not gpt-/o1/o3, and
+// client.ts picks both the endpoint AND the body shape from it —
+// so a KNOWN_MODELS entry whose declared provider is neither
+// (today: `mistral-large`, provider "Mistral") is sent to
+// Anthropic. Measured through the real completeStream and pinned
+// in testdata/model-routing.json; see model/model-routing.test.ts
+// and the Go half for what talyvor-lens actually does with it.
 export function providerForModel(model: string): StreamProvider {
   const m = (model ?? "").trim().toLowerCase();
   if (m.startsWith("gpt-") || m.startsWith("o1") || m.startsWith("o3")) return "openai";
