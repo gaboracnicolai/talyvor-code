@@ -1,8 +1,31 @@
-// Package scope narrows the AI's view of the codebase. The user
-// defines named scopes (auth, api, frontend, …) in
-// .talyvor-scopes; one can be "active" at a time and gets
-// surfaced in every prompt + applied as a file filter so the
-// agent's context-discovery doesn't drift into unrelated code.
+// Package scope tells the AI which part of the codebase to attend to. The
+// user defines named scopes (auth, api, frontend, …) in .talyvor-scopes; one
+// can be "active" at a time and is surfaced in every prompt.
+//
+// ⚠ AN ACTIVE SCOPE IS A HINT IN THE PROMPT. IT DOES NOT RESTRICT WHICH FILES
+// ARE READ. This doc comment used to describe a scope as being enforced against
+// the indexed file population, and both front ends told the user that clearing
+// one put every file back in context — a sentence that only means anything if
+// some had been kept out. Measured end to end in filter_wiring_test.go through
+// the exact call cmd/agent/main.go:791 makes: with a scope active whose one
+// include pattern is `internal/auth/**`, the population handed to the planner
+// still contains internal/billing. It always did. FilterFiles and
+// GetScopedFiles below are correct and NOTHING calls them — a census of every
+// non-test .go file in the module finds zero callers. (The retired wording is
+// not quoted anywhere in this file: the census matches on substring, so
+// repeating it would re-trigger the guard that watches for its return.)
+//
+// ⚠ WIRING THEM IS A PRODUCT DECISION, NOT A REPAIR, WHICH IS WHY IT WAS
+// MEASURED AND NOT GUESSED. There are five production IndexDirectory sites
+// (cmd/agent/main.go:791, internal/projectctx/loader.go:242,
+// internal/mcp/server.go:164 and :1094, internal/codebase/semindex_build.go:116)
+// and they are not one decision: narrowing the semantic-index BUILD writes a
+// scope-shaped hole into a cache that outlives the scope and is shared with
+// every other one, and narrowing the MCP server changes what an external client
+// sees on the strength of a CLI state it never set. Until that is decided, the
+// honest thing is that the prompt hint is the whole mechanism — and
+// TestScopeFilterClaimMatchesItsWiring fails the day a caller appears without
+// the sentences coming back with it.
 package scope
 
 import (
@@ -200,8 +223,19 @@ func (sm *ScopeManager) FilterFiles(files []codebase.FileInfo) []codebase.FileIn
 }
 
 // GetScopedFiles indexes the workspace and returns the slice
-// already filtered by the active scope. Convenience wrapper for
-// commands that need a ready-to-consume file list.
+// already filtered by the active scope.
+//
+// ⚠ NO COMMAND CALLS THIS. It was described as a convenience wrapper for the
+// commands that need a ready-to-consume file list, and there are none — see the
+// package doc and the census in filter_wiring_test.go. Kept because it is the
+// ready-made call site for whoever decides which of the five index populations
+// a scope should narrow.
+//
+// ⚠ AND IT CAPS BEFORE IT FILTERS, WHICH WHOEVER WIRES IT HAS TO ANSWER FOR:
+// IndexDirectory stops collecting at `limit` and the scope filter then runs on
+// whatever the walk reached first, so on a repo larger than the cap the result
+// is the matching subset of an arbitrary prefix, not the matching subset of the
+// repo — and it comes back silently short rather than empty.
 func (sm *ScopeManager) GetScopedFiles(root string, limit int) ([]codebase.FileInfo, error) {
 	idx, err := codebase.IndexDirectory(root, limit)
 	if err != nil {
