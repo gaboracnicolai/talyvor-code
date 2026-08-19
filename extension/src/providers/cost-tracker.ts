@@ -29,8 +29,21 @@ export interface RecordEvent {
 // estimate cost without waiting on Lens to report back. Real cost
 // reconciliation still happens via Lens analytics; this is the
 // "what did I just spend?" indicator the status bar shows.
-// ⚠ ONE PRICE FOR EVERY MODEL, AND THAT IS WHY THE OUTPUT MUST BE LABELLED. These are Haiku's
-// rates. A Sonnet call is understated ~4x and an Opus call ~20x. This function survives ONLY to
+// ⚠ ONE PRICE FOR EVERY MODEL, AND THAT IS WHY THE OUTPUT MUST BE LABELLED. ⚠ AND THE PRICE IS NOT
+// THE DEFAULT MODEL'S: $0.25/$1.25 per 1M is CLAUDE 3 HAIKU's rate, two generations old. Measured
+// against talyvor-lens's price catalog (`internal/catalog/seed.go`, the table the proxy bills from),
+// the figure this produces is low by:
+//     4x on claude-haiku-4-5   ← THE MODEL package.json DEFAULTS TO, so the bar is 4x low as shipped
+//     8x on claude-sonnet-5
+//     20x on claude-opus-5
+//     40x on claude-fable-5
+// ⚠ ONE CLAIM PER LINE IS NOT COSMETIC: the guard pairs each factor with the nearest model id on its
+// OWN line, so a factor that drifts away from the model it describes is a failure, not a wrap.
+// ⚠ THE FACTORS ARE STATED HERE ONCE AND NOWHERE ELSE: three
+// copies of this paragraph is three numbers that can disagree, which is how two of them came to be
+// false. `track/cost-claim.test.ts` derives every factor from the catalog and reds if any comment in
+// this extension states a different one. ⚠ THE RATE ITSELF IS DELIBERATELY UNCHANGED — it is a money
+// figure a user is shown, and queue item W4.11 states the three options. This function survives ONLY to
 // drive the status-bar indicator ("what did I just spend?"), which now renders it as `~$x.xx` and
 // says in its tooltip that it is a local estimate and not the bill. It no longer feeds any WRITE:
 // the client-side PATCH to Track that used it is deleted, because Lens records the real
