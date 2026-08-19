@@ -1,0 +1,55 @@
+{
+  "_comment": [
+    "THE VERDICTS THE TWO PORTS OF ONE RULE MUST AGREE ON.",
+    "The rule is 'a base URL it is safe to attach a Talyvor API key to'. It is implemented TWICE:",
+    "agent/internal/safeurl/safeurl.go (the CLI, returns an error) and",
+    "extension/src/safeurl-pure.ts (the VS Code extension, returns \"\" for unsafe).",
+    "Measured 2026-08-19 before this file existed: the two ports disagreed on 6 of the 29 cases",
+    "below, in BOTH directions, and the extension's half had ZERO tests of any kind.",
+    "",
+    "The disagreements were not typos. Each side inherited a different host-normalisation:",
+    "Go's url.Hostname() STRIPS the IPv6 brackets and does not normalise legacy IPv4 spellings;",
+    "Node's URL.hostname KEEPS the brackets and DOES normalise them. Both rules were then written",
+    "as string comparisons against the shape the author's own runtime produces.",
+    "",
+    "agent/internal/safeurl/cases_parity_test.go and extension/src/safeurl-pure.test.ts each assert",
+    "their own port against this file. Fixing one side alone now fails that side; editing this file",
+    "alone fails both. A case here is not a permission — it is a record of a verdict the two guards",
+    "must reach TOGETHER."
+  ],
+  "cases": [
+    { "url": "https://lens.talyvor.com", "safe": true, "why": "the ordinary case: https to a named host" },
+    { "url": "https://lens.example.com:8443/base", "safe": true, "why": "port and base path are not the guard's business" },
+    { "url": "https://api.talyvor.com", "safe": true, "why": "https to a named host" },
+    { "url": "https://123.example.com", "safe": true, "why": "a DNS label may START with a digit — the numeric-host rule must not eat it" },
+    { "url": "https://0xdeadbeef.example.com", "safe": true, "why": "hex-looking DNS label, not a numeric host" },
+    { "url": "https://192.168.1.10:8443", "safe": true, "why": "https to a LAN IP is the self-host case; only cleartext and link-local are refused" },
+
+    { "url": "http://localhost:8080", "safe": true, "why": "local dev over http is the documented exception" },
+    { "url": "http://127.0.0.1:8080", "safe": true, "why": "local dev over http" },
+    { "url": "http://[::1]:8080", "safe": true, "why": "IPv6 loopback IS local dev. The extension refused this: host === '::1' can never be true because Node's URL.hostname keeps the brackets ('[::1]'). Go's url.Hostname() strips them, so the identical line worked there" },
+    { "url": "https://[::1]:8443", "safe": true, "why": "IPv6 loopback over https" },
+
+    { "url": "http://lens.talyvor.com", "safe": false, "why": "the API key would cross the network in cleartext" },
+    { "url": "http://192.168.1.10:8080", "safe": false, "why": "a LAN address is still cleartext" },
+    { "url": "http://127.0.0.1.nip.io:39111", "safe": false, "why": "resolves to loopback but is not spelled as loopback; the rule is textual on purpose" },
+    { "url": "ftp://lens.talyvor.com", "safe": false, "why": "neither http nor https" },
+    { "url": "https://", "safe": false, "why": "no host" },
+    { "url": "not-a-url", "safe": false, "why": "does not parse as an absolute URL" },
+
+    { "url": "http://169.254.169.254", "safe": false, "why": "cloud metadata service over cleartext" },
+    { "url": "https://169.254.169.254", "safe": false, "why": "https does NOT make the metadata address safe — this is the case the whole link-local branch exists for" },
+    { "url": "https://169.254.169.254.", "safe": false, "why": "trailing dot. Go kept it, so net.ParseIP returned nil and the link-local branch never ran" },
+    { "url": "https://0xa9fea9fe/", "safe": false, "why": "169.254.169.254 respelled in hex. MEASURED: the OS resolver returns 169.254.169.254 for it, and Go's own http.Client connects to a loopback listener via 0x7f000001. Go accepted it because net.ParseIP is nil for inet_aton forms" },
+    { "url": "https://2852039166/", "safe": false, "why": "the same address as a single decimal. MEASURED: resolves to 169.254.169.254" },
+    { "url": "https://0177.0.0.1/", "safe": false, "why": "octal-leading form. Node normalised it to 127.0.0.1 and the extension accepted it; Go did not normalise and accepted it too, for the opposite reason" },
+    { "url": "https://127.1/", "safe": false, "why": "short form. Node normalises to 127.0.0.1, Go does not — a host that means different things to the two ports is refused by both" },
+    { "url": "https://999.999.999.999/", "safe": false, "why": "numeric-looking and not an address" },
+
+    { "url": "http://0.0.0.0:8080", "safe": false, "why": "unspecified address" },
+    { "url": "https://[::]/", "safe": false, "why": "IPv6 unspecified. The extension's check was startsWith('[fe80'), which this does not match" },
+    { "url": "https://[fe80::1]/", "safe": false, "why": "IPv6 link-local unicast — the only link-local case the extension's literal prefix caught" },
+    { "url": "https://[fe90::1]/", "safe": false, "why": "fe80::/10 runs to febf, so this IS link-local unicast and the '[fe80' prefix missed it" },
+    { "url": "https://[ff02::1]/", "safe": false, "why": "IPv6 link-local multicast, missed by the same prefix" }
+  ]
+}
