@@ -76,8 +76,8 @@ test("the status bar still renders a session cost", () => {
 });
 
 // ⚠ AND IT IS MARKED AS AN ESTIMATE. The figure sits beside an issue identifier that Track also
-// shows a number for; unlabelled, a reader takes them for the same quantity — and this one is ~20x
-// low on Opus.
+// shows a number for; unlabelled, a reader takes them for the same quantity — and this one is
+// 20x low on claude-opus-5, and 4x low on claude-haiku-4-5, the default model (cost-claim.test.ts).
 test("the rendered cost is marked approximate", () => {
   assert.ok(formatSessionCost(1).startsWith("~"), "the tilde is what marks it approximate");
 });

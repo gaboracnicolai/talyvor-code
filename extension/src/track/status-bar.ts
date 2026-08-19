@@ -55,10 +55,10 @@ export class TalyvorStatusBar implements vscode.Disposable {
     // ⚠ LABELLED AS AN ESTIMATE, because the bar renders this figure directly beside an ISSUE
     // IDENTIFIER and Track shows a number for that same issue. A reader has every reason to take
     // them for the same quantity, and they are not: this is a LOCAL estimate of THIS SESSION at one
-    // hardcoded price (Haiku's), so it understates Haiku by ~4x and Opus by ~20x, and it counts only
-    // what this editor did. Track's figure is the authoritative per-request cost for the whole
-    // issue, from Lens. The "~" and the tooltip are what keep a 20x-wrong number from reading as
-    // the bill.
+    // hardcoded price — Claude 3 Haiku's, so it is 4x low on claude-haiku-4-5, the default model —
+    // and it counts only what this editor did. Track's figure is the authoritative per-request cost
+    // for the whole issue, from Lens. The "~" and the tooltip are what keep an understated number
+    // from reading as the bill. Every factor is in providers/cost-tracker.ts, stated once.
     const cost = formatSessionCost(this.lastSessionCost);
     const scopeName = this.scopeManager?.activeName() ?? "";
     const scopeChip = scopeName ? ` | $(filter) ${scopeName}` : "";
