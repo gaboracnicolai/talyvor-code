@@ -575,9 +575,16 @@ func (s *Server) toolAskCode(ctx context.Context, raw json.RawMessage) (any, int
 			}
 		}
 	}
+	// S11: `files` is caller-supplied on the wire. Confine before reading — an escape here put the
+	// file's bytes into the Lens prompt. The auto-discovered branch above is already joined onto the
+	// root, so it passes unchanged; this gate is what makes that true of BOTH branches.
+	safe, cerr := s.confinedReadPaths(files)
+	if cerr != nil {
+		return nil, rpcErrInvalidParam, "ask_code: path outside workspace"
+	}
 	fileCtx := ""
-	if len(files) > 0 {
-		out, err := codebase.ReadFilesForContext(files, codebase.DefaultMaxTotalBytes)
+	if len(safe) > 0 {
+		out, err := codebase.ReadFilesForContext(safe, codebase.DefaultMaxTotalBytes)
 		if err == nil {
 			fileCtx = out
 		}
@@ -617,7 +624,15 @@ func (s *Server) toolGenerateTests(ctx context.Context, raw json.RawMessage) (an
 	if s.lensClient == nil || !s.lensClient.IsConfigured() {
 		return map[string]any{"configured": false, "reason": "lens not configured"}, 0, ""
 	}
-	body, err := codebase.ReadFile(a.File, codebase.DefaultMaxFileBytes)
+	// S11: confine before the read. This ALSO fixes a second defect the confinement was masking —
+	// a.File went to os.Open raw, so a RELATIVE path resolved against the serve process's cwd rather
+	// than the workspace root, and `generate_tests {"file":"in.go"}` failed with "no such file" on a
+	// file read_file served happily. confinedReadPath joins against the root, so both lanes agree.
+	safe, cerr := s.confinedReadPath(a.File)
+	if cerr != nil {
+		return nil, rpcErrInvalidParam, "generate_tests: path outside workspace"
+	}
+	body, err := codebase.ReadFile(safe, codebase.DefaultMaxFileBytes)
 	if err != nil {
 		return nil, rpcErrInvalidParam, "read source: " + err.Error()
 	}
@@ -661,7 +676,13 @@ func (s *Server) toolReviewCode(ctx context.Context, raw json.RawMessage) (any, 
 	if s.lensClient == nil || !s.lensClient.IsConfigured() {
 		return map[string]any{"configured": false, "reason": "lens not configured"}, 0, ""
 	}
-	body, _ := codebase.ReadFilesForContext(a.Files, codebase.DefaultMaxTotalBytes)
+	// S11: `files` is caller-supplied. A MIXED batch (one legal file beside one escape) refuses the
+	// whole call — see confinedReadPaths for why dropping the bad entry would be worse here.
+	safe, cerr := s.confinedReadPaths(a.Files)
+	if cerr != nil {
+		return nil, rpcErrInvalidParam, "review_code: path outside workspace"
+	}
+	body, _ := codebase.ReadFilesForContext(safe, codebase.DefaultMaxTotalBytes)
 	prompt := mcpReviewPrompt(a.ReviewType) + "\n\nReview this code:\n\n" + body
 	usage, err := s.lensClient.CompleteWithUsage(ctx,
 		[]lens.Message{{Role: "user", Content: prompt}},
@@ -859,6 +880,13 @@ type readFileArgs struct {
 // letting a token-holding client read any file the process could (../../.ssh/id_rsa, .env, .git/config).
 // When no root is configured (s.root == "") there is no workspace boundary to enforce and the path is
 // returned as-is; the serve command always SetRoot()s, so production reads are always confined.
+//
+// THE SENTENCE ABOVE NAMED FOUR TOOLS AND THIS HELPER HAD ONE CALL SITE — toolReadFile. ask_code,
+// generate_tests and review_code went on handing the caller's path to codebase.ReadFile /
+// ReadFilesForContext, which is a bare os.Open with no gate of its own. Measured on the wire, not
+// read: each of the three posted the out-of-root file's BYTES to Lens, so the escape was an
+// exfiltration path off the machine rather than a local disclosure. All four now go through here,
+// and confinement_test.go asserts it against the request bodies the fake Lens received.
 func (s *Server) confinedReadPath(p string) (string, error) {
 	if s.root == "" {
 		return p, nil
@@ -877,6 +905,23 @@ func (s *Server) confinedReadPath(p string) (string, error) {
 		return "", fmt.Errorf("refusing to read outside workspace root")
 	}
 	return abs, nil
+}
+
+// confinedReadPaths confines a whole caller-supplied batch, returning the resolved absolute paths.
+// FAIL CLOSED ON THE WHOLE CALL rather than dropping the offending entry: ReadFilesForContext turns
+// an unreadable path into an "[error reading …]" NOTE inside the prompt and returns nil, so silently
+// skipping an escape would let review_code return a confident review of a file it never read. One bad
+// path refuses the batch, by name.
+func (s *Server) confinedReadPaths(paths []string) ([]string, error) {
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := s.confinedReadPath(p)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		out = append(out, abs)
+	}
+	return out, nil
 }
 
 func (s *Server) toolReadFile(raw json.RawMessage) (any, int, string) {
