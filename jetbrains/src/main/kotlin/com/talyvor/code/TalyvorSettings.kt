@@ -18,7 +18,6 @@ import com.intellij.openapi.components.State
 import com.intellij.openapi.components.Storage
 import com.intellij.openapi.components.service
 import com.intellij.openapi.options.Configurable
-import java.net.URI
 import com.intellij.ui.components.JBPasswordField
 import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
@@ -100,19 +99,11 @@ class TalyvorSettings : PersistentStateComponent<TalyvorSettings.State> {
         private fun keyAttrs(id: String): CredentialAttributes =
             CredentialAttributes(generateServiceName("Talyvor Code", id))
 
-        private fun sanitizeBaseUrl(raw: String): String {
-            if (raw.isBlank()) return ""
-            val u = try {
-                URI(raw)
-            } catch (e: Exception) {
-                return ""
-            }
-            val host = u.host ?: return ""
-            val isLocal = host == "localhost" || host == "127.0.0.1" || host == "::1"
-            if (u.scheme != "https" && !(u.scheme == "http" && isLocal)) return ""
-            if (host == "0.0.0.0" || host.startsWith("169.254.") || host.startsWith("fe80")) return ""
-            return raw
-        }
+        // The rule itself lives in SafeUrlPure, free of the IntelliJ Platform so a plain JUnit test
+        // can reach it, and asserted against testdata/safeurl-cases.json — the same file the Go and
+        // TypeScript ports are asserted against. It was a private helper here, which is exactly why
+        // it sat outside the cross-runtime harness that unified the other two ports.
+        private fun sanitizeBaseUrl(raw: String): String = SafeUrlPure.sanitizeBaseUrl(raw)
     }
 }
 

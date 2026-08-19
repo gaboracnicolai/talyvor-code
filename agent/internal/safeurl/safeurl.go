@@ -33,10 +33,18 @@ import (
 //     https://0xa9fea9fe/ and https://2852039166/ were ACCEPTED while the dotted spelling
 //     of the same address was refused.
 //
-// This rule is implemented TWICE — here and in extension/src/safeurl-pure.ts — and the two
-// are asserted against the same testdata/safeurl-cases.json from both runtimes. They
-// disagreed on 6 of those 29 cases before that file existed, in both directions, because
-// each was written as string comparisons against the host shape its own runtime produces.
+// This rule is implemented THREE TIMES — here, in extension/src/safeurl-pure.ts, and in
+// jetbrains/src/main/kotlin/com/talyvor/code/SafeUrlPure.kt — and all three are asserted
+// against the same testdata/safeurl-cases.json from their own runtimes. This comment said
+// TWICE until the third was found: it had shipped as a private helper inside the JetBrains
+// plugin's TalyvorSettings, so it had no filename of its own for a census to grep for, and
+// it disagreed with this table on 8 of the 29 cases — 7 of them FAIL-OPEN, including
+// https://0xa9fea9fe/ and every IPv6 link-local address.
+//
+// The first two disagreed on 6 of those 29 cases before that file existed, in both
+// directions, because each was written as string comparisons against the host shape its own
+// runtime produces. The Kotlin port made it three shapes: java.net.URI.getHost() keeps the
+// IPv6 brackets and normalises nothing.
 //
 // An EMPTY url is not an error: Track and Docs are optional integrations, and their
 // clients report IsConfigured()==false rather than failing a command that never needed
