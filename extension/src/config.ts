@@ -57,25 +57,12 @@ function vscodePlaintextStore(): PlaintextStore {
   };
 }
 
-// safeBaseUrl returns raw only if it is a safe Talyvor endpoint, else "". The config is WORKSPACE-scoped,
-// so a hostile repo's .vscode/settings.json could point a URL at an attacker host (with the user's API
-// key attached) or at the cloud metadata endpoint. Require https (except explicit localhost dev), and
-// reject link-local / metadata / unspecified hosts. An unsafe URL sanitizes to "" so the client is never
-// configured with it — the key is never sent there.
-export function safeBaseUrl(raw: string): string {
-  if (!raw) return "";
-  let u: URL;
-  try {
-    u = new URL(raw);
-  } catch {
-    return "";
-  }
-  const host = u.hostname;
-  const isLocal = host === "localhost" || host === "127.0.0.1" || host === "::1";
-  if (u.protocol !== "https:" && !(u.protocol === "http:" && isLocal)) return "";
-  if (host === "0.0.0.0" || host.startsWith("169.254.") || host.startsWith("[fe80")) return "";
-  return raw;
-}
+// safeBaseUrl decides where the user's API key may be sent, and now lives in safeurl-pure.ts so that
+// `node --test` can reach it: this module imports "vscode", and a module that does cannot be loaded
+// outside the editor, which is why the rule had no test at all while it lived here. It is re-exported
+// under the same name so the existing call sites and any external importer are unaffected.
+import { safeBaseUrl } from "./safeurl-pure";
+export { safeBaseUrl };
 
 export class TalyvorConfig {
   // secret reads the cached SecretStorage value; it falls back to a legacy plaintext setting so an

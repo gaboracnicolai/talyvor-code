@@ -115,7 +115,15 @@ function sources(): string[] {
   return walk(srcDir).filter((p) => path.relative(srcDir, p) !== SELF);
 }
 
-const FACTOR = /~?(\d+)x/g;
+// ⚠ A HEX LITERAL IS NOT A COST FACTOR. This was /~?(\d+)x/g, which reads the "0x" of 0xff, 0x80 and
+// 0xa9fea9fe as a claim of "0x" — a factor of zero, with no model id on the line, so every hex
+// constant anywhere under src/ was reported as a false factor claim. Found when safeurl-pure.ts
+// introduced the first hex constants in this tree: 13 offenders, none of them a claim about money.
+// The lookahead refuses a match whose "x" is followed by a hex digit (0xff, 0x80, 0x0f, 0xc0); the
+// lookbehind keeps the match off the inside of an identifier. Neither relaxes what a real claim must
+// satisfy — "~4x low", "8x on claude-sonnet-5" and "12x" all still match, and the control in this
+// file's sibling harness plants a false claim to prove it.
+const FACTOR = /(?<![\w.])~?(\d+)x(?![0-9a-fA-F])/g;
 const MODEL_IDS = LENS_CATALOG.map((m) => m.id);
 
 // Measured population at the time of writing: 7 claims across 4 files. The floor is what makes a
