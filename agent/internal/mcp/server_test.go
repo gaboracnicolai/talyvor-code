@@ -194,7 +194,11 @@ func TestAskCode_CallsLensWithFileContext(t *testing.T) {
 	}))
 	defer lensSrv.Close()
 
-	_, srv := newServerForTest(t, lensSrv, nil, nil)
+	s, srv := newServerForTest(t, lensSrv, nil, nil)
+	// Name the workspace this test operates in. It used to leave the root unset, which meant
+	// "no boundary at all" to confinedReadPath, so an absolute t.TempDir() path resolved — the
+	// test was exercising the unconfined configuration rather than the one production runs.
+	s.SetRoot(dir)
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"ask_code","arguments":{"question":"What does Verify do?","files":["` + srcPath + `"],"issue_id":"ENG-42"}}}`
 	resp := callRPC(t, srv, body)
 	if resp.Error != nil {
@@ -429,7 +433,8 @@ func TestReadFile_ReturnsContent(t *testing.T) {
 	if err := os.WriteFile(p, []byte("package x\n\nfunc X() {}\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, srv := newServerForTest(t, nil, nil, nil)
+	s, srv := newServerForTest(t, nil, nil, nil)
+	s.SetRoot(dir) // the file under test lives here; an unset root used to mean "no boundary"
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"` + p + `"}}}`
 	resp := callRPC(t, srv, body)
 	if resp.Error != nil {
@@ -487,7 +492,8 @@ func TestReadFile_LinesRangeSlices(t *testing.T) {
 	if err := os.WriteFile(p, []byte("one\ntwo\nthree\nfour\nfive\n"), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	_, srv := newServerForTest(t, nil, nil, nil)
+	s, srv := newServerForTest(t, nil, nil, nil)
+	s.SetRoot(dir) // the file under test lives here; an unset root used to mean "no boundary"
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_file","arguments":{"path":"` + p + `","lines":"2-3"}}}`
 	resp := callRPC(t, srv, body)
 	var got map[string]any
