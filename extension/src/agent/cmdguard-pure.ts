@@ -33,12 +33,16 @@ export interface Verdict {
   reason: string;
 }
 
+// ⚠ THE THREE TABLES BELOW ARE EXPORTED ONLY SO cmdguard-tables.test.ts CAN COMPARE THEM TO THE
+// SHARED MANIFEST. Nothing else imports them; the guard is `check`. They are the POPULATION the
+// corpus only samples — see testdata/cmdguard-tables.json for what that cost.
+//
 // allowedHeads maps a command to the subcommands that are read-only or build-shaped. An empty set
 // means the command is allowed with any arguments.
 //
 // ⚠ vcs is READ-ONLY on purpose. `git status/diff/log` are how an agent orients; `git push`,
 // `git commit`, `git checkout` and `git clean` change or destroy work and go through confirmation.
-const allowedHeads: Record<string, ReadonlySet<string>> = {
+export const allowedHeads: Record<string, ReadonlySet<string>> = {
   go: new Set(["build", "test", "vet", "fmt", "list", "mod"]),
   gofmt: new Set(),
   "golangci-lint": new Set(),
@@ -65,14 +69,14 @@ const allowedHeads: Record<string, ReadonlySet<string>> = {
 // pipeFilters may appear AFTER a pipe. They read stdin, and the operand check below denies them a
 // file — `go test | grep FAIL` is ordinary; `grep secret ~/.ssh/id_rsa` is not, and the only
 // difference is an operand.
-const pipeFilters = new Set(["head", "tail", "wc", "sort", "uniq", "grep", "cut", "tr", "jq"]);
+export const pipeFilters = new Set(["head", "tail", "wc", "sort", "uniq", "grep", "cut", "tr", "jq"]);
 
 // flagsTakingValue are the flags that consume the NEXT token, PER COMMAND — `-n` takes a value for
 // `head` and takes none for `grep`. A single shared set got this wrong in the permissive direction
 // in the Go implementation: `grep -n secret ~/.ssh/id_rsa` had its file counted as `-n`'s value, so
 // the operand check saw one operand and allowed a read of the key. Wrong the other way costs only a
 // confirmation, so the split is kept here too.
-const flagsTakingValue: Record<string, ReadonlySet<string>> = {
+export const flagsTakingValue: Record<string, ReadonlySet<string>> = {
   grep: new Set(["-e", "--regexp", "-m", "--max-count"]),
   head: new Set(["-n", "-c"]),
   tail: new Set(["-n", "-c"]),

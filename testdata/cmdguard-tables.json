@@ -1,0 +1,111 @@
+{
+  "_comment": [
+    "THE POPULATION THE cmdguard PARITY HARNESS IS KEYED ON.",
+    "cmdguard-corpus.json is a SAMPLE of commands; these are the TABLES the two ported",
+    "implementations decide from. Measured 2026-08-19: 25 of the 39 entries below had no",
+    "corpus case, so a one-sided edit to any of them passed BOTH suites in silence \u2014 adding",
+    "\"awk\" to the Go pipeFilters and nothing else left Go and TypeScript green.",
+    "agent/internal/cmdguard/tables_parity_test.go and",
+    "extension/src/agent/cmdguard-tables.test.ts each assert their own tables equal this file,",
+    "so widening one side fails that side, and widening this file fails both.",
+    "An entry here is not a permission: it is a record of what the two guards must AGREE on.",
+    "Changing a guard means changing this file too, deliberately, in the same commit."
+  ],
+  "allowedHeads": {
+    "cargo": [
+      "build",
+      "check",
+      "clippy",
+      "fmt",
+      "test"
+    ],
+    "eslint": [],
+    "git": [
+      "blame",
+      "branch",
+      "describe",
+      "diff",
+      "log",
+      "ls-files",
+      "remote",
+      "rev-parse",
+      "show",
+      "status"
+    ],
+    "go": [
+      "build",
+      "fmt",
+      "list",
+      "mod",
+      "test",
+      "vet"
+    ],
+    "gofmt": [],
+    "golangci-lint": [],
+    "gradle": [],
+    "jest": [],
+    "make": [],
+    "mvn": [],
+    "npm": [
+      "ci",
+      "ls",
+      "run",
+      "test"
+    ],
+    "pnpm": [
+      "build",
+      "install",
+      "lint",
+      "run",
+      "test",
+      "typecheck"
+    ],
+    "prettier": [],
+    "pytest": [],
+    "ruff": [],
+    "tsc": [],
+    "vitest": [],
+    "yarn": [
+      "build",
+      "lint",
+      "run",
+      "test"
+    ]
+  },
+  "pipeFilters": [
+    "cut",
+    "grep",
+    "head",
+    "jq",
+    "sort",
+    "tail",
+    "tr",
+    "uniq",
+    "wc"
+  ],
+  "flagsTakingValue": {
+    "cut": [
+      "-d",
+      "-f"
+    ],
+    "grep": [
+      "--max-count",
+      "--regexp",
+      "-e",
+      "-m"
+    ],
+    "head": [
+      "-c",
+      "-n"
+    ],
+    "jq": [],
+    "sort": [
+      "-k",
+      "-t"
+    ],
+    "tail": [
+      "-c",
+      "-n"
+    ]
+  }
+}
