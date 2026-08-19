@@ -875,11 +875,9 @@ type readFileArgs struct {
 	Lines string `json:"lines"`
 }
 
-// confinedReadPath enforces that an MCP file read stays within the configured workspace root (s.root).
+// confinedReadPath enforces that an MCP file read stays within the workspace root (rootOrDot()).
 // S11: read_file / ask_code / generate_tests / review_code took a raw caller path straight to os.Open,
 // letting a token-holding client read any file the process could (../../.ssh/id_rsa, .env, .git/config).
-// When no root is configured (s.root == "") there is no workspace boundary to enforce and the path is
-// returned as-is; the serve command always SetRoot()s, so production reads are always confined.
 //
 // THE SENTENCE ABOVE NAMED FOUR TOOLS AND THIS HELPER HAD ONE CALL SITE — toolReadFile. ask_code,
 // generate_tests and review_code went on handing the caller's path to codebase.ReadFile /
@@ -887,11 +885,22 @@ type readFileArgs struct {
 // read: each of the three posted the out-of-root file's BYTES to Lens, so the escape was an
 // exfiltration path off the machine rather than a local disclosure. All four now go through here,
 // and confinement_test.go asserts it against the request bodies the fake Lens received.
+//
+// THE BOUNDARY IS rootOrDot(), NOT s.root, AND THAT IS THE WHOLE OF THE SECOND FIX. This read
+// s.root directly and returned the caller's path unchanged when it was empty — "no root, no
+// boundary". Two other readers of the SAME field in this file already resolve "" to ".": IndexNow
+// indexes the working directory, and rootOrDot backs search_codebase and ask_code's discovery
+// join. So an empty root produced a server that indexed the cwd, printed its file count and
+// demanded its bearer token while reading anything on the machine — measured, not argued, in
+// empty_root_confinement_test.go, where read_file returned the out-of-workspace bytes and all
+// three Lens tools posted them. It is reachable from production, not just from an embedder:
+// `serve` takes --root as a flag (default "."), so `serve --root=` — a wrapper whose
+// --root="$WORKSPACE" met an unset variable — is SetRoot(""). Reading "" as "." here makes the
+// read boundary equal the index boundary; it is not a new policy, it is the one the two readers
+// above already had. (SetAuthToken's docstring made the same choice for the same class of
+// misconfiguration in the other direction — empty token fails closed. Empty root now does too.)
 func (s *Server) confinedReadPath(p string) (string, error) {
-	if s.root == "" {
-		return p, nil
-	}
-	rootAbs, err := filepath.Abs(s.root)
+	rootAbs, err := filepath.Abs(s.rootOrDot())
 	if err != nil {
 		return "", err
 	}
