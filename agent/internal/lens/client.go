@@ -387,8 +387,25 @@ func emitOpenAIJSON(body interface{ Read([]byte) (int, error) }, chunks chan<- S
 
 // CompleteAuto routes to CompleteStream or CompleteStreamOpenAI
 // based on the model identifier. Anything starting with `gpt-`
-// or `o1`/`o3` is OpenAI; everything else (claude, mistral, …)
-// goes through the Anthropic path which Lens maps server-side.
+// or `o1`/`o3` is OpenAI; everything else goes to the Anthropic
+// route.
+//
+// ⚠ THAT SECOND BRANCH IS A DEFAULT, NOT A MAPPING, AND THE
+// CATALOGUE HAS AN ENTRY IT CANNOT SERVE. This comment used to
+// justify sending non-Claude models here by saying Lens mapped
+// them server-side. MEASURED in talyvor-lens at 0efb8c6,
+// read-only, and it does not: HandleAnthropic is
+// p.serve(w, r, p.configForProvider("anthropic")), so the
+// upstream and the credential are pinned by the ROUTE and no
+// model id can move them. Lens instead registers
+// /v1/proxy/mistral/* (beside google, bedrock, groq, vllm), and
+// no client in this repo has ever called it. So model.KnownModels'
+// `mistral-large` — which every surface offers, labelled provider
+// "Mistral" — is POSTed to Anthropic under an Anthropic body.
+// Pinned, with the reasons it is a product call rather than a
+// repair, in testdata/model-routing.json; both this package's
+// model_routing_parity_test.go and the extension's
+// model/model-routing.test.ts measure the real dispatch against it.
 func (c *Client) CompleteAuto(ctx context.Context, messages []Message, model, feature, workspaceID, issueID string, chunks chan<- StreamChunk) error {
 	if isOpenAIModel(model) {
 		return c.CompleteStreamOpenAI(ctx, messages, model, feature, workspaceID, issueID, chunks)
