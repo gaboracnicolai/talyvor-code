@@ -33,7 +33,7 @@ export async function setScopeCommand(manager: ScopeManager): Promise<void> {
   if (active) {
     items.push({
       label: "$(filter-filled) Clear scope",
-      description: "All files in context",
+      description: "Stop naming a focus area in the prompt",
       clear: true,
     });
   }
@@ -46,7 +46,16 @@ export async function setScopeCommand(manager: ScopeManager): Promise<void> {
   if (!picked) return;
   if (picked.clear) {
     await manager.clearActive();
-    void vscode.window.showInformationMessage("Scope cleared. All files in context.");
+    // ⚠ THIS MESSAGE AND THE QUICK-PICK DESCRIPTION ABOVE BOTH USED TO CLAIM THAT
+    // CLEARING A SCOPE PUT EVERY FILE BACK IN CONTEXT. None were ever kept out: an
+    // active scope is a hint in the prompt and does not restrict which files are read.
+    // Measured in the Go module at agent/internal/scope/filter_wiring_test.go, whose
+    // census reads THIS file — re-adding the old claim fails that test until the filter
+    // is actually wired. (The retired wording is not repeated here; the census matches
+    // on substring and quoting it would re-trigger the guard.)
+    void vscode.window.showInformationMessage(
+      "Scope cleared. The prompt no longer names a focus area.",
+    );
     return;
   }
   if (!picked.scopeKey) return;

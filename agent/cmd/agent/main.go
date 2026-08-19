@@ -3118,7 +3118,12 @@ SUBCOMMANDS
   use <name>      Activate a scope (persists across CLI runs)
   clear           Drop the active scope
   show            Show the active scope details
-  add             Add a new scope interactively`)
+  add             Add a new scope interactively
+
+WHAT AN ACTIVE SCOPE DOES
+  It is added to the model's prompt as the area to attend to. It does NOT
+  restrict which files the agent reads — every file the index reaches is still
+  sent, with or without a scope.`)
 }
 
 func runScopeList(stdout io.Writer, sm *scope.ScopeManager) error {
@@ -3174,7 +3179,14 @@ func runScopeClear(stdout io.Writer, sm *scope.ScopeManager) error {
 	if err := sm.ClearActive(); err != nil {
 		return err
 	}
-	fmt.Fprintln(stdout, "Scope cleared. All files in context.")
+	// ⚠ THIS LINE USED TO CLAIM THAT CLEARING A SCOPE PUT EVERY FILE BACK IN
+	// CONTEXT — which told the user that some had been kept out, and none ever
+	// were. An active scope is a hint in the prompt; it does not restrict which
+	// files are read. Measured in internal/scope/filter_wiring_test.go, whose
+	// census reads this file and fails if the old claim returns without the
+	// filter being wired. (The retired wording is not repeated here: the census
+	// matches on substring, so quoting it would re-trigger the guard.)
+	fmt.Fprintln(stdout, "Scope cleared. The prompt no longer names a focus area.")
 	return nil
 }
 
