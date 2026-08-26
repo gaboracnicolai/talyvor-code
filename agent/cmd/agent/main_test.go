@@ -677,11 +677,18 @@ func TestRun_AgentPostsTrackCommentAfterSuccess(t *testing.T) {
 	if !strings.HasSuffix(trackPath, "/v1/workspaces/ws-1/issues/ENG-42/comments") {
 		t.Fatalf("track endpoint not hit, got path %q", trackPath)
 	}
-	if !strings.Contains(trackBody["content"], "Talyvor Agent completed task") {
-		t.Fatalf("comment body wrong: %q", trackBody["content"])
+	// ⚠ THIS USED TO READ trackBody["content"] AND trackBody["author_id"] == "talyvor-agent",
+	// and it was the SECOND test asserting a wire shape talyvor-track refuses. Measured against
+	// a real server: `content` -> 400 `json: unknown field "content"`; `body` -> 201, with the
+	// stored author_id coming back as the session member, never "talyvor-agent" (SEC-5 ignores
+	// a supplied one). Two tests in two packages both green on a call that could not succeed —
+	// both fakes accepted whatever the client happened to send.
+	if !strings.Contains(trackBody["body"], "Talyvor Agent completed task") {
+		t.Fatalf("comment body wrong: %q", trackBody["body"])
 	}
-	if trackBody["author_id"] != "talyvor-agent" {
-		t.Fatalf("author_id = %q", trackBody["author_id"])
+	if _, sent := trackBody["author_id"]; sent {
+		t.Fatalf("author_id was sent (%q) — Track always overwrites it with the verified member, "+
+			"so sending one claims an attribution the wire does not carry", trackBody["author_id"])
 	}
 }
 

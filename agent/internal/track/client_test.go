@@ -60,8 +60,14 @@ func TestAddComment_PostsToCorrectEndpoint(t *testing.T) {
 	var gotPath string
 	var gotMethod string
 	var gotAuth string
+	// ⚠ THIS STRUCT USED TO READ `Content string \`json:"content"\`` AND THAT IS WHY THE DEFECT
+	// SHIPPED. The assertions below checked that the client sent whatever this struct named, so
+	// the test could only ever agree with the client — it modelled nothing about Track. Measured
+	// against a real server, `content` was a 400 (`json: unknown field`) and `body` a 201.
+	// wire_contract_track_test.go now holds the strict, Track-shaped fake; this one keeps
+	// asserting method/path/auth, and its body field is corrected rather than dropped.
 	var gotBody struct {
-		Content  string `json:"content"`
+		Body     string `json:"body"`
 		AuthorID string `json:"author_id"`
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -87,11 +93,15 @@ func TestAddComment_PostsToCorrectEndpoint(t *testing.T) {
 	if gotAuth != "Bearer tlv_k" {
 		t.Errorf("auth = %q", gotAuth)
 	}
-	if gotBody.Content != "agent done" {
-		t.Errorf("body content = %q", gotBody.Content)
+	if gotBody.Body != "agent done" {
+		t.Errorf("body = %q, want the comment text in Track's own field name", gotBody.Body)
 	}
-	if gotBody.AuthorID != "talyvor-agent" {
-		t.Errorf("author_id = %q, want talyvor-agent", gotBody.AuthorID)
+	// ⚠ USED TO ASSERT author_id == "talyvor-agent". Track overwrites the author with the
+	// verified session member (SEC-5), so that assertion pinned a field the server discards —
+	// and the code comment beside it claimed an attribution that never happened. No author_id
+	// is sent now, and this asserts that: a field the server ignores is not a contract.
+	if gotBody.AuthorID != "" {
+		t.Errorf("author_id = %q, want none sent — Track always overwrites it", gotBody.AuthorID)
 	}
 }
 
