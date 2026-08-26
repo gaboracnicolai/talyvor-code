@@ -97,6 +97,21 @@ func (c *Client) GetIssue(ctx context.Context, workspaceID, identifier string) (
 // active issue so the trail of automated changes is visible in
 // Track alongside the human discussion. Unconfigured Track is a
 // no-op — best-effort attribution should never block the CLI.
+//
+// ⚠ THE FIELD IS `body`, NOT `content`, AND IT IS NOT A STYLE CHOICE. Track decodes into
+// model.Comment (`Body string \`json:"body"\“) with DisallowUnknownFields, so any other key
+// is a 400 rather than a silently dropped field: this call posted `content` and could never
+// succeed — measured against a real server, 400 `json: unknown field "content"`, and 201 with
+// `body`. The tests next door had always passed because their fake unmarshalled into a struct
+// the test itself declared; wire_contract_track_test.go is now as strict as Track is.
+//
+// ⚠ NO author_id IS SENT, DELIBERATELY. Track overwrites it with the verified session member
+// (internal/issue/handler.go, SEC-5: "a supplied author_id is ignored, so no caller can
+// attribute a comment to another member"). This code used to send "talyvor-agent" and a comment
+// above it claimed that made automated changes visible as such; it never did — the measured
+// response carried the human member's id. Sending a field the server discards is a claim the
+// wire does not support. Distinguishing agent comments needs a Track-side concept of a
+// non-human author, which is not this repository's to invent.
 func (c *Client) AddComment(ctx context.Context, workspaceID, issueID, comment string) error {
 	if !c.IsConfigured() {
 		return nil
@@ -104,10 +119,7 @@ func (c *Client) AddComment(ctx context.Context, workspaceID, issueID, comment s
 	if workspaceID == "" || issueID == "" {
 		return errors.New("track: workspace_id and issue_id required")
 	}
-	body, err := json.Marshal(map[string]string{
-		"content":   comment,
-		"author_id": "talyvor-agent",
-	})
+	body, err := json.Marshal(map[string]string{"body": comment})
 	if err != nil {
 		return err
 	}
