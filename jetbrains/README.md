@@ -51,7 +51,7 @@ In your JetBrains IDE:
 | Right-click in editor → Talyvor → **Generate Tests** | Language-aware prompt + framework detection + output sanitising; upgrades Haiku → Sonnet via the shared model catalogue |
 | Right-click in editor → Talyvor → **Open Chat** | Reveals the `Talyvor Code` tool window |
 | Tool window → composer | **Streaming** multi-turn chat with rolling history |
-| Tools → Talyvor → **Test Lens Connection** | Fast `/healthz` reachability check |
+| Tools → Talyvor → **Test Lens Connection** | `/healthz` reachability **plus** an authenticated `/v1/auth/me` probe, so a wrong or revoked API key reads as ❌ rather than ✅ |
 | Tools → Talyvor → **Select AI Model** | Pick from the shared model catalogue |
 | Tools → Talyvor → **Generate Shell Command** | NL → single command, with an advisory safety screen (display-only) |
 

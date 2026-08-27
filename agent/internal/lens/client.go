@@ -637,6 +637,67 @@ func isOpenAIModel(model string) bool {
 
 // Status pings /healthz so the CLI's "check" command can report a
 // fast yes/no without paying for a real completion.
+// CredentialVerdict is what a credential probe could establish about the API key.
+//
+// ⚠ IT IS THREE-VALUED ON PURPOSE, AND THE THIRD VALUE IS THE WHOLE SAFETY ARGUMENT.
+// Status() probes /healthz, which Lens serves UNAUTHENTICATED — so a wrong, revoked or
+// expired key produced "reachable" and exit 0 from the one command a user runs to find
+// out why nothing works. VerifyCredential closes that, but a two-valued ok/bad answer
+// would report "your key is bad" whenever the probe itself could not be completed —
+// an older Lens without the route (404), a degraded Lens (5xx), a proxy that ate the
+// request. Those are CredentialUnknown, and the caller must say nothing rather than
+// accuse the key.
+type CredentialVerdict int
+
+const (
+	// CredentialUnknown — the probe could not establish anything. Report exactly what
+	// would have been reported before this existed.
+	CredentialUnknown CredentialVerdict = iota
+	// CredentialOK — Lens authenticated the key.
+	CredentialOK
+	// CredentialRejected — Lens answered 401 or 403: the key is the problem, not the URL.
+	CredentialRejected
+)
+
+// VerifyCredential asks Lens whether the configured API key authenticates, using
+// GET /v1/auth/me — authenticated, free, side-effect-free, and already served.
+//
+// It NEVER returns an error: a probe that cannot answer is CredentialUnknown, because
+// this runs inside a diagnostic and a diagnostic that dies on its own optional step is
+// worse than one that omits it. The HTTP status code that produced the verdict is
+// returned for the message (0 when there was no response at all).
+func (c *Client) VerifyCredential(ctx context.Context) (CredentialVerdict, int) {
+	if !c.IsConfigured() {
+		return CredentialUnknown, 0
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/v1/auth/me", nil)
+	if err != nil {
+		return CredentialUnknown, 0
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return CredentialUnknown, 0
+	}
+	defer resp.Body.Close()
+	return verdictForStatus(resp.StatusCode), resp.StatusCode
+}
+
+// verdictForStatus maps an HTTP status from /v1/auth/me onto a verdict. It is a named function so
+// the shared cross-runtime table can assert it directly — see credential_cases_parity_test.go.
+//
+// FAIL-OPEN BY CONSTRUCTION: only 401/403 accuses the key.
+func verdictForStatus(status int) CredentialVerdict {
+	switch {
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return CredentialRejected
+	case status >= 200 && status < 300:
+		return CredentialOK
+	default:
+		return CredentialUnknown
+	}
+}
+
 func (c *Client) Status(ctx context.Context) (bool, error) {
 	if c.url == "" {
 		return false, errors.New("lens: url empty")

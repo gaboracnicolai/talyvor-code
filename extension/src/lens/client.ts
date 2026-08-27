@@ -17,6 +17,7 @@ import {
   providerForModel,
   type StreamProvider,
 } from "./sse-pure";
+import { verdictForStatus, type CredentialVerdict } from "./connreport-pure";
 
 // StreamUsage is the token-count payload that arrives with the
 // terminal `done` event. Callers attribute cost from this.
@@ -193,9 +194,34 @@ export class LensClient {
     return vecs;
   }
 
+  // verifyCredential asks Lens whether the configured API key authenticates, via
+  // GET /v1/auth/me — authenticated, free and side-effect-free.
+  //
+  // ⚠ IT EXISTS BECAUSE getStatus BELOW CANNOT ANSWER THIS. /healthz is served
+  // UNAUTHENTICATED, so "Test Lens Connection" reported ✅ for a wrong, revoked or expired
+  // key and pointed the user at the URL and the network.
+  //
+  // ⚠ AND IT NEVER THROWS: the verdict is three-valued and "unknown" is a real answer, not a
+  // soft "bad". An older Lens without the route (404), a server-error reply, or a dead socket
+  // must leave the command behaving exactly as it did before — only an explicit 401/403 is a
+  // verdict against the key.
+  async verifyCredential(): Promise<{ verdict: CredentialVerdict; status: number }> {
+    if (!this.isConfigured()) return { verdict: "unknown", status: 0 };
+    try {
+      const res = await fetch(`${this.url.replace(/\/$/, "")}/v1/auth/me`, {
+        headers: { Authorization: `Bearer ${this.apiKey}` },
+      });
+      return { verdict: verdictForStatus(res.status), status: res.status };
+    } catch {
+      return { verdict: "unknown", status: 0 };
+    }
+  }
+
   // getStatus probes /healthz so the "Test Connection" command
   // can give a fast yes/no without paying for a real inference
-  // round-trip.
+  // round-trip. ⚠ IT IS A REACHABILITY PROBE AND NOTHING MORE — /healthz takes no
+  // credential, so a green answer here says nothing about the API key. Pair it with
+  // verifyCredential above before telling a user their setup works.
   async getStatus(): Promise<{ available: boolean; version: string }> {
     try {
       const res = await fetch(`${this.url.replace(/\/$/, "")}/healthz`);

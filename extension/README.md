@@ -15,7 +15,12 @@ default `talyvor.lensUrl` is `http://localhost:8080`, which is a local Lens, not
 you.
 
 Run **`Talyvor: Test Lens Connection`** first. It is the one command that tells you whether the rest
-will work.
+will work. It makes two probes: `/healthz`, which says the URL and the network are good, and
+`/v1/auth/me`, which says your API key is accepted. ⚠ It used to make only the first — and `/healthz`
+takes no credential, so a wrong, revoked or expired key produced `✅ Connected to Lens v…` and then
+every AI call failed. If Lens answers the key probe with anything other than 401 or 403 the command
+reports what it always reported and claims nothing about the key, so an older Lens without that route
+still reads as connected.
 
 ## Requirements
 

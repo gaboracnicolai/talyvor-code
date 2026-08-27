@@ -5,6 +5,21 @@ here is invisible to someone deciding whether to install.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Talyvor: Test Lens Connection` said "✅ Connected" when your API key was wrong.** The command
+  probed `GET /healthz`, which Lens serves *unauthenticated* — the key was never put on the wire, so
+  a wrong, revoked or expired key produced a green tick, and the only failure message the command
+  could emit told you to check "the URL and your network", which were the two things demonstrably
+  working. Every AI call then failed with no diagnostic that could say why. It now also probes
+  `GET /v1/auth/me` with the key and reports the rejection as a *key* problem, naming the setting.
+  The same false tick shipped in the JetBrains plugin and in `talyvor-code check`; all three are
+  fixed together, against one shared table of what each HTTP status is allowed to mean
+  (`testdata/credential-verdict-cases.json`), so the three cannot drift apart.
+  Only an explicit **401** or **403** is treated as a verdict against the key: a Lens without that
+  route, a server error or a dead socket leaves the message exactly as it was, so no working install
+  is turned red by the new probe.
+
 ### Added
 
 - A Marketplace listing body (`extension/README.md`) and this changelog. Both are packaged into the
