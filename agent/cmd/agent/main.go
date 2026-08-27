@@ -231,6 +231,21 @@ func runCheck(w io.Writer, cfg config.Config) error {
 	}
 	fmt.Fprintf(w, "✓ Lens reachable at %s\n", cfg.LensURL)
 
+	// ⚠ REACHABLE IS NOT AUTHENTICATED. The line above comes from GET /healthz, which Lens
+	// serves WITHOUT auth — so before this probe existed, `check` printed that tick and exited 0
+	// for a wrong, revoked or expired key, and said nothing about the credential at all. That is
+	// the failure a user runs `check` to diagnose. The verdict is three-valued and FAIL-OPEN: only
+	// an explicit 401/403 is treated as a bad key, so an older Lens without /v1/auth/me, a 5xx or
+	// a dead proxy leaves this command behaving exactly as it did before.
+	switch verdict, code := lc.VerifyCredential(ctx); verdict {
+	case lens.CredentialRejected:
+		return fmt.Errorf("Lens is reachable at %s but REJECTED the API key (HTTP %d) — the key is wrong or revoked, not the URL", cfg.LensURL, code)
+	case lens.CredentialOK:
+		fmt.Fprintln(w, "✓ API key verified")
+	case lens.CredentialUnknown:
+		// Say nothing: the probe could not tell, and a diagnostic must not guess.
+	}
+
 	// Track lookup is informational. The agent works without
 	// Track — cost attribution rides on the X-Talyvor-Issue header
 	// that Lens itself records.

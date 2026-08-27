@@ -7,6 +7,8 @@ package com.talyvor.code.actions
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.ui.Messages
+import com.talyvor.code.ConnReportPure
+import com.talyvor.code.CredentialVerdict
 import com.talyvor.code.LensClient
 
 class TestConnectionAction : AnAction() {
@@ -20,20 +22,20 @@ class TestConnectionAction : AnAction() {
             project,
             "Talyvor: testing Lens connection…",
             body = {
+                // ⚠ TWO PROBES, NOT ONE. getStatus hits /healthz, which Lens serves
+                // UNAUTHENTICATED — on its own it reported "✅ Connected" for a wrong, revoked or
+                // expired key. The wording lives in ConnReportPure so it can be tested at all.
                 val status = client.getStatus()
-                if (status.available) {
-                    "✅ Connected to Lens v${status.version}"
+                val (verdict, code) = if (status.available) {
+                    client.verifyCredential()
                 } else {
-                    "❌ Cannot connect to Lens — check the URL and your network."
+                    Pair(CredentialVerdict.UNKNOWN, 0)
                 }
+                ConnReportPure.connectionReport(status.available, status.version, verdict, code)
             },
-            onSuccess = { message ->
-                val icon = if (message.startsWith("✅")) {
-                    Messages.getInformationIcon()
-                } else {
-                    Messages.getErrorIcon()
-                }
-                Messages.showMessageDialog(project, message, "Talyvor Connection", icon)
+            onSuccess = { report ->
+                val icon = if (report.isError) Messages.getErrorIcon() else Messages.getInformationIcon()
+                Messages.showMessageDialog(project, report.message, "Talyvor Connection", icon)
             },
         )
     }

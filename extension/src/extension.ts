@@ -10,6 +10,7 @@
 import * as vscode from "vscode";
 import { TalyvorConfig } from "./config";
 import { LensClient } from "./lens/client";
+import { connectionReport } from "./lens/connreport-pure";
 import { TrackClient } from "./track/client";
 import type { LensConfig } from "./lens/types";
 import {
@@ -297,15 +298,24 @@ async function testConnectionCommand(lens: LensClient): Promise<void> {
     );
     return;
   }
+  // ⚠ TWO PROBES, NOT ONE. getStatus hits /healthz, which Lens serves UNAUTHENTICATED — on its
+  // own it reported "✅ Connected" for a wrong, revoked or expired key and sent the user to check
+  // "the URL and your network", the two things that had just demonstrably worked. The wording
+  // decision lives in connreport-pure.ts so it can be tested outside the editor.
   const status = await lens.getStatus();
-  if (status.available) {
-    void vscode.window.showInformationMessage(
-      `✅ Connected to Lens v${status.version}`,
-    );
+  const credential = status.available
+    ? await lens.verifyCredential()
+    : ({ verdict: "unknown", status: 0 } as const);
+  const report = connectionReport({
+    available: status.available,
+    version: status.version,
+    verdict: credential.verdict,
+    status: credential.status,
+  });
+  if (report.kind === "info") {
+    void vscode.window.showInformationMessage(report.message);
   } else {
-    void vscode.window.showErrorMessage(
-      "❌ Cannot connect to Lens — check the URL and your network.",
-    );
+    void vscode.window.showErrorMessage(report.message);
   }
 }
 

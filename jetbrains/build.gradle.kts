@@ -73,9 +73,24 @@ tasks {
     //
     // NAME_ONLY rather than RELATIVE because the file sits above the project directory; what must
     // invalidate the cache is its CONTENT, not where the checkout happens to be rooted.
+    //
+    // ⚠ AND THE SAME HOLE REOPENED THE MOMENT A SECOND SHARED TABLE WAS ADDED. The block above
+    // names ONE file, so testdata/credential-verdict-cases.json — added with
+    // CredentialVerdictParityTest, which makes the identical promise — was invisible to this task
+    // in exactly the same way. MEASURED, not assumed: breaking the KOTLIN port reddened it
+    // (`> Task :test`), and breaking the SHARED TABLE, and then truncating it to two rows, both
+    // left `> Task :test UP-TO-DATE`, BUILD SUCCESSFUL, while the Go and TypeScript ports reddened
+    // on both. A cross-runtime control is what saw it; the parity test itself cannot.
+    //
+    // Declared as a DIRECTORY so the next shared table is covered on the day it lands rather than
+    // the day someone re-runs a control. The Go and TypeScript ports need no equivalent — neither
+    // caches a test result against a declared input set.
     test {
         inputs.file(file("../testdata/safeurl-cases.json"))
             .withPropertyName("safeurlSharedCases")
+            .withPathSensitivity(PathSensitivity.NAME_ONLY)
+        inputs.files(fileTree("../testdata"))
+            .withPropertyName("sharedCrossRuntimeTestdata")
             .withPathSensitivity(PathSensitivity.NAME_ONLY)
     }
 }

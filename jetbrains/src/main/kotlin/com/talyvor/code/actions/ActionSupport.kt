@@ -29,11 +29,11 @@ internal fun requireConfigured(project: Project, client: LensClient): Boolean {
  * pipes the result back to the EDT for display. Errors land in
  * a Messages dialog so the user always sees them.
  */
-internal fun runOnBackground(
+internal fun <T> runOnBackground(
     project: Project,
     title: String,
-    body: () -> String,
-    onSuccess: (String) -> Unit,
+    body: () -> T,
+    onSuccess: (T) -> Unit,
 ) {
     val task = object : Task.Backgroundable(project, title, true) {
         override fun run(indicator: ProgressIndicator) {

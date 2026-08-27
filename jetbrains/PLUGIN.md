@@ -41,7 +41,7 @@ manual in-IDE checks (it can't be exercised without an IDE sandbox).
 | Streaming chat | Tool window composer | `LensClient.completeStream` + `SsePure` | unit (parser) + manual |
 | Open Chat | Editor right-click / tool window | — | manual |
 | Generate Shell Command | Tools → Talyvor | `ShellPure` + `Models` | unit (helpers) + manual |
-| Test Lens Connection | Tools → Talyvor | `LensClient.getStatus` | manual |
+| Test Lens Connection | Tools → Talyvor | `LensClient.getStatus` + `LensClient.verifyCredential` → `ConnReportPure` | unit (`ConnReportPureTest`, `CredentialProbeTest`, `CredentialVerdictParityTest`) + manual |
 | Select AI Model | Tools → Talyvor | `Models` catalogue | manual |
 | Settings (Lens URL/key, workspace, issue, model) | Settings → Tools → Talyvor Code | `TalyvorSettings` | manual |
 | Per-issue cost attribution | every Lens call | `X-Talyvor-{Feature,Workspace,Issue}` headers | manual |
@@ -88,8 +88,11 @@ configured Lens URL/key. Each step is the minimum to confirm the
 surface works end-to-end.
 
 1. **Test Lens Connection** — Tools → Talyvor → Test Lens Connection →
-   expect `✅ Connected to Lens v…` (or a clear ❌ when the URL is
-   wrong). Confirms `getStatus`/healthz.
+   expect `✅ Connected to Lens v… — API key verified` (a clear ❌ when
+   the URL is wrong, and a different ❌ naming the key when Lens answers
+   401/403). Confirms `getStatus`/healthz **and** `verifyCredential`
+   against `/v1/auth/me`. ⚠ Worth doing with a deliberately wrong key
+   too: before that second probe existed this step passed with one.
 2. **Select AI Model** — Tools → Talyvor → Select AI Model → pick a
    model → reopen Settings → Tools → Talyvor Code and confirm the Model
    field updated.

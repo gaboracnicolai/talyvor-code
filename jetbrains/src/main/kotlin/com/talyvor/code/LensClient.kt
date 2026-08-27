@@ -242,8 +242,38 @@ class LensClient(
     }
 
     /**
+     * verifyCredential asks Lens whether the configured API key authenticates, via
+     * GET /v1/auth/me — authenticated, free and side-effect-free.
+     *
+     * ⚠ IT EXISTS BECAUSE getStatus CANNOT ANSWER THIS: /healthz is served UNAUTHENTICATED, so
+     * "Test Lens Connection" reported ✅ for a wrong, revoked or expired key and sent the user to
+     * check the URL and the network — the two things that had just demonstrably worked.
+     *
+     * ⚠ AND IT NEVER THROWS. A probe that could not be completed is UNKNOWN, not REJECTED; the
+     * status-to-verdict mapping is ConnReportPure.verdictFor, asserted against the shared table.
+     * Returns the verdict and the status that produced it (0 when there was no response).
+     */
+    fun verifyCredential(): Pair<CredentialVerdict, Int> {
+        if (!isConfigured()) return Pair(CredentialVerdict.UNKNOWN, 0)
+        return try {
+            val request = HttpRequest.newBuilder()
+                .uri(URI.create("${url.trimEnd('/')}/v1/auth/me"))
+                .header("Authorization", "Bearer $apiKey")
+                .timeout(Duration.ofSeconds(10))
+                .GET()
+                .build()
+            val response = http.send(request, HttpResponse.BodyHandlers.ofString())
+            Pair(ConnReportPure.verdictFor(response.statusCode()), response.statusCode())
+        } catch (_: Exception) {
+            Pair(CredentialVerdict.UNKNOWN, 0)
+        }
+    }
+
+    /**
      * getStatus probes /healthz so the "Test Connection" action can give
      * a fast yes/no without paying for a real inference round-trip.
+     * ⚠ IT IS A REACHABILITY PROBE AND NOTHING MORE — /healthz takes no credential, so a green
+     * answer here says nothing about the API key. Pair it with verifyCredential above.
      * Mirrors the VS Code LensClient.getStatus — any failure is reported
      * as unavailable rather than thrown.
      */
