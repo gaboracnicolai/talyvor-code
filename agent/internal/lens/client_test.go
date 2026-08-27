@@ -342,9 +342,19 @@ func TestEstimateCostUSD(t *testing.T) {
 		model string
 		want  float64
 	}{
-		{"claude-haiku-4-5", 0.80 + 4.00}, // 1M in + 1M out at catalog rates
+		// ⚠ "at catalog rates" WAS THIS LINE'S COMMENT AND IT WAS FALSE — talyvor-lens
+		// internal/catalog/seed.go, the file EstimateCostUSD names as its source of truth, carries
+		// claude-haiku-4-5 at 1.00/5.00. The NUMBER is unchanged (it is a price, and a price is
+		// Nicolai's — W4.11's precedent); only the claim about where it came from is corrected.
+		{"claude-haiku-4-5", 0.80 + 4.00}, // 1M in + 1M out, at the rate this function quotes
 		{"claude-sonnet-4-6", 3.00 + 15.00},
 		{"totally-unknown", 0.80 + 4.00}, // unknown falls back to the haiku bucket
+		// ⚠ THIS LIST IS HAND-WRITTEN AND THE CATALOGUE HAS SIX MODELS. It prices two of them and
+		// one string that is not a model at all, so claude-opus-4-6, gpt-4o, gpt-4o-mini and
+		// mistral-large were priced by nothing here — which is how the priciest model in the
+		// product came to sit on the fallback rate unremarked. model_price_coverage_test.go joins
+		// its population to model.KnownModels for exactly that reason; this list is kept because a
+		// synthetic unknown id is a case the catalogue-joined census cannot express.
 	}
 	for _, tc := range cases {
 		got := EstimateCostUSD(tc.model, 1_000_000, 1_000_000)

@@ -226,16 +226,38 @@ func (c *Client) ReportAttribution(ctx context.Context, outputID, targetKind, ta
 
 // EstimateCostUSD prices a call from per-million-token rates.
 // Keep the table tight; Lens does authoritative reconciliation.
+//
+// ⚠ FOUR OF THE SIX CATALOGUE MODELS ARE QUOTED FROM `default`, INCLUDING THE MOST EXPENSIVE ONE,
+// AND THE RATES BELOW ARE NOT THE ONES THIS COMMENT USED TO CITE FOR THEM. Both facts are
+// MEASURED and pinned in model_price_coverage_test.go; neither is repaired here, because every
+// repair is a price and a price is Nicolai's (W4.11 set that precedent in this repository and
+// left its own constant untouched for the same reason).
+//
+//	catalogue model      quoted here          talyvor-lens internal/catalog/seed.go
+//	claude-haiku-4-5     0.80 / 4.00          1.00 /  5.00
+//	claude-sonnet-4-6    3.00 / 15.00         3.00 / 15.00   ← the only one that agrees
+//	claude-opus-4-6      0.80 / 4.00          5.00 / 25.00   ← the priciest model, on the fallback
+//	gpt-4o               0.80 / 4.00          (OpenAI rates)
+//	gpt-4o-mini          0.80 / 4.00          (OpenAI rates)
+//	mistral-large        0.80 / 4.00          (Mistral rates)
+//
+// ⚠ WHAT WAS REPAIRED, AND IT MOVES NO PRICE: this switch carried `case "claude-opus-4-7"` at
+// 15.0/75.0. A whole-tree grep found that string at exactly ONE place — that label. It is in no
+// catalogue, no manifest, no doc, and not in Lens's seed either (which has opus-4-5, 4-6 and
+// 4-8), so no request could ever reach it. What it did do was make the switch READ as though
+// Opus were priced, while `claude-opus-4-6` fell to the line below.
+// TestEstimateCostUSD_NoCataloguePriceMoves asserts every catalogue model's quote is unchanged.
 func EstimateCostUSD(model string, inputTokens, outputTokens int) float64 {
 	var inRate, outRate float64
 	switch model {
 	case "claude-sonnet-4-6":
 		inRate, outRate = 3.0, 15.0
-	case "claude-opus-4-7":
-		inRate, outRate = 15.0, 75.0
 	default:
-		// claude-haiku-4-5 and unknown models fall back to haiku rates
-		// (0.80/4.00 per 1M — Lens catalog seed.go is the source of truth).
+		// ⚠ THIS BRANCH PRICES FIVE OF THE SIX CATALOGUE MODELS, NOT "unknown models". Its former
+		// comment read "claude-haiku-4-5 and unknown models fall back to haiku rates (0.80/4.00
+		// per 1M — Lens catalog seed.go is the source of truth)" — and seed.go says haiku is
+		// 1.00/5.00, so the sentence cited a file that contradicts the number beside it. The
+		// number is left exactly as it was; only the claim about where it came from is corrected.
 		inRate, outRate = 0.80, 4.00
 	}
 	return (float64(inputTokens)*inRate + float64(outputTokens)*outRate) / 1_000_000
