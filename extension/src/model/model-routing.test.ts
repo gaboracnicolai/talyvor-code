@@ -26,6 +26,12 @@ interface RoutingCase {
   routedProvider: string;
   dispatchable: boolean;
   why?: string;
+  // The NON-STREAMING dispatch. complete/completeWithUsage are a second dispatcher and the fields
+  // above cannot see them — see the block above blockingDispatchPathFor.
+  blockingEndpoint: string;
+  blockingProvider: string;
+  blockingDispatchable: boolean;
+  whyBlocking?: string;
 }
 
 /** Walks up for the shared table. ⚠ LOUD, NOT EMPTY — a file that has moved must not leave this
@@ -91,6 +97,96 @@ async function dispatchPathFor(modelId: string): Promise<string> {
   assert.notEqual(seen, "", `model ${modelId}: no request was issued — the dispatch was not measured`);
   return seen;
 }
+
+// THE TABLE NAMED ONE DISPATCHER AND EACH PORT HAS TWO.
+//
+// Everything above measures completeStream. `complete` and `completeWithUsage` are a second
+// dispatcher and they classify by nothing: both build an Anthropic body and fetch a LITERAL
+// `${url}/v1/proxy/anthropic/v1/messages`, for every model, so an OpenAI model chosen in the
+// QuickPick reaches Anthropic's API whenever the call does not stream. The Go port has the identical
+// shape and the same measurement — agent/internal/lens/model_routing_parity_test.go — which is why
+// `blockingEndpoint` is in the shared table rather than in one port's test.
+//
+// blockingDispatchPathFor drives the REAL complete with a stubbed global fetch, for the same reason
+// dispatchPathFor does: the endpoint is a literal inside client.ts.
+async function blockingDispatchPathFor(modelId: string): Promise<string> {
+  const realFetch = globalThis.fetch;
+  let seen = "";
+  try {
+    globalThis.fetch = (async (input: unknown) => {
+      seen = new URL(String(input)).pathname;
+      // An Anthropic-shaped reply so complete() decodes and resolves. The PATH is the measurement.
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as typeof globalThis.fetch;
+
+    const client = new LensClient("https://lens.example.com", "tlv_test_key");
+    await client.complete([{ role: "user", content: "hi" }], modelId, "parity", "ws", "issue");
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  assert.notEqual(
+    seen,
+    "",
+    `model ${modelId}: no request was issued — the blocking dispatch was not measured`,
+  );
+  return seen;
+}
+
+test("the blocking endpoint is what the client actually posts", async () => {
+  for (const c of loadCases()) {
+    assert.ok(
+      c.blockingEndpoint,
+      `${c.id}: no blockingEndpoint in the table — the non-streaming dispatch is unmeasured for this model, which is how it went unseen`,
+    );
+    const got = await blockingDispatchPathFor(c.id);
+    assert.equal(
+      got,
+      c.blockingEndpoint,
+      `${c.id}: complete() POSTed to "${got}", table says "${c.blockingEndpoint}"`,
+    );
+  }
+});
+
+test("blockingDispatchable agrees with the catalogue", () => {
+  for (const c of loadCases()) {
+    if (!c.blockingDispatchable) continue;
+    assert.equal(
+      c.catalogProvider.toLowerCase(),
+      c.blockingProvider,
+      `${c.id}: catalogue says provider "${c.catalogProvider}" but the non-streaming path routes it to "${c.blockingProvider}" — mark blockingDispatchable=false and say why, or fix the routing`,
+    );
+  }
+});
+
+test("a blocking defect may be pinned but not silently", () => {
+  for (const c of loadCases()) {
+    if (c.blockingDispatchable) {
+      assert.ok(
+        !c.whyBlocking || c.whyBlocking.trim() === "",
+        `${c.id}: blockingDispatchable=true but carries a whyBlocking — that field records why a model CANNOT reach its provider on the non-streaming path`,
+      );
+      continue;
+    }
+    assert.ok(
+      c.whyBlocking && c.whyBlocking.trim() !== "",
+      `${c.id}: blockingDispatchable=false with no whyBlocking — a pinned defect must say what it is`,
+    );
+  }
+});
+
+test("the two dispatch paths do not disagree silently", () => {
+  for (const c of loadCases()) {
+    if (c.routedEndpoint === c.blockingEndpoint) continue;
+    assert.equal(
+      c.blockingDispatchable,
+      false,
+      `${c.id}: the streaming path POSTs to "${c.routedEndpoint}" and the non-streaming path to "${c.blockingEndpoint}", and the table calls the second one dispatchable. One model, two providers, chosen by whether the call happened to stream — say which is wrong`,
+    );
+  }
+});
 
 test("every offered model is dispatchable to its own provider", () => {
   for (const c of loadCases()) {

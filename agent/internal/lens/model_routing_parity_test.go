@@ -60,6 +60,12 @@ type routingCase struct {
 	RoutedProvider  string `json:"routedProvider"`
 	Dispatchable    bool   `json:"dispatchable"`
 	Why             string `json:"why"`
+	// The NON-STREAMING dispatch. Complete/CompleteWithUsage are a second dispatcher and the
+	// fields above cannot see them — see the block above blockingDispatchPathFor.
+	BlockingEndpoint     string `json:"blockingEndpoint"`
+	BlockingProvider     string `json:"blockingProvider"`
+	BlockingDispatchable bool   `json:"blockingDispatchable"`
+	WhyBlocking          string `json:"whyBlocking"`
 }
 
 type routingTable struct {
@@ -156,6 +162,119 @@ func TestRoutedEndpointIsWhatTheClientActuallyPosts(t *testing.T) {
 	for _, c := range loadRoutingTable(t) {
 		if got := dispatchPathFor(t, c.ID); got != c.RoutedEndpoint {
 			t.Errorf("%s: CompleteAuto POSTed to %q, table says %q", c.ID, got, c.RoutedEndpoint)
+		}
+	}
+}
+
+// THE TABLE NAMED ONE DISPATCHER AND THIS REPOSITORY HAS TWO.
+//
+// Everything above measures CompleteAuto — the STREAMING path — and the table's note used to call
+// `routedEndpoint` "the gateway endpoint each client actually POSTs it to", singular. There is a
+// second dispatcher and it classifies by nothing at all: Complete and CompleteWithUsage build an
+// Anthropic body and POST it to a LITERAL `/v1/proxy/anthropic/v1/messages`, for every model.
+//
+// ⚠ THAT PATH IS NOT A CORNER. Sixteen production call sites in this module use it — cmd/agent
+// (ask, plan, commit ×2, review, test, chat), internal/shell/generator.go ×3,
+// internal/projectctx/loader.go, internal/mcp/server.go ×4, cmd/agent/iterative.go — and
+// cmd/agent's streamWithFallback FALLS BACK TO IT when a stream errors before its first chunk. So
+// `talyvor ask --model gpt-4o` streams to OpenAI on a good day and blocks to Anthropic on a bad one,
+// from one command, with no message to the user either way.
+//
+// ⚠ SO `dispatchable: true` FOR gpt-4o WAS AN OVER-CLAIM BY THIS FILE'S OWN GUARD, not a wrong
+// value: the rule "is a model the product offers one it can SEND" was answered by measuring one of
+// the two ways the product sends it. It is the same shape talyvor-docs found in
+// check-test-manifest.mjs, which counted one of that repository's two vitest projects and reported a
+// clean tree.
+//
+// ⚠ W4.19 HANDED THIS ON AS UNVERIFIED, IN THOSE WORDS: "I measured the literal and the call sites
+// but did NOT drive it end to end, so it is reported as unverified-by-execution rather than
+// claimed." It is driven now, in both ports, and the literal was right.
+//
+// blockingDispatchPathFor drives the REAL Complete against a live server and returns the path it
+// POSTed to — measured for the same reason dispatchPathFor is: the endpoint is a literal inside the
+// function, so nothing short of driving the call can see it move.
+func blockingDispatchPathFor(t *testing.T, modelID string) string {
+	t.Helper()
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		// An Anthropic-shaped reply so the client decodes and returns cleanly. The PATH is the
+		// measurement; the body shape is not asserted here.
+		_, _ = w.Write([]byte(`{"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":1,"output_tokens":1}}`))
+	}))
+	defer srv.Close()
+
+	c, err := New(srv.URL, "tlv_test_key")
+	if err != nil {
+		t.Fatalf("New(%q): %v", srv.URL, err)
+	}
+	if _, err := c.Complete(context.Background(), []Message{{Role: "user", Content: "hi"}},
+		modelID, "parity", "ws", "issue"); err != nil {
+		t.Fatalf("Complete(%q): %v", modelID, err)
+	}
+	if got == "" {
+		t.Fatalf("model %q: no request reached the server — the blocking dispatch was not measured", modelID)
+	}
+	return got
+}
+
+// TestBlockingEndpointIsWhatTheClientActuallyPosts is the second path's version of the rule above,
+// and it is what reds the day the non-streaming dispatch is routed either way.
+func TestBlockingEndpointIsWhatTheClientActuallyPosts(t *testing.T) {
+	for _, c := range loadRoutingTable(t) {
+		if c.BlockingEndpoint == "" {
+			t.Errorf("%s: no blockingEndpoint in the table — the non-streaming dispatch is unmeasured for this model, which is how it went unseen for a year", c.ID)
+			continue
+		}
+		if got := blockingDispatchPathFor(t, c.ID); got != c.BlockingEndpoint {
+			t.Errorf("%s: Complete POSTed to %q, table says %q", c.ID, got, c.BlockingEndpoint)
+		}
+	}
+}
+
+// TestBlockingDispatchableAgreesWithTheCatalogue mirrors the streaming rule: a model the catalogue
+// advertises with a Provider must reach that provider's route on the path being claimed.
+func TestBlockingDispatchableAgreesWithTheCatalogue(t *testing.T) {
+	for _, c := range loadRoutingTable(t) {
+		if !c.BlockingDispatchable {
+			continue
+		}
+		if strings.ToLower(c.CatalogProvider) != c.BlockingProvider {
+			t.Errorf("%s: catalogue says provider %q but the non-streaming path routes it to %q — mark blockingDispatchable=false and say why, or fix the routing",
+				c.ID, c.CatalogProvider, c.BlockingProvider)
+		}
+	}
+}
+
+// TestABlockingDefectMayBePinnedButNotSilently — the same rule the streaming half already applies to
+// `why`, on the field that records the second path. A pinned defect that stops saying what it is
+// becomes an accepted value.
+func TestABlockingDefectMayBePinnedButNotSilently(t *testing.T) {
+	for _, c := range loadRoutingTable(t) {
+		if c.BlockingDispatchable {
+			if strings.TrimSpace(c.WhyBlocking) != "" {
+				t.Errorf("%s: blockingDispatchable=true but carries a whyBlocking — that field records why a model CANNOT reach its provider on the non-streaming path", c.ID)
+			}
+			continue
+		}
+		if strings.TrimSpace(c.WhyBlocking) == "" {
+			t.Errorf("%s: blockingDispatchable=false with no whyBlocking — a pinned defect must say what it is", c.ID)
+		}
+	}
+}
+
+// TestTheTwoDispatchPathsDoNotDisagreeSilently is the rule that exists because of what this file
+// missed. Two dispatchers sending the same model to two providers is a defect whatever the reason,
+// so a case whose endpoints differ may not ALSO claim the non-streaming path is fine.
+func TestTheTwoDispatchPathsDoNotDisagreeSilently(t *testing.T) {
+	for _, c := range loadRoutingTable(t) {
+		if c.RoutedEndpoint == c.BlockingEndpoint {
+			continue
+		}
+		if c.BlockingDispatchable {
+			t.Errorf("%s: the streaming path POSTs to %q and the non-streaming path to %q, and the table calls the second one dispatchable. One model, two providers, chosen by whether the call happened to stream — say which is wrong",
+				c.ID, c.RoutedEndpoint, c.BlockingEndpoint)
 		}
 	}
 }

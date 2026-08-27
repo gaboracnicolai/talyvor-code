@@ -1,40 +1,57 @@
 {
-  "note": "Every model the product offers, and the gateway endpoint each client actually POSTs it to. Read by agent/internal/lens/model_routing_parity_test.go and extension/src/model/model-routing.test.ts, both of which MEASURE the dispatch through their own real client rather than restating it. `routedProvider` is the provider Lens pins from the ROUTE (see cmd/lens/main.go: the /v1/proxy/<name>/* handlers each pin their upstream and credential by name). `dispatchable` is derived: lowercase(catalogProvider) == routedProvider. A case with dispatchable=false MUST carry a `why`.",
+  "note": "Every model the product offers, and the gateway endpoint each client actually POSTs it to — ON EACH OF THE TWO DISPATCH PATHS. ⚠ THE FIRST VERSION OF THIS NOTE SAID \"the gateway endpoint\", SINGULAR, AND THAT WAS THE OVER-CLAIM THIS FILE NOW RECORDS: there are two dispatchers and they disagree. `routedEndpoint` is the STREAMING dispatch (Go CompleteAuto, TS completeStream), which classifies by id prefix. `blockingEndpoint` is the NON-STREAMING dispatch (Go Complete/CompleteWithUsage, TS complete/completeWithUsage), which classifies by NOTHING — both ports hardcode the Anthropic path. That path is not a corner: it is 16 production call sites in the Go agent alone (ask, commit, review, plan, shell generation, projectctx, four MCP tools) and it is where streamWithFallback lands when a stream errors before its first chunk, so one command can take either dispatcher. Both endpoints are MEASURED by driving the real client against a live server, in both ports, never restated. `routedProvider` / `blockingProvider` are the providers Lens pins from the ROUTE (cmd/lens/main.go: each /v1/proxy/<name>/* handler pins its upstream and credential by name). `dispatchable` and `blockingDispatchable` are derived: lowercase(catalogProvider) == the provider of that path's route. A case with either set to false MUST carry `why` / `whyBlocking` respectively.",
   "cases": [
     {
       "id": "claude-haiku-4-5",
       "catalogProvider": "Anthropic",
       "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
       "routedProvider": "anthropic",
-      "dispatchable": true
+      "dispatchable": true,
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": true
     },
     {
       "id": "claude-sonnet-4-6",
       "catalogProvider": "Anthropic",
       "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
       "routedProvider": "anthropic",
-      "dispatchable": true
+      "dispatchable": true,
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": true
     },
     {
       "id": "claude-opus-4-6",
       "catalogProvider": "Anthropic",
       "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
       "routedProvider": "anthropic",
-      "dispatchable": true
+      "dispatchable": true,
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": true
     },
     {
       "id": "gpt-4o",
       "catalogProvider": "OpenAI",
       "routedEndpoint": "/v1/proxy/openai/v1/chat/completions",
       "routedProvider": "openai",
-      "dispatchable": true
+      "dispatchable": true,
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": false,
+      "whyBlocking": "MEASURED, NOT FIXED — THE SAME MODEL GOES TO TWO DIFFERENT PROVIDERS DEPENDING ON WHETHER THE CALL STREAMS. Driven end to end through the real clients in both ports: the streaming path routes this model to /v1/proxy/openai/v1/chat/completions (correctly, and `dispatchable` above records it), while Complete/CompleteWithUsage (Go) and complete/completeWithUsage (TS) POST it to /v1/proxy/anthropic/v1/messages with an Anthropic-shaped body ({model, max_tokens, messages}) and no classifier at all — the endpoint is a literal in the function. Lens pins the provider from the route, so the request reaches Anthropic's API under an OpenAI model id. ⚠ IT IS REACHABLE FROM ONE COMMAND: streamWithFallback streams via the classified path and falls back to the UNclassified Complete when the stream errors before its first chunk, so `talyvor ask --model gpt-4o` can change provider on a transient SSE failure. ⚠ WHY IT IS PINNED RATHER THAN REPAIRED: routing it needs the OpenAI-shaped request body AND a non-streaming decoder for the OpenAI completion object, including usage.prompt_tokens / completion_tokens, which feed Usage.CostUSD. Neither port has ever had one — the OpenAI decode that exists is the SSE delta parser — and it could not be observed against a real Lens from here. A decoder whose green has never been seen is not a decoder, least of all on a cost path. This pin REDS the moment the blocking path is routed either way."
     },
     {
       "id": "gpt-4o-mini",
       "catalogProvider": "OpenAI",
       "routedEndpoint": "/v1/proxy/openai/v1/chat/completions",
       "routedProvider": "openai",
-      "dispatchable": true
+      "dispatchable": true,
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": false,
+      "whyBlocking": "MEASURED, NOT FIXED — THE SAME MODEL GOES TO TWO DIFFERENT PROVIDERS DEPENDING ON WHETHER THE CALL STREAMS. Driven end to end through the real clients in both ports: the streaming path routes this model to /v1/proxy/openai/v1/chat/completions (correctly, and `dispatchable` above records it), while Complete/CompleteWithUsage (Go) and complete/completeWithUsage (TS) POST it to /v1/proxy/anthropic/v1/messages with an Anthropic-shaped body ({model, max_tokens, messages}) and no classifier at all — the endpoint is a literal in the function. Lens pins the provider from the route, so the request reaches Anthropic's API under an OpenAI model id. ⚠ IT IS REACHABLE FROM ONE COMMAND: streamWithFallback streams via the classified path and falls back to the UNclassified Complete when the stream errors before its first chunk, so `talyvor ask --model gpt-4o` can change provider on a transient SSE failure. ⚠ WHY IT IS PINNED RATHER THAN REPAIRED: routing it needs the OpenAI-shaped request body AND a non-streaming decoder for the OpenAI completion object, including usage.prompt_tokens / completion_tokens, which feed Usage.CostUSD. Neither port has ever had one — the OpenAI decode that exists is the SSE delta parser — and it could not be observed against a real Lens from here. A decoder whose green has never been seen is not a decoder, least of all on a cost path. This pin REDS the moment the blocking path is routed either way."
     },
     {
       "id": "mistral-large",
@@ -42,7 +59,11 @@
       "routedEndpoint": "/v1/proxy/anthropic/v1/messages",
       "routedProvider": "anthropic",
       "dispatchable": false,
-      "why": "MEASURED, NOT FIXED — the product offers this model and cannot send it. Both clients classify by id prefix into exactly two endpoints (gpt-/o1/o3 -> openai, everything else -> anthropic), so a model whose catalogue Provider is Mistral is POSTed to /v1/proxy/anthropic/v1/messages with an Anthropic body and Lens forwards it to Anthropic's API under x-api-key. Lens is NOT the missing half: it registers /v1/proxy/mistral/* (cmd/lens/main.go) and no client here has ever called it. Fixing it is three coupled changes and at least one product call, which is why this is pinned rather than repaired: (a) route by the catalogue's Provider field instead of the id prefix, (b) send the OpenAI-shaped body the Mistral route expects, (c) the id is wrong too -- Lens's catalogue entry is `mistral-large-latest`, so today the request is also unpriced and bills on a fallback bound (W4.13 measured that half and left it). Whether Talyvor Code supports Mistral at all -- rather than dropping the entry -- is the call that has to be made first. This pin REDS the moment it is decided either way."
+      "why": "MEASURED, NOT FIXED — the product offers this model and cannot send it. Both clients classify by id prefix into exactly two endpoints (gpt-/o1/o3 -> openai, everything else -> anthropic), so a model whose catalogue Provider is Mistral is POSTed to /v1/proxy/anthropic/v1/messages with an Anthropic body and Lens forwards it to Anthropic's API under x-api-key. Lens is NOT the missing half: it registers /v1/proxy/mistral/* (cmd/lens/main.go) and no client here has ever called it. Fixing it is three coupled changes and at least one product call, which is why this is pinned rather than repaired: (a) route by the catalogue's Provider field instead of the id prefix, (b) send the OpenAI-shaped body the Mistral route expects, (c) the id is wrong too -- Lens's catalogue entry is `mistral-large-latest`, so today the request is also unpriced and bills on a fallback bound (W4.13 measured that half and left it). Whether Talyvor Code supports Mistral at all -- rather than dropping the entry -- is the call that has to be made first. This pin REDS the moment it is decided either way.",
+      "blockingEndpoint": "/v1/proxy/anthropic/v1/messages",
+      "blockingProvider": "anthropic",
+      "blockingDispatchable": false,
+      "whyBlocking": "MEASURED, NOT FIXED — undispatchable on BOTH paths, and for the same root as `why` above: no client here has ever called Lens's /v1/proxy/mistral/*. The streaming path at least classifies; the non-streaming one does not classify at all. Whichever way the Mistral question is decided, both paths have to move, and this half is the one no test could see until the table gained a second endpoint."
     }
   ]
 }
