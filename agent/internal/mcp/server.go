@@ -1085,12 +1085,30 @@ func (s *Server) toolGetCodebaseSummary(raw json.RawMessage) (any, int, string) 
 	idx := s.CurrentIndex()
 	if a.Root != "" || idx == nil {
 		root := a.Root
-		if root == "" {
-			root = s.root
+		// S11, THE FIFTH LANE. `a.Root` is caller-supplied and went to IndexDirectory unchanged,
+		// while read_file / ask_code / generate_tests / review_code / search_codebase all confine
+		// theirs. MEASURED before this line existed: a root outside the workspace was WALKED, and
+		// the answer named that directory's languages plus the host's git repo and branch — for
+		// `../../../../../../etc` as readily as for an absolute path.
+		//
+		// It is quieter than the other four, which is the only reason it outlived them: they inline
+		// a file BODY into the Lens prompt, so confinement_test.go can assert against the bytes the
+		// fake Lens received. This tool sends nothing to Lens, so the escape shows up only in the
+		// RPC RESULT and a guard keyed on the wire cannot see it.
+		//
+		// ⚠ IT CONFINES UNCONDITIONALLY, AND THE FIRST VERSION DID NOT — IT GUARDED THE CALL WITH
+		// `if root != ""` AND JUSTIFIED THAT BY SAYING CONFINING THE FALLBACK WOULD REFUSE THE
+		// NO-ARGUMENT CALL. CONTROLS M2 AND M3 MEASURED THAT CLAIM AND IT IS FALSE: an empty root
+		// joins against the root and resolves to the root itself, so confining it is a no-op and
+		// the whole suite stays green either way. The branch was dead weight with a false reason
+		// attached, which is the shape this project keeps finding. Unconditional is simpler and
+		// leaves nothing to explain: confinedReadPath resolves "" and "." to the root, and refuses
+		// everything outside it.
+		safe, cerr := s.confinedReadPath(root)
+		if cerr != nil {
+			return nil, rpcErrInvalidParam, "index: root outside workspace"
 		}
-		if root == "" {
-			root = "."
-		}
+		root = safe
 		fresh, err := codebase.IndexDirectory(root, codebase.DefaultMaxFiles)
 		if err != nil {
 			return nil, rpcErrInternal, "index: " + err.Error()

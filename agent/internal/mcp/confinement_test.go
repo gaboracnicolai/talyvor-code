@@ -211,3 +211,101 @@ func TestAskCode_AutoDiscoveredFilesStayInRoot(t *testing.T) {
 }
 
 var _ = json.Marshal
+
+// ⚠ THE FIFTH LANE, AND IT IS THE ONE THAT WALKS A WHOLE TREE.
+//
+// This file's own header names the population the S11 fix closed: "read_file / ask_code /
+// generate_tests / review_code took a raw caller path straight to os.Open". FOUR tools.
+// `get_codebase_summary` is a fifth, it takes a caller-supplied path, and it was in neither the
+// list nor the gate.
+//
+// MEASURED against the tool census rather than assumed: of the ten tools `dispatchTool` serves,
+// six touch the filesystem and FIVE of those route their caller-supplied path through
+// `confinedReadPath`. `toolGetCodebaseSummary` does not — it reads `a.Root` off the wire and hands
+// it to `codebase.IndexDirectory` unchanged:
+//
+//	root := a.Root
+//	if root == "" { root = s.root }
+//	if root == "" { root = "." }
+//	fresh, err := codebase.IndexDirectory(root, codebase.DefaultMaxFiles)
+//
+// ⚠ WHAT AN ESCAPE HERE DISCLOSES, read off Summary() rather than guessed: the directory's own
+// NAME (`filepath.Base(root)` when it is not a git repo), whether it IS a git repo and its remote
+// and branch, a per-language FILE COUNT, the total file count and the total line count. It also
+// confirms or denies the existence of any path on the machine, and it makes the process WALK and
+// READ files under an attacker-chosen directory to produce those counts.
+//
+// ⚠ IT IS QUIETER THAN THE OTHER FOUR AND THAT IS THE ONLY REASON IT SURVIVED THEM. Those three
+// inline a file BODY into the Lens prompt, so S11 could — and this file does — assert against the
+// bytes the fake Lens received. This tool sends nothing to Lens; the escape is visible only in the
+// RPC RESULT. A guard keyed on the wire cannot see it, which is exactly how a lane stays out of a
+// population its siblings define.
+//
+// THE INSTRUMENT: the out-of-root directory holds a Ruby file and the workspace root holds none, so
+// "Ruby" appearing in the answer's languages is proof the walk went outside — not an inference from
+// a count.
+func TestGetCodebaseSummary_RefusesARootOutsideTheWorkspace(t *testing.T) {
+	srv, _, root, secret := confinementFixture(t)
+	outside := filepath.Dir(secret)
+
+	// A language that does not occur inside the workspace root, so its appearance is unambiguous.
+	if err := os.WriteFile(filepath.Join(outside, "canary.rb"), []byte("puts 'x'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// ⚠ THE FIXTURE IS PROVEN LIVE FIRST. If the root's own summary already reported Ruby, the
+	// assertion below would pass for a reason that has nothing to do with confinement.
+	base := callTool(t, srv, "get_codebase_summary", `{}`)
+	if got := summaryText(t, base); strings.Contains(got, "Ruby") {
+		t.Fatalf("the workspace root already indexes as Ruby (%q) — the canary cannot prove an "+
+			"escape. Change the canary language.", got)
+	}
+
+	for _, tc := range []struct {
+		name string
+		args string
+	}{
+		{"an absolute path outside the root", `{"root":"` + outside + `"}`},
+		{"a ../ traversal", `{"root":"../../../../../../etc"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := callTool(t, srv, "get_codebase_summary", tc.args)
+			text := summaryText(t, resp)
+			if strings.Contains(text, "Ruby") || strings.Contains(text, filepath.Base(outside)) {
+				t.Errorf("get_codebase_summary INDEXED A DIRECTORY OUTSIDE THE WORKSPACE ROOT.\n"+
+					"  root      = %s\n  asked for = %s\n  answered  = %s\n"+
+					"`a.Root` is caller-supplied and reaches codebase.IndexDirectory unchanged, "+
+					"while read_file / ask_code / generate_tests / review_code / search_codebase "+
+					"all confine theirs. The answer names the outside directory and the languages "+
+					"of files only it contains.", root, tc.args, text)
+			}
+			if resp.Error == nil && !strings.Contains(text, "outside workspace") {
+				t.Errorf("get_codebase_summary must REFUSE a root outside the workspace, got: %s", text)
+			}
+		})
+	}
+
+	// ⚠ MUST STAY GREEN, BOTH FORMS. A confinement that also refuses the tool's ordinary use is not
+	// a repair: the no-argument call is how every real client uses it, and an IN-ROOT relative root
+	// is legitimate.
+	if resp := callTool(t, srv, "get_codebase_summary", `{}`); resp.Error != nil {
+		t.Errorf("the no-argument call must still work, got error: %+v", resp.Error)
+	}
+	if resp := callTool(t, srv, "get_codebase_summary", `{"root":"."}`); resp.Error != nil {
+		t.Errorf(`get_codebase_summary {"root":"."} must still work, got error: %+v`, resp.Error)
+	}
+}
+
+// summaryText renders whatever the tool answered as a single string, so a case can assert on it
+// whether the tool refused (an error/text payload) or answered (a summary map).
+func summaryText(t *testing.T, resp rpcResponse) string {
+	t.Helper()
+	if resp.Error != nil {
+		return resp.Error.Message
+	}
+	b, err := json.Marshal(resp.Result)
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	return string(b)
+}
