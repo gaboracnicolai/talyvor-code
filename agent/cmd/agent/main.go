@@ -3271,10 +3271,22 @@ func runContextEdit(stderr io.Writer) error {
 
 // ─── serve subcommand ──────────────────────────────
 
-// runServe starts the Talyvor Code MCP server. Binds 0.0.0.0 so
-// IDE/agent clients on any interface can reach it; the user is
-// responsible for the security posture (usually a localhost-only
-// SSH tunnel or a firewalled subnet).
+// runServe starts the Talyvor Code MCP server. Binds LOOPBACK by
+// default; --host widens it, and a non-loopback bind is REFUSED
+// unless the operator supplies an explicit TALYVOR_MCP_TOKEN
+// (ResolveServeToken). The posture is enforced here, not delegated
+// to the user.
+//
+// ⚠ THIS COMMENT SAID THE EXACT OPPOSITE UNTIL 2026-08-28 — "Binds
+// 0.0.0.0 so IDE/agent clients on any interface can reach it; the
+// user is responsible for the security posture" — describing a
+// posture that ResolveServeToken had already replaced with a
+// fail-closed one. It is corrected in place, and the old text kept
+// here, because a reader acting on it would have "restored" a LAN
+// bind believing they were matching documented intent. The default
+// itself is now pinned by cmd/agent/serve_bind_default_test.go;
+// before that test it was unpinned, and flipping it to 0.0.0.0 left
+// all 23 packages green.
 func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
 		port int
