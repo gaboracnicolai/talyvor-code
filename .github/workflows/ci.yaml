@@ -72,7 +72,13 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.25"
+          # ⚠ DERIVED FROM agent/go.mod, NOT A LITERAL. This file carried THREE literal
+          # `go-version: "1.25"` pins — three numbers that can drift from go.mod and from each
+          # other, in the direction of testing and shipping a runtime nobody measured.
+          # talyvor-suite measured that cost the same night: its literal resolved to go1.25.0 and
+          # CI shipped a binary with 32 CALLED stdlib vulnerabilities. Enforced by
+          # agent/govulncheck_gate_test.go.
+          go-version-file: agent/go.mod
           # The Go module lives at agent/go.mod, not the repo root, so setup-go's
           # cache logged "Restore cache failed: go.mod not found". Point it at the
           # real dependency file so the module cache populates.
@@ -88,6 +94,47 @@ jobs:
           fi
       - run: cd agent && go vet ./...
       - run: cd agent && go test -race -count=1 ./...
+
+  # Supply-chain gate: govulncheck against the Go vulnerability DB.
+  #
+  # ⚠ THERE WAS NONE, AND THE ABSENCE IS THE FINDING (W6.36). Measured on clean main
+  # `386df344`: `govulncheck ./...` in agent/ reported EIGHT CALLED vulnerabilities — CALLED, not
+  # the separate "in modules you require but your code doesn't appear to call" bucket it counts on
+  # its own line — and this file contained the word govulncheck zero times. Every one of the eight
+  # is the STANDARD LIBRARY, not a dependency: net/http, crypto/tls ×2, crypto/x509, net/url,
+  # net/textproto, encoding/asn1.
+  #
+  # ⚠⚠ AND THIS REPO SHIPS BINARIES. The `release` job below cross-compiles five artifacts that
+  # install.sh hands to customers. Whatever stdlib that job's Go pin resolves to is the stdlib in
+  # every one of them, and nothing measured it.
+  #
+  # ⚠⚠⚠ IT USES `go-version-file`, DELIBERATELY, AND SO DO THE agent AND release JOBS NOW.
+  # govulncheck grades the STDLIB against the toolchain it runs under, so this gate is only honest
+  # if it runs the Go this repo actually ships. Three literal `go-version: "1.25"` pins in one file
+  # are three numbers that can drift from agent/go.mod and from each other — talyvor-suite measured
+  # what that costs: with no toolchain directive its literal resolved to go1.25.0 and CI shipped a
+  # binary with 32 called stdlib vulnerabilities while a developer's laptop, on a newer default
+  # toolchain, reported nine. Deriving every pin from agent/go.mod removes the drift instead of
+  # detecting it, and agent/govulncheck_gate_test.go keeps it derived.
+  #
+  # Landed RED on purpose, before the toolchain floor that clears it; the PR's check history is
+  # the evidence. A gate nobody has watched fail is the same thing as no gate.
+  vuln:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: agent/go.mod
+          cache-dependency-path: agent/go.sum
+      - name: report the Go this job actually runs
+        run: |
+          go version
+          go env GOVERSION GOTOOLCHAIN
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          cd agent && "$(go env GOPATH)/bin/govulncheck" ./...
 
   gitleaks:
     runs-on: ubuntu-latest
@@ -153,7 +200,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: "1.25"
+          # ⚠ THE SHIPPED RUNTIME. This job cross-compiles the five artifacts install.sh hands to
+          # customers, so whatever Go it installs IS the stdlib inside every one of them. Derived
+          # from agent/go.mod so it cannot differ from the version the agent job tested and the
+          # vuln job scanned — which is the whole point of having one source of truth.
+          go-version-file: agent/go.mod
           cache-dependency-path: agent/go.sum
 
       - name: Cross-compile the four documented targets
