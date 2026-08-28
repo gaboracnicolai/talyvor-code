@@ -35,9 +35,18 @@ import (
 // ⚠ WHAT THIS DOES NOT PROVE, stated so nobody reads it as wider
 // than it is: it pins the default the flag ADVERTISES, read back
 // through the real runServe. It does NOT prove the listener uses
-// that value — `addr` is built from `host` one line above
-// ListenAndServe, and a future edit that hardcodes an address while
-// leaving the flag registered would keep this green.
+// that value — `addr` is built from `host` one line above the
+// listener, and an edit that hardcodes an address while leaving the
+// flag registered keeps this green. MEASURED 2026-08-28 (W4.33),
+// not left as a worry: that edit was applied in both its loud and
+// its quiet form and the whole 23-package suite stayed green.
+// ⚠ THAT HALF IS NOW COVERED, and by a different file rather than by
+// widening this one: cmd/agent/serve_bind_actual_test.go drives
+// runServe onto a real socket and asserts the address the kernel
+// hands back. The two are deliberately separate — this one reads the
+// FLAG and needs no listener, that one reads the SOCKET. Deleting
+// either leaves a real hole; W4.33's controls C1/C2 red only through
+// the socket guard, C3 only through it, and C4/C7/C9 through both.
 
 // serveFlagDefault returns the default runServe advertises for the
 // named flag, read out of the real flag set by asking `serve` for

@@ -12,6 +12,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -3287,6 +3288,10 @@ func runContextEdit(stderr io.Writer) error {
 // itself is now pinned by cmd/agent/serve_bind_default_test.go;
 // before that test it was unpinned, and flipping it to 0.0.0.0 left
 // all 23 packages green.
+// serveListen is net.Listen, indirected so cmd/agent's bind guard can observe
+// the address the MCP server actually binds. Production never replaces it.
+var serveListen = net.Listen
+
 func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error {
 	var (
 		port int
@@ -3348,7 +3353,12 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 
 	mux := http.NewServeMux()
 	server.Routes(mux)
-	addr := fmt.Sprintf("%s:%d", host, port)
+	// net.JoinHostPort, not fmt.Sprintf("%s:%d"): an IPv6 literal host needs
+	// brackets. MEASURED 2026-08-28 (W4.33) — `serve -host ::1` built "::1:7777",
+	// which net.Listen refuses outright ("too many colons in address"), so one of
+	// the two alternative spellings serve_bind_default_test.go calls legitimately
+	// green could never actually have bound anything.
+	addr := net.JoinHostPort(host, strconv.Itoa(port))
 	fmt.Fprintf(stdout, "Talyvor Code MCP server running on %s\n", addr)
 	if generated {
 		fmt.Fprintf(stderr, "MCP auth token (generated): %s\n", token)
@@ -3362,10 +3372,21 @@ func runServe(stdout, stderr io.Writer, cfg config.Config, args []string) error 
 			"⚠️  WARNING: bound to non-loopback %s — reachable by other hosts on the network. The bearer token is required, but prefer an SSH tunnel to 127.0.0.1 unless LAN exposure is intended.\n",
 			host)
 	}
+	// Listen explicitly rather than srv.ListenAndServe() so the address the
+	// server ACTUALLY binds is observable by a test.
+	// cmd/agent/serve_bind_default_test.go pins the default the -host flag
+	// ADVERTISES; MEASURED 2026-08-28 (W4.33), hardcoding a wide listener
+	// address while leaving that flag untouched left the whole 23-package
+	// suite green, in both the loud form and the quiet one that keeps
+	// PRINTING 127.0.0.1. serve_bind_actual_test.go closes that through
+	// serveListen, and this is the only reason the seam exists.
+	ln, lerr := serveListen("tcp", addr)
+	if lerr != nil {
+		return fmt.Errorf("serve: listen on %s: %w", addr, lerr)
+	}
 	srv := &http.Server{
-		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	return srv.ListenAndServe()
+	return srv.Serve(ln)
 }
