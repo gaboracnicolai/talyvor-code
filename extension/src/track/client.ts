@@ -52,16 +52,36 @@ export class TrackClient {
   // getIssue returns null when Track is unconfigured OR the lookup
   // fails. The IDE flow degrades gracefully — without Track we
   // still cost-attribute via the X-Talyvor-Issue header.
+  //
+  // ⚠ IT ASKS TWO ROUTES BECAUSE TRACK HAS TWO AND THEY ARE DISJOINT. `ref` is what the IDE
+  // supplies, and issue-context.ts validates it as a HUMAN identifier (isValidIssueIdentifier,
+  // "e.g. ENG-42") before calling here. Track serves `/issues/{id}` off the uuid primary key and
+  // `/issues/by-identifier/{identifier}` off `WHERE identifier = $1 AND workspace_id = $2`;
+  // neither answers for the other's input. Before this, only the first was ever asked, so every
+  // ENG-42 lookup missed an issue that exists — and setActiveIssue then fabricated a SYNTHETIC
+  // issue titled with the key itself, so the miss arrived looking like a hit. talyvor-track added
+  // by-identifier for exactly this and its handler says so: "the CLI agent's Track client put an
+  // identifier in the {id} slot below and got 404 for issues that exist — measured on the wire,
+  // talyvor-code #57".
+  //
+  // ⚠ `{id}` IS TRIED FIRST, exactly as before, and by-identifier only after a miss — so every
+  // input that resolved before resolves the same way, through the same request. This can only
+  // turn misses into hits, and needs no decision about which route wins.
   async getIssue(
     workspaceId: string,
-    identifier: string,
+    ref: string,
   ): Promise<TrackIssue | null> {
-    if (!this.isConfigured() || !workspaceId || !identifier) return null;
+    if (!this.isConfigured() || !workspaceId || !ref) return null;
+    const base = `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues/`;
+    return (
+      (await this.getIssueAt(`${base}${encodeURIComponent(ref)}`)) ??
+      (await this.getIssueAt(`${base}by-identifier/${encodeURIComponent(ref)}`))
+    );
+  }
+
+  private async getIssueAt(endpoint: string): Promise<TrackIssue | null> {
     try {
-      const res = await fetch(
-        `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues/${encodeURIComponent(identifier)}`,
-        { headers: this.headers() },
-      );
+      const res = await fetch(endpoint, { headers: this.headers() });
       if (!res.ok) return null;
       const raw = (await res.json()) as RawIssue;
       return normalise(raw);

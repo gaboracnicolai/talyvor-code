@@ -61,15 +61,41 @@ func (c *Client) IsConfigured() bool {
 // GetIssue returns nil (no error) when Track is unconfigured so
 // callers can treat the lookup as best-effort. Genuine HTTP
 // failures surface as an error so the user knows to investigate.
-func (c *Client) GetIssue(ctx context.Context, workspaceID, identifier string) (*Issue, error) {
+//
+// ⚠ IT ASKS TWO ROUTES BECAUSE TRACK HAS TWO AND THEY ARE DISJOINT. `ref` is whatever the caller
+// resolved — cfg.ActiveIssue, which internal/issueref recovers FROM A GIT BRANCH NAME, so in
+// practice it is a human key ("ENG-42") and only rarely a row id. Track serves
+// `/issues/{id}` off the primary key and `/issues/by-identifier/{identifier}` off
+// `WHERE identifier = $1 AND workspace_id = $2`; neither answers for the other's input. Before
+// this, only the first was ever asked, so every branch-derived lookup 404ed on an issue that
+// exists — and because a 404 is the best-effort "no issue" answer, it did so SILENTLY.
+// talyvor-track added by-identifier for exactly this client and said so in its handler:
+// "the CLI agent's Track client put an identifier in the {id} slot below and got 404 for issues
+// that exist — measured on the wire, talyvor-code #57". Its half shipped; this half did not.
+//
+// ⚠ THE ORDER IS WHAT MAKES THIS BEHAVIOUR-PRESERVING RATHER THAN A POLICY CHOICE. `{id}` is
+// tried FIRST, exactly as before, and by-identifier only after a 404 — so every input that
+// resolved before resolves the same way, in the same request, to the same issue. This can only
+// turn 404s into 200s. Asking by-identifier first would decide which route wins for a string
+// that could be both, and that is not a decision this needs to take.
+func (c *Client) GetIssue(ctx context.Context, workspaceID, ref string) (*Issue, error) {
 	if !c.IsConfigured() {
 		return nil, nil
 	}
-	if workspaceID == "" || identifier == "" {
+	if workspaceID == "" || ref == "" {
 		return nil, errors.New("track: workspace_id and identifier required")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		c.url+"/v1/workspaces/"+url.PathEscape(workspaceID)+"/issues/"+url.PathEscape(identifier), nil)
+	base := c.url + "/v1/workspaces/" + url.PathEscape(workspaceID) + "/issues/"
+	out, err := c.getIssueAt(ctx, base+url.PathEscape(ref))
+	if err != nil || out != nil {
+		return out, err
+	}
+	return c.getIssueAt(ctx, base+"by-identifier/"+url.PathEscape(ref))
+}
+
+// getIssueAt performs one lookup: (nil, nil) on 404, an error on any other >= 400.
+func (c *Client) getIssueAt(ctx context.Context, endpoint string) (*Issue, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
