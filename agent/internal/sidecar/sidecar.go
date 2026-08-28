@@ -86,6 +86,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/talyvor/code/internal/safeurl"
 )
 
 // Config is everything the proxy needs. It is deliberately small: anything not listed here is
@@ -130,6 +132,21 @@ func Start(cfg Config) (*Sidecar, error) {
 	upstream := strings.TrimSuffix(cfg.LensURL, "/")
 	if upstream == "" {
 		return nil, errors.New("no Lens URL configured: set TALYVOR_LENS_URL")
+	}
+	// ⚠ THE SAME RULE EVERY OTHER CREDENTIAL-CARRYING CLIENT APPLIES, AND IT IS HERE RATHER THAN IN
+	// runExec ON PURPOSE. internal/safeurl exists because this check used to be a step a caller had
+	// to remember: it lived behind Config.Validate(), eleven subcommands called it and two did not,
+	// and those two sent the customer's key in cleartext. Its fix was to make the rule a property of
+	// CONSTRUCTION — "there is no exported way to build a client that skips it".
+	//
+	// The sidecar builds no lens/track/docs client. It assembles its own request in forward() and
+	// sets `Authorization: Bearer <LensAPIKey>` on it, so it inherited neither gate, and
+	// `talyvor-code exec` reached whatever TALYVOR_LENS_URL named — http://, 169.254.169.254, or the
+	// inet_aton respellings of it that net.ParseIP does not recognise. Putting the check in runExec
+	// would have restored exactly the opt-in shape safeurl was written to end, for the next caller of
+	// Start. See internal/sidecar/safeurl_gate_test.go.
+	if err := safeurl.Validate("lens-url", cfg.LensURL); err != nil {
+		return nil, err
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.Port)
