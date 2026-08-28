@@ -110,41 +110,11 @@ func TestTrackLikeServer_RejectsTheKeyThatWasBeingSent(t *testing.T) {
 	}
 }
 
-// GetIssue's path is MEASURED-BROKEN and this test pins it rather than pretending otherwise.
-//
-// The client builds /v1/workspaces/{ws}/issues/{identifier} and its package doc says it exists
-// to "resolve an issue identifier (ENG-42)". Track's route is `/{id}` and reads
-// `WHERE id = $1` — issues.id is a uuid. MEASURED against the real server with the row present:
-// ENG-42 -> 404, the same request with issues.id -> 200 carrying identifier ENG-42.
-//
-// ⚠ AND THERE IS NO OTHER REST ROUTE TO SWITCH TO — checked three ways rather than assumed:
-// the issue handler mounts no identifier lookup; /issues/search?q=ENG-42 returns [] (it searches
-// title and description); and /issues?identifier=ENG-42 LOOKS like a filter but is INERT —
-// with two issues seeded it returned BOTH, identically to ?zzz=nope. Repairing GetIssue needs a
-// route in talyvor-track, which is not this repository's merge. See queue item W4.20.
-//
-// This test therefore asserts what the client DOES, so that whoever changes it has to come here
-// and read why.
-func TestGetIssue_SendsTheIdentifierWhereTrackReadsAnID(t *testing.T) {
-	var gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		w.WriteHeader(http.StatusNotFound) // what a real Track answers for this path
-	}))
-	defer srv.Close()
-
-	c := mustNew(t, srv.URL, "tlv_k")
-	iss, err := c.GetIssue(context.Background(), "ws-1", "ENG-42")
-	if err != nil {
-		t.Fatalf("GetIssue: %v", err)
-	}
-	if gotPath != "/v1/workspaces/ws-1/issues/ENG-42" {
-		t.Fatalf("path = %q — if this changed, the cross-repo note above changed with it", gotPath)
-	}
-	if iss != nil {
-		t.Fatalf("a 404 must surface as (nil, nil)")
-	}
-	// ⚠ The pinned defect: a real Track answers 404 to that path even when the issue EXISTS,
-	// and this client reports it as an ordinary absence with no error. Anyone making Track
-	// resolve identifiers should delete this test and the note above it.
-}
+// ⚠ THE PINNED-DEFECT TEST THAT STOOD HERE IS DELETED, ON ITS OWN INSTRUCTION.
+// TestGetIssue_SendsTheIdentifierWhereTrackReadsAnID asserted that GetIssue spends a human key
+// on Track's `/{id}` slot, documented why (Track had no identifier route), and closed with:
+// "Anyone making Track resolve identifiers should delete this test and the note above it."
+// talyvor-track did — `GET /v1/workspaces/{wsID}/issues/by-identifier/{identifier}`, whose own
+// handler comment names this client as the reason. The return trip never happened until now.
+// The behaviour it pinned is replaced, not dropped: by_identifier_fallback_test.go covers the
+// id-first order, the fallback, the credential on both requests, the genuine miss and the 500.
