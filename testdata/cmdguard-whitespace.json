@@ -1,0 +1,2661 @@
+{
+  "_comment": [
+    "\u26a0 THE ONE AXIS ON WHICH THE TWO cmdguard IMPLEMENTATIONS DO NOT AGREE, AND THE SHARED",
+    "CORPUS CANNOT SAY SO. cmdguard-pure.ts's header states the contract this repository runs",
+    "on: \"THIS IS A PORT ... Two guards that disagree are worse than one, because the weaker",
+    "one is the one that matters ... a drift fails a build.\" cmdguard-corpus.json is what makes",
+    "that true \u2014 but a corpusCase carries ONE `decision` field for BOTH implementations, so it",
+    "can only ever record a verdict the two already share. It is structurally unable to express",
+    "a drift; it can only express a settled answer. That is why this file exists beside it.",
+    "",
+    "MEASURED, NOT READ (W4.34, tab-h4w7): Go trims with strings.TrimSpace (unicode.IsSpace) and",
+    "TypeScript with String.prototype.trim (WhiteSpace + LineTerminator). Those two sets are not",
+    "the same set. They differ on exactly two code points, and the ports differ with them:",
+    "  U+0085 NEXT LINE                 Go strips it, JS does not  -> Go allows, TS confirms",
+    "  U+FEFF ZERO WIDTH NO-BREAK SPACE JS strips it, Go does not  -> TS allows, Go confirms",
+    "Neither is an escalation to an arbitrary command: the head still has to be in the allowlist,",
+    "and both call sites treat `confirm` as a prompt rather than a block. What it costs is that",
+    "one side runs unattended what the other stops to ask about \u2014 on a boundary whose own header",
+    "says two guards that disagree are worse than one.",
+    "",
+    "\u26a0 WHICH WAY TO CONVERGE IS A PERMISSION DECISION AND THIS FILE DOES NOT TAKE IT. Matching Go",
+    "widens the extension on U+0085; matching JS widens the agent on U+FEFF; trimming neither",
+    "narrows both and widens nothing, which is the only direction that adds no permission. That",
+    "is a call for Nicolai, and W4.34's own scope discipline pre-committed to reporting it.",
+    "",
+    "\u26a0 WHAT THIS FILE IS FOR IN THE MEANTIME: it makes the drift FAIL A BUILD, which is what the",
+    "header already claimed. Every verdict below is measured from the shipped code, and both",
+    "suites assert their own side against it AND assert that the set of divergent code points is",
+    "EXACTLY the two named. A third divergence reds. A fixed divergence reds too, and the failure",
+    "message says so \u2014 the day someone takes the decision, this file is what tells them to delete",
+    "the entry rather than a stale opinion sitting here forever.",
+    "",
+    "\u26a0 HOW TO REGENERATE, DESCRIBED RATHER THAN POINTED AT: every `go`/`ts` verdict below is",
+    "the output of running the command through agent/internal/cmdguard.Check and through",
+    "extension/src/agent/cmdguard-pure.check respectively, and `agree` is the two compared on",
+    "decision AND reason. `cases` is the cross of the code points above \u2014 the union of Go's",
+    "unicode.White_Space and ECMAScript's WhiteSpace+LineTerminator, plus three near-miss",
+    "characters neither strips \u2014 with six shapes that place the character where a trim runs:",
+    "leading, trailing, surrounding, after-semicolon, after-pipe, interior. Regenerating means",
+    "re-running both guards over that cross; it is deliberately not a script path here, because",
+    "a pointer at one machine's home directory is not something a reader can check."
+  ],
+  "divergentCodepoints": [
+    "U+0085",
+    "U+FEFF"
+  ],
+  "minimumCases": 174,
+  "minimumAgreeingCases": 164,
+  "cases": [
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "leading",
+      "command": "\tgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "trailing",
+      "command": "go test\t",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "surrounding",
+      "command": "\tgit status\t",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "after-semicolon",
+      "command": "go test ;\tgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "after-pipe",
+      "command": "go test |\tgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0009",
+      "name": "CHARACTER TABULATION",
+      "shape": "interior",
+      "command": "go\ttest",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "leading",
+      "command": "\ngo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "trailing",
+      "command": "go test\n",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "surrounding",
+      "command": "\ngit status\n",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "after-semicolon",
+      "command": "go test ;\ngo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "after-pipe",
+      "command": "go test |\ngrep x",
+      "go": {
+        "decision": "confirm",
+        "reason": "grep is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "grep is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000A",
+      "name": "LINE FEED",
+      "shape": "interior",
+      "command": "go\ntest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "leading",
+      "command": "\u000bgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "trailing",
+      "command": "go test\u000b",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "surrounding",
+      "command": "\u000bgit status\u000b",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "after-semicolon",
+      "command": "go test ;\u000bgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "after-pipe",
+      "command": "go test |\u000bgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000B",
+      "name": "LINE TABULATION",
+      "shape": "interior",
+      "command": "go\u000btest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u000btest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u000btest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "leading",
+      "command": "\fgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "trailing",
+      "command": "go test\f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "surrounding",
+      "command": "\fgit status\f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "after-semicolon",
+      "command": "go test ;\fgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "after-pipe",
+      "command": "go test |\fgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000C",
+      "name": "FORM FEED",
+      "shape": "interior",
+      "command": "go\ftest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\ftest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\ftest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "leading",
+      "command": "\rgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "trailing",
+      "command": "go test\r",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "surrounding",
+      "command": "\rgit status\r",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "after-semicolon",
+      "command": "go test ;\rgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "after-pipe",
+      "command": "go test |\rgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+000D",
+      "name": "CARRIAGE RETURN",
+      "shape": "interior",
+      "command": "go\rtest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\rtest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\rtest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "leading",
+      "command": " go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "trailing",
+      "command": "go test ",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "surrounding",
+      "command": " git status ",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ; go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "after-pipe",
+      "command": "go test | grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0020",
+      "name": "SPACE",
+      "shape": "interior",
+      "command": "go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "leading",
+      "command": "\u0085go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u0085go is not a build, test, lint or version-control read command"
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "trailing",
+      "command": "go test\u0085",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "surrounding",
+      "command": "\u0085git status\u0085",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u0085git is not a build, test, lint or version-control read command"
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u0085go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u0085go is not a build, test, lint or version-control read command"
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "after-pipe",
+      "command": "go test |\u0085grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u0085grep is not a read-only filter"
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+0085",
+      "name": "NEXT LINE",
+      "shape": "interior",
+      "command": "go\u0085test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u0085test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u0085test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "leading",
+      "command": "\u00a0go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "trailing",
+      "command": "go test\u00a0",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "surrounding",
+      "command": "\u00a0git status\u00a0",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u00a0go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u00a0grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+00A0",
+      "name": "NO-BREAK SPACE",
+      "shape": "interior",
+      "command": "go\u00a0test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u00a0test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u00a0test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "leading",
+      "command": "\u1680go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "trailing",
+      "command": "go test\u1680",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "surrounding",
+      "command": "\u1680git status\u1680",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "after-semicolon",
+      "command": "go test ;\u1680go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "after-pipe",
+      "command": "go test |\u1680grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+1680",
+      "name": "OGHAM SPACE MARK",
+      "shape": "interior",
+      "command": "go\u1680test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u1680test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u1680test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "leading",
+      "command": "\u2000go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "trailing",
+      "command": "go test\u2000",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "surrounding",
+      "command": "\u2000git status\u2000",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2000go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "after-pipe",
+      "command": "go test |\u2000grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2000",
+      "name": "EN QUAD",
+      "shape": "interior",
+      "command": "go\u2000test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2000test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2000test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "leading",
+      "command": "\u2001go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "trailing",
+      "command": "go test\u2001",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "surrounding",
+      "command": "\u2001git status\u2001",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2001go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "after-pipe",
+      "command": "go test |\u2001grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2001",
+      "name": "EM QUAD",
+      "shape": "interior",
+      "command": "go\u2001test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2001test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2001test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "leading",
+      "command": "\u2002go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "trailing",
+      "command": "go test\u2002",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "surrounding",
+      "command": "\u2002git status\u2002",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2002go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2002grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2002",
+      "name": "EN SPACE",
+      "shape": "interior",
+      "command": "go\u2002test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2002test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2002test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "leading",
+      "command": "\u2003go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "trailing",
+      "command": "go test\u2003",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "surrounding",
+      "command": "\u2003git status\u2003",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2003go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2003grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2003",
+      "name": "EM SPACE",
+      "shape": "interior",
+      "command": "go\u2003test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2003test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2003test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "leading",
+      "command": "\u2004go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "trailing",
+      "command": "go test\u2004",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "surrounding",
+      "command": "\u2004git status\u2004",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2004go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2004grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2004",
+      "name": "THREE-PER-EM SPACE",
+      "shape": "interior",
+      "command": "go\u2004test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2004test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2004test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "leading",
+      "command": "\u2005go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "trailing",
+      "command": "go test\u2005",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "surrounding",
+      "command": "\u2005git status\u2005",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2005go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2005grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2005",
+      "name": "FOUR-PER-EM SPACE",
+      "shape": "interior",
+      "command": "go\u2005test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2005test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2005test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "leading",
+      "command": "\u2006go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "trailing",
+      "command": "go test\u2006",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "surrounding",
+      "command": "\u2006git status\u2006",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2006go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2006grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2006",
+      "name": "SIX-PER-EM SPACE",
+      "shape": "interior",
+      "command": "go\u2006test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2006test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2006test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "leading",
+      "command": "\u2007go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "trailing",
+      "command": "go test\u2007",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "surrounding",
+      "command": "\u2007git status\u2007",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2007go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2007grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2007",
+      "name": "FIGURE SPACE",
+      "shape": "interior",
+      "command": "go\u2007test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2007test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2007test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "leading",
+      "command": "\u2008go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "trailing",
+      "command": "go test\u2008",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "surrounding",
+      "command": "\u2008git status\u2008",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2008go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2008grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2008",
+      "name": "PUNCTUATION SPACE",
+      "shape": "interior",
+      "command": "go\u2008test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2008test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2008test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "leading",
+      "command": "\u2009go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "trailing",
+      "command": "go test\u2009",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "surrounding",
+      "command": "\u2009git status\u2009",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2009go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u2009grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2009",
+      "name": "THIN SPACE",
+      "shape": "interior",
+      "command": "go\u2009test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2009test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2009test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "leading",
+      "command": "\u200ago test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "trailing",
+      "command": "go test\u200a",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "surrounding",
+      "command": "\u200agit status\u200a",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u200ago vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u200agrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200A",
+      "name": "HAIR SPACE",
+      "shape": "interior",
+      "command": "go\u200atest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u200atest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u200atest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "leading",
+      "command": "\u2028go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "trailing",
+      "command": "go test\u2028",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "surrounding",
+      "command": "\u2028git status\u2028",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2028go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "after-pipe",
+      "command": "go test |\u2028grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2028",
+      "name": "LINE SEPARATOR",
+      "shape": "interior",
+      "command": "go\u2028test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2028test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2028test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "leading",
+      "command": "\u2029go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "trailing",
+      "command": "go test\u2029",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "surrounding",
+      "command": "\u2029git status\u2029",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2029go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "after-pipe",
+      "command": "go test |\u2029grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2029",
+      "name": "PARAGRAPH SEPARATOR",
+      "shape": "interior",
+      "command": "go\u2029test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2029test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2029test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "leading",
+      "command": "\u202fgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "trailing",
+      "command": "go test\u202f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "surrounding",
+      "command": "\u202fgit status\u202f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u202fgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u202fgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+202F",
+      "name": "NARROW NO-BREAK SPACE",
+      "shape": "interior",
+      "command": "go\u202ftest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u202ftest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u202ftest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "leading",
+      "command": "\u205fgo test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "trailing",
+      "command": "go test\u205f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "surrounding",
+      "command": "\u205fgit status\u205f",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u205fgo vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u205fgrep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+205F",
+      "name": "MEDIUM MATHEMATICAL SPACE",
+      "shape": "interior",
+      "command": "go\u205ftest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u205ftest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u205ftest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "leading",
+      "command": "\u3000go test",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "trailing",
+      "command": "go test\u3000",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "surrounding",
+      "command": "\u3000git status\u3000",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u3000go vet",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u3000grep x",
+      "go": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+3000",
+      "name": "IDEOGRAPHIC SPACE",
+      "shape": "interior",
+      "command": "go\u3000test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u3000test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u3000test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "leading",
+      "command": "\ufeffgo test",
+      "go": {
+        "decision": "confirm",
+        "reason": "\ufeffgo is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "trailing",
+      "command": "go test\ufeff",
+      "go": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "surrounding",
+      "command": "\ufeffgit status\ufeff",
+      "go": {
+        "decision": "confirm",
+        "reason": "\ufeffgit is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\ufeffgo vet",
+      "go": {
+        "decision": "confirm",
+        "reason": "\ufeffgo is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\ufeffgrep x",
+      "go": {
+        "decision": "confirm",
+        "reason": "\ufeffgrep is not a read-only filter"
+      },
+      "ts": {
+        "decision": "allow",
+        "reason": ""
+      },
+      "agree": false
+    },
+    {
+      "codepoint": "U+FEFF",
+      "name": "ZERO WIDTH NO-BREAK SPACE",
+      "shape": "interior",
+      "command": "go\ufefftest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\ufefftest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\ufefftest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "leading",
+      "command": "\u180ego test",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u180ego is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u180ego is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "trailing",
+      "command": "go test\u180e",
+      "go": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "surrounding",
+      "command": "\u180egit status\u180e",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u180egit is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u180egit is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "after-semicolon",
+      "command": "go test ;\u180ego vet",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u180ego is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u180ego is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "after-pipe",
+      "command": "go test |\u180egrep x",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u180egrep is not a read-only filter"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u180egrep is not a read-only filter"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+180E",
+      "name": "MONGOLIAN VOWEL SEPARATOR",
+      "shape": "interior",
+      "command": "go\u180etest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u180etest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u180etest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "leading",
+      "command": "\u200bgo test",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u200bgo is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u200bgo is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "trailing",
+      "command": "go test\u200b",
+      "go": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "surrounding",
+      "command": "\u200bgit status\u200b",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u200bgit is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u200bgit is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "after-semicolon",
+      "command": "go test ;\u200bgo vet",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u200bgo is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u200bgo is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "after-pipe",
+      "command": "go test |\u200bgrep x",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u200bgrep is not a read-only filter"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u200bgrep is not a read-only filter"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+200B",
+      "name": "ZERO WIDTH SPACE",
+      "shape": "interior",
+      "command": "go\u200btest",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u200btest is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u200btest is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "leading",
+      "command": "\u2060go test",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u2060go is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u2060go is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "trailing",
+      "command": "go test\u2060",
+      "go": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go has no read-only or build subcommand"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "surrounding",
+      "command": "\u2060git status\u2060",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u2060git is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u2060git is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "after-semicolon",
+      "command": "go test ;\u2060go vet",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u2060go is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u2060go is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "after-pipe",
+      "command": "go test |\u2060grep x",
+      "go": {
+        "decision": "confirm",
+        "reason": "\u2060grep is not a read-only filter"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "\u2060grep is not a read-only filter"
+      },
+      "agree": true
+    },
+    {
+      "codepoint": "U+2060",
+      "name": "WORD JOINER",
+      "shape": "interior",
+      "command": "go\u2060test",
+      "go": {
+        "decision": "confirm",
+        "reason": "go\u2060test is not a build, test, lint or version-control read command"
+      },
+      "ts": {
+        "decision": "confirm",
+        "reason": "go\u2060test is not a build, test, lint or version-control read command"
+      },
+      "agree": true
+    }
+  ]
+}
