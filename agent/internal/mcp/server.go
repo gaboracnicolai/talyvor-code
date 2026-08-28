@@ -13,7 +13,6 @@
 package mcp
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -23,7 +22,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1215,17 +1213,3 @@ func suggestTestOutputPath(path, lang string) string {
 	}
 	return dir + stem + ".test" + ext
 }
-
-// runGit is a thin helper used by tests + tools that need a raw
-// git output line rather than the wrappers in internal/git.
-func runGit(args ...string) (string, error) {
-	out, err := exec.Command("git", args...).CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("git: %w (%s)", err, strings.TrimSpace(string(out)))
-	}
-	return string(bytes.TrimSpace(out)), nil
-}
-
-// Compile-time guard: the unused symbols above are still expected
-// to compile cleanly under go vet.
-var _ = runGit
