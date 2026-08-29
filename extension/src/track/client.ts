@@ -123,23 +123,48 @@ export class TrackClient {
   // agent flow to leave "agent task completed" notes alongside
   // human discussion so the audit trail of automated changes is
   // visible inside Track.
+  // ⚠ THE FIELD IS `body`, NOT `content`, AND THIS CALL HAD NEVER ONCE SUCCEEDED.
+  //
+  // Track decodes this route into `model.Comment`, whose json tags are id / issue_id / author_id /
+  // body / edited_at / created_at / updated_at — there is no `content`. And Track's
+  // `internal/httpx.DecodeJSON` calls `dec.DisallowUnknownFields()`, so an undeclared field is a
+  // HARD 400 BAD_JSON before a line of handler logic runs. Measured by executing the stdlib
+  // decoder against a verbatim transcription of that struct at talyvor-track 7ad05ce3:
+  //
+  //     {"content":"…","author_id":"talyvor-code"}  ->  json: unknown field "content"
+  //     {"body":"…","author_id":"talyvor-code"}     ->  <nil>
+  //
+  // So every "agent task completed" note this extension has ever tried to leave was refused, and
+  // the audit trail the comment below describes has never existed. ⚠ IT WAS DEAD TWICE OVER: even
+  // if `content` had decoded, `Comment.Body` would have been empty and the comment blank.
+  //
+  // ⚠⚠ AND THE REASON IT SURVIVED IS TWO LINES DOWN, NOT IN THE SPELLING: the response was never
+  // examined. `await fetch(...)` with no `res.ok` check and a bare `catch {}` cannot distinguish a
+  // permanent 400 from success, so a request that failed on every call for the life of the feature
+  // produced exactly the same trace as one that worked. It returns a boolean now — still
+  // best-effort at the caller, but the failure is at least REPRESENTABLE.
+  //
+  // `author_id` is fine and stays: Track declares it on model.Comment and then OVERWRITES it with
+  // the verified session member (SEC-5), so it is accepted and ignored rather than refused.
   async addComment(
     workspaceId: string,
     issueId: string,
     content: string,
-  ): Promise<void> {
-    if (!this.isConfigured() || !workspaceId || !issueId) return;
+  ): Promise<boolean> {
+    if (!this.isConfigured() || !workspaceId || !issueId) return false;
     try {
-      await fetch(
+      const res = await fetch(
         `${this.url.replace(/\/$/, "")}/v1/workspaces/${encodeURIComponent(workspaceId)}/issues/${encodeURIComponent(issueId)}/comments`,
         {
           method: "POST",
           headers: this.headers(),
-          body: JSON.stringify({ content, author_id: "talyvor-code" }),
+          body: JSON.stringify({ body: content, author_id: "talyvor-code" }),
         },
       );
+      return res.ok;
     } catch {
-      // Best-effort — swallowed.
+      // Best-effort — swallowed. The boolean is the only signal.
+      return false;
     }
   }
 
