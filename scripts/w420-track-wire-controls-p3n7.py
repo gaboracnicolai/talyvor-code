@@ -55,7 +55,24 @@ PKGS = ["./internal/track/", "./cmd/agent/"]
 
 STRICT = "AddComment_BodyIsAcceptedByATrackShapedServer"
 REFUSES = "TrackLikeServer_RejectsTheKeyThatWasBeingSent"
-PINNED = "GetIssue_SendsTheIdentifierWhereTrackReadsAnID"
+# ⚠ `PINNED = "GetIssue_SendsTheIdentifierWhereTrackReadsAnID"` STOOD HERE AND THAT TEST DOES NOT
+# EXIST. It was introduced by eb9414a (#57) and removed when GetIssue grew its by-identifier
+# fallback; nothing noticed, because C4's ANCHOR had drifted in the same refactor and the control
+# aborted before its expected-catcher set was ever compared. Two independent rots, and the louder
+# one hid the quieter one: a `want` set naming a test that no longer exists can NEVER be satisfied,
+# so that control could not have reported `ok` even with a perfect anchor.
+#
+# Re-derived by RUNNING the mutation and reading which tests actually red, not by guessing which
+# name replaced the old one. Subtests included, because this harness matches the failing set
+# EXACTLY and a subtest that reds is part of what the mutation costs.
+GETISSUE_CATCHERS = {
+    "GetIssue_ARowIDStillResolvesOnTheFirstRequest",
+    "GetIssue_DecodesPayload",
+    "GetIssue_ResolvesABranchDerivedIdentifier",
+    "WireContract_MethodAndPath",
+    "WireContract_MethodAndPath/GetIssue_by_row_id",
+    "WireContract_MethodAndPath/GetIssue_by_human_key_falls_through_to_by-identifier",
+}
 OLD_UNIT = "AddComment_PostsToCorrectEndpoint"
 OLD_E2E = "Run_AgentPostsTrackCommentAfterSuccess"
 
@@ -151,11 +168,86 @@ CONTROLS = [
      'json.Marshal(map[string]string{"body": comment, "author_id": "talyvor-agent"})',
      {OLD_UNIT, OLD_E2E}),
 
+    # ⚠ C4's ANCHOR HAD DRIFTED AND THE CONTROL COULD NOT RUN. It was written against a GetIssue
+    # that built its URL in ONE expression; the function was since refactored to compute a `base`
+    # and try two paths off it (`/issues/{id}`, then `/issues/by-identifier/{identifier}`), so the
+    # old literal occurred 0x. `mutate()` refused correctly and exited 1 — this was never a silent
+    # green — but the campaign then aborted with three of four controls run and no summary line.
+    # Re-anchored on what the file says TODAY, and re-verified to CATCH rather than merely to
+    # APPLY: an anchor that matches but mutates something inert reports NOT-CAUGHT for a defect
+    # never introduced, which is the failure the refusal exists to prevent.
     ("C4 GetIssue's path shape changes", CLIENT,
-     'c.url+"/v1/workspaces/"+url.PathEscape(workspaceID)+"/issues/"+url.PathEscape(identifier), nil)',
-     'c.url+"/v1/workspaces/"+url.PathEscape(workspaceID)+"/issue/"+url.PathEscape(identifier), nil)',
-     {PINNED, "GetIssue_DecodesPayload"}),
+     'base := c.url + "/v1/workspaces/" + url.PathEscape(workspaceID) + "/issues/"',
+     'base := c.url + "/v1/workspaces/" + url.PathEscape(workspaceID) + "/issue/"',
+     GETISSUE_CATCHERS),
 ]
+
+
+# ─── --check-anchors: the cheap half, and the ONLY half CI can afford to run ───────────────
+#
+# ⚠ WHY THIS EXISTS. This campaign rotted in TWO independent ways and neither was visible until
+# somebody ran it by hand and read the output. (1) C4's ANCHOR drifted when GetIssue was refactored,
+# so `mutate()` refused — loudly, exit 1, but to nobody, because nothing in CI runs this script.
+# (2) C4's expected-catcher set named `GetIssue_SendsTheIdentifierWhereTrackReadsAnID`, A TEST THAT
+# NO LONGER EXISTS — and that rot was HIDDEN BY THE FIRST, because the run aborted before the set
+# was ever compared. A `want` set naming a test that is gone can never be satisfied, so the control
+# could not have reported `ok` even with a perfect anchor.
+#
+# ⚠⚠ SO THIS MODE CHECKS BOTH, and that is the difference from the sibling implementations in
+# talyvor-docs (#225) and talyvor-track (#218), which check anchors only. A campaign can go inert
+# from either end: the thing it mutates, or the thing it expects to break.
+#
+# The full campaign cannot go in CI — it mutates tracked files and runs the suite once per control.
+# This half is pure string work over the tree: no mutation, no `go test`, milliseconds.
+#
+# ⚠ WHAT IT DOES NOT CLAIM. It proves each control can still be APPLIED and that the names it
+# expects still exist — NOT that the mutation still CATCHES them. A control whose anchor matches but
+# whose mutation has become inert passes here; the campaign is what proves the rest.
+# ⚠ AND ONE STATED LIMIT: a SUBTEST leaf (`Parent/Sub`) is not statically checkable — Go derives it
+# from a `t.Run` string with spaces turned into underscores, so it does not appear verbatim in the
+# source. Only the parent is verified. The campaign catches a renamed subtest by reporting BAD.
+ANCHOR_FLOOR = 4  # controls checked. A loop over an empty list checks nothing.
+
+
+def check_anchors(ci_mode: bool) -> int:
+    bad = []
+    if len(CONTROLS) < ANCHOR_FLOOR:
+        bad.append("FLOOR: only %d controls to check, floor is %d — a loop over a shrunken list "
+                   "reports clean anchors rather than a missing campaign. If controls were "
+                   "deleted, lower the floor in the same diff." % (len(CONTROLS), ANCHOR_FLOOR))
+
+    sources = "\n".join(f.read_text(encoding="utf-8")
+                        for f in (ROOT / "agent").rglob("*_test.go"))
+    if "func Test" not in sources:
+        bad.append("FLOOR: no Go test sources were read, so every name below would verify for "
+                   "free. The walk is broken, not the tree.")
+
+    for name, path, old, _new, want in CONTROLS:
+        n = path.read_text(encoding="utf-8").count(old)
+        print("  %-42s anchor %s (%dx, want 1)" % (name, "ok" if n == 1 else "STALE", n))
+        if n != 1:
+            bad.append(
+                "%s: its anchor occurs %dx in %s, want 1 — this control CANNOT RUN. It is not a "
+                "failing guard, it is an ABSENT one. Re-anchor it on what the file says today, and "
+                "re-verify it CATCHES rather than merely APPLIES."
+                % (name, n, path.name))
+        for t in sorted(want):
+            parent = t.split("/", 1)[0]
+            ok = ("func Test" + parent + "(") in sources
+            print("       expects %-64s %s" % (t, "ok" if ok else "NO SUCH TEST"))
+            if not ok:
+                bad.append(
+                    "%s expects test %r and no `func Test%s(` exists in agent/. A `want` set naming "
+                    "a test that is gone can NEVER be satisfied — the control is permanently BAD, "
+                    "and if its anchor is also stale the abort hides it entirely. That is exactly "
+                    "how this campaign rotted." % (name, t, parent))
+
+    if bad:
+        for b in bad:
+            print(("::error::" if ci_mode else "") + b)
+        return 1
+    print("anchor check: all %d controls still apply and every expected test exists" % len(CONTROLS))
+    return 0
 
 
 def main() -> int:
@@ -204,4 +296,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if "--check-anchors" in sys.argv:
+        sys.exit(check_anchors("--ci" in sys.argv))
     sys.exit(main())
