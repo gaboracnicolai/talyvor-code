@@ -408,8 +408,30 @@ func toolDefinitions() []map[string]any {
 			},
 		},
 		{
-			"name":        "search_codebase",
-			"description": "Search the indexed codebase by path/filename substrings. Returns the top matches with their language and a relevance score.",
+			"name": "search_codebase",
+			// ⚠ THIS SENTENCE DESCRIBED A MECHANISM THAT WAS REPLACED THREE AND A HALF MONTHS
+			// BEFORE IT WAS CORRECTED. It read "Search the indexed codebase by path/filename
+			// substrings" — written 2026-05-25 (d276e39, the commit that added this server) and
+			// left untouched when c1aa63f (2026-07-16, "honest MCP relevance") swapped the
+			// implementation from the path-substring FindRelevantFiles to a per-query embedding
+			// ranked by cosine. The commit that made the RESULT honest left the DESCRIPTION
+			// describing the mechanism it had just removed.
+			//
+			// A tool description is a contract read by a MODEL, and this one is the field a model
+			// uses to decide how to phrase its query: told "path/filename substrings" it supplies
+			// "auth" or "*.go" and reads a semantic ranking as if it were a filename match, and it
+			// will not reach for the tool on the conceptual questions the new implementation is
+			// actually good at. Nothing errors, so nothing reports it.
+			//
+			// retrieve_test.go already pins that the two disagree — for a query whose terms live
+			// only in a file's CONTENT the old path-substring search returns 0 and the semantic one
+			// finds it. The repo held the proof and the description while they contradicted.
+			"description": "Search the indexed codebase semantically: the query is embedded and " +
+				"ranked against the semantic index by cosine similarity, so it matches on MEANING " +
+				"rather than on path or filename substrings. Returns the top matches with path, " +
+				"language, line range, and the true cosine score. Requires a built index " +
+				"(`talyvor-code index`) and a configured Lens for the query embedding; both are " +
+				"reported honestly rather than returning empty results.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
