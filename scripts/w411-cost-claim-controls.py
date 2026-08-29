@@ -12,6 +12,8 @@ something; C3 is the one that makes rule B's green mean something.
 """
 
 import hashlib
+import signal
+import os
 import pathlib
 import subprocess
 import sys
@@ -23,6 +25,40 @@ TRACKER = SRC / "providers" / "cost-tracker.ts"
 LABEL = SRC / "track" / "cost-label-pure.ts"
 GUARD = SRC / "track" / "cost-claim.test.ts"
 
+
+
+
+def restore_on_signal(snapshot: dict) -> None:
+    """Put every snapshotted file back, then die of the signal we were sent.
+
+    A `finally` DOES NOT RUN ON SIGTERM, so without this a command timeout landing mid-control
+    leaves the mutation in the working tree — with a green suite and a `git status` showing only
+    files the session edited on purpose. That is not hypothetical: talyvor-suite W1.7 (78c69c8)
+    lost a shell gate to exactly this, and W1.7.3 (5de27e3) reproduced it on demand.
+
+    Re-raising with SIG_DFL keeps the exit status honest: a caller that killed this process still
+    sees it die of that signal, not exit 0 with a tidy tree. SIGKILL still strands, and nothing in
+    Python can change that.
+
+    Deliberately pasted rather than imported: scripts/check-restore-signal-handlers.py detects the
+    handler in this file's OWN ast, and an import is invisible to it.
+    """
+
+    def handler(signum, _frame):
+        for path, blob in snapshot.items():
+            try:
+                path.write_bytes(blob)
+            except OSError:
+                pass
+        sys.stderr.write(
+            "\n!! signal %d — restored %d mutated file(s) before exiting\n"
+            % (signum, len(snapshot))
+        )
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, handler)
 
 def tree_hash() -> str:
     h = hashlib.sha256()
@@ -90,6 +126,9 @@ def control(label: str, prediction: str, edits: list[tuple[pathlib.Path, str, st
 
 
 def main() -> int:
+    # Installed BEFORE the first mutation: the snapshot is the pristine tree, and every control
+    # restores to exactly these bytes, so a signal at any point puts back the right content.
+    restore_on_signal({p: p.read_bytes() for p in (TRACKER, LABEL, GUARD)})
     before = tree_hash()
     ok, out = run_tests()
     print(f"C0 baseline (no mutation): {'GREEN' if ok else 'RED'}")

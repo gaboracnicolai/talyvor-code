@@ -94,6 +94,16 @@ jobs:
           fi
       - run: cd agent && go vet ./...
       - run: cd agent && go test -race -count=1 ./...
+      # Control scripts that mutate a tracked file and put it back must restore in a
+      # `finally` AND install a signal handler — a `finally` does not run on SIGTERM.
+      # talyvor-suite lost a shell gate to exactly this (78c69c8) with a green suite and a
+      # `git status` that showed nothing wrong. Ported here in W3.63, with the population
+      # definition WIDENED: suite keys on "restores in a `finally`", which in this repo saw
+      # 3 of the 6 scripts and missed the three that restore only on the happy path — the
+      # strictly more dangerous shape. Detection is `ast`, never grep: a regex reads a
+      # sentence of English in a comment as an installed handler.
+      - name: control scripts restore the tree on a signal
+        run: python3 scripts/check-restore-signal-handlers.py --ci
 
   # Supply-chain gate: govulncheck against the Go vulnerability DB.
   #
