@@ -104,6 +104,18 @@ jobs:
       # sentence of English in a comment as an installed handler.
       - name: control scripts restore the tree on a signal
         run: python3 scripts/check-restore-signal-handlers.py --ci
+      # A control campaign rots from two ends and neither is visible unless somebody runs
+      # it by hand and reads the output: the ANCHOR it mutates can drift, and the TESTS it
+      # expects to break can be renamed away. w420's C4 had both — the anchor drifted when
+      # GetIssue grew its by-identifier fallback, and its `want` set named
+      # GetIssue_SendsTheIdentifierWhereTrackReadsAnID, a test deleted in the same refactor.
+      # The louder rot hid the quieter one: the run aborted before the set was compared.
+      # The full campaign mutates tracked files and runs the suite per control, so it cannot
+      # go here. This half is pure string work over the tree — no mutation, no `go test`,
+      # ~0.1s. (It proves each control can still be APPLIED and that the names it expects
+      # exist; NOT that the mutation still CATCHES them. The campaign proves that.)
+      - name: wire-contract control anchors and expected tests must still exist
+        run: python3 scripts/w420-track-wire-controls-p3n7.py --check-anchors --ci
 
   # Supply-chain gate: govulncheck against the Go vulnerability DB.
   #
