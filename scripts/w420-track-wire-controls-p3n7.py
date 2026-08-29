@@ -39,6 +39,8 @@ asserts every mutation changed bytes, restores in a `finally`, sha256-verifies, 
 from __future__ import annotations
 
 import hashlib
+import signal
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -57,6 +59,40 @@ PINNED = "GetIssue_SendsTheIdentifierWhereTrackReadsAnID"
 OLD_UNIT = "AddComment_PostsToCorrectEndpoint"
 OLD_E2E = "Run_AgentPostsTrackCommentAfterSuccess"
 
+
+
+
+def restore_on_signal(snapshot: dict) -> None:
+    """Put every snapshotted file back, then die of the signal we were sent.
+
+    A `finally` DOES NOT RUN ON SIGTERM, so without this a command timeout landing mid-control
+    leaves the mutation in the working tree — with a green suite and a `git status` showing only
+    files the session edited on purpose. That is not hypothetical: talyvor-suite W1.7 (78c69c8)
+    lost a shell gate to exactly this, and W1.7.3 (5de27e3) reproduced it on demand.
+
+    Re-raising with SIG_DFL keeps the exit status honest: a caller that killed this process still
+    sees it die of that signal, not exit 0 with a tidy tree. SIGKILL still strands, and nothing in
+    Python can change that.
+
+    Deliberately pasted rather than imported: scripts/check-restore-signal-handlers.py detects the
+    handler in this file's OWN ast, and an import is invisible to it.
+    """
+
+    def handler(signum, _frame):
+        for path, blob in snapshot.items():
+            try:
+                path.write_bytes(blob)
+            except OSError:
+                pass
+        sys.stderr.write(
+            "\n!! signal %d — restored %d mutated file(s) before exiting\n"
+            % (signum, len(snapshot))
+        )
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, handler)
 
 def sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -123,6 +159,9 @@ CONTROLS = [
 
 
 def main() -> int:
+    # Installed BEFORE the first mutation: every control restores to these pristine bytes, so a
+    # signal at any point puts back the right content.
+    restore_on_signal({p: p.read_bytes() for p in TARGETS})
     dirty = subprocess.run(["git", "status", "--porcelain", "--"] + [str(p) for p in TARGETS],
                            cwd=ROOT, capture_output=True, text=True).stdout.strip()
     if dirty:

@@ -17,6 +17,8 @@ Run:  python3 scripts/w67-bypass-controls.py
 """
 import hashlib
 import pathlib
+import os
+import signal
 import subprocess
 import sys
 
@@ -125,8 +127,44 @@ CONTROLS = [
 ]
 
 
+def restore_on_signal(snapshot: dict) -> None:
+    """Put every snapshotted file back, then die of the signal we were sent.
+
+    A `finally` DOES NOT RUN ON SIGTERM, so without this a command timeout landing mid-control
+    leaves the mutation in the working tree — with a green suite and a `git status` showing only
+    files the session edited on purpose. That is not hypothetical: talyvor-suite W1.7 (78c69c8)
+    lost a shell gate to exactly this, and W1.7.3 (5de27e3) reproduced it on demand.
+
+    Re-raising with SIG_DFL keeps the exit status honest: a caller that killed this process still
+    sees it die of that signal, not exit 0 with a tidy tree. SIGKILL still strands, and nothing in
+    Python can change that.
+
+    Deliberately pasted rather than imported: scripts/check-restore-signal-handlers.py detects the
+    handler in this file's OWN ast, and an import is invisible to it.
+    """
+
+    def handler(signum, _frame):
+        for path, blob in snapshot.items():
+            try:
+                path.write_bytes(blob)
+            except OSError:
+                pass
+        sys.stderr.write(
+            "\n!! signal %d — restored %d mutated file(s) before exiting\n"
+            % (signum, len(snapshot))
+        )
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, handler)
+
+
 def main():
     originals = {p: p.read_bytes() for p in (SIDECAR, RUN, TEST)}
+    # A `finally` does not run on SIGTERM; this does. Installed before the first write, on the
+    # pristine bytes every control restores to.
+    restore_on_signal(originals)
     hashes = {p: sha(p) for p in originals}
 
     ok, green = True, run_test(REDIRECT_TEST)[0] and run_test(REFUSE_TEST)[0] and run_test(PREDICATE_TEST)[0]
@@ -135,48 +173,55 @@ def main():
         print("  refusing to run controls against a red baseline")
         return 1
 
-    for c in CONTROLS:
-        # ⚠ EVERY ANCHOR ASSERTED BEFORE ANY WRITE, and staged CUMULATIVELY so a second edit to the
-        # same file sees the first.
-        staged = {p: originals[p].decode() for p in originals}
-        counts = []
-        for path, old, new, want in c.edits:
-            n = staged[path].count(old)
-            counts.append(n)
-            if n != want:
-                print(f"{c.cid} NOT RUN — anchor {old[:45]!r} found {n}x in {path.name}, expected {want}")
-                ok = False
-                break
-            staged[path] = staged[path].replace(old, new, 1)
-        else:
-            for path in {p for p, *_ in c.edits}:
-                path.write_text(staged[path])
-            red_ok, out = run_test(c.must_red)
-            green_ok, _ = run_test(c.must_stay_green)
-            unrelated_ok, _ = run_test(UNRELATED_TEST)
-            for path in originals:
-                path.write_bytes(originals[path])
-            restored = sha(path := SIDECAR) == hashes[SIDECAR] and sha(RUN) == hashes[RUN] and sha(TEST) == hashes[TEST]
-
-            caught = not red_ok
-            behaved = (caught == c.expect_red)
-            if c.expect_red:
-                verdict = "CAUGHT" if behaved else "!! BLIND"
+    try:
+        for c in CONTROLS:
+            # ⚠ EVERY ANCHOR ASSERTED BEFORE ANY WRITE, and staged CUMULATIVELY so a second edit to the
+            # same file sees the first.
+            staged = {p: originals[p].decode() for p in originals}
+            counts = []
+            for path, old, new, want in c.edits:
+                n = staged[path].count(old)
+                counts.append(n)
+                if n != want:
+                    print(f"{c.cid} NOT RUN — anchor {old[:45]!r} found {n}x in {path.name}, expected {want}")
+                    ok = False
+                    break
+                staged[path] = staged[path].replace(old, new, 1)
             else:
-                verdict = "VACUOUS(expected)" if behaved else "!! demo reddened"
-            print(f"{c.cid} anchors={counts} {verdict:17s} "
-                  f"{c.must_red}={'RED' if caught else 'green'} "
-                  f"companion={'green' if green_ok else '!! ALSO RED'} "
-                  f"unrelated={'green' if unrelated_ok else '!! ALSO RED'} "
-                  f"restored={restored}")
-            print(f"     {c.what}")
-            if not behaved or not green_ok or not unrelated_ok or not restored:
-                ok = False
-                if not behaved:
-                    print("     " + "\n     ".join(out.strip().splitlines()[:4]))
+                for path in {p for p, *_ in c.edits}:
+                    path.write_text(staged[path])
+                red_ok, out = run_test(c.must_red)
+                green_ok, _ = run_test(c.must_stay_green)
+                unrelated_ok, _ = run_test(UNRELATED_TEST)
+                for path in originals:
+                    path.write_bytes(originals[path])
+                restored = sha(path := SIDECAR) == hashes[SIDECAR] and sha(RUN) == hashes[RUN] and sha(TEST) == hashes[TEST]
 
-    for path in originals:
-        path.write_bytes(originals[path])
+                caught = not red_ok
+                behaved = (caught == c.expect_red)
+                if c.expect_red:
+                    verdict = "CAUGHT" if behaved else "!! BLIND"
+                else:
+                    verdict = "VACUOUS(expected)" if behaved else "!! demo reddened"
+                print(f"{c.cid} anchors={counts} {verdict:17s} "
+                      f"{c.must_red}={'RED' if caught else 'green'} "
+                      f"companion={'green' if green_ok else '!! ALSO RED'} "
+                      f"unrelated={'green' if unrelated_ok else '!! ALSO RED'} "
+                      f"restored={restored}")
+                print(f"     {c.what}")
+                if not behaved or not green_ok or not unrelated_ok or not restored:
+                    ok = False
+                    if not behaved:
+                        print("     " + "\n     ".join(out.strip().splitlines()[:4]))
+
+    finally:
+        # ⚠ THIS `finally` IS THE SECOND HALF OF THE FIX AND IT IS NOT REDUNDANT WITH THE
+        # SIGNAL HANDLER. The handler covers a kill; this covers an exception — an anchor
+        # miss, a subprocess blowing up, a KeyboardInterrupt inside a nested call. Before
+        # this, the restore below ran ONLY on the happy path, which is strictly worse than
+        # an unprotected `finally` and is invisible to a population keyed on `finally`.
+        for path in originals:
+            path.write_bytes(originals[path])
     print("\nALL CONTROLS BEHAVED:", ok)
     return 0 if ok else 1
 
