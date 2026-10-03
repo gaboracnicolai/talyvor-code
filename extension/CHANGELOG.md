@@ -3,7 +3,16 @@
 This file is the Marketplace **Changelog** tab. It ships inside the `.vsix`; anything not written
 here is invisible to someone deciding whether to install.
 
-## [Unreleased]
+## [0.1.0]
+
+The first release on the Marketplace: `code --install-extension talyvor.talyvor-code`.
+
+### Added
+
+- **`Talyvor: Run Claude Code (metered by Lens)`.** Opens a terminal running Claude Code under the
+  Talyvor Code CLI (`talyvor-code exec -- claude`), so a Claude Code session is billed by your Lens
+  and attributed to the active issue. If the CLI is not on your `PATH` the command says so and links
+  to its install instructions.
 
 ### Fixed
 
@@ -42,8 +51,3 @@ here is invisible to someone deciding whether to install.
   page. The existing packaging assertions checked the licence and the entrypoint, neither of which
   can see a missing README. Publishing that artefact would have produced a listing with a blank
   description page.
-
-## [0.1.0]
-
-Not yet published to the Marketplace. `0.1.0` is the version in `extension/package.json`; the
-extension is installable today only from a locally built `.vsix` or the repository.

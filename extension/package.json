@@ -192,6 +192,10 @@
         "title": "Talyvor: Review Selected Code"
       },
       {
+        "command": "talyvor.runClaudeCode",
+        "title": "Talyvor: Run Claude Code (metered by Lens)"
+      },
+      {
         "command": "talyvor.generateContext",
         "title": "Talyvor: Generate Project Context"
       },

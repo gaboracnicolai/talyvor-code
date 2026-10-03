@@ -36,10 +36,11 @@ VS Code **1.85** or newer. No runtime dependencies are installed with the extens
 | **Issue attribution** | Set an active Track issue (`Talyvor: Set Active Issue`) and every call is tagged with it; `Talyvor: Show AI Cost Dashboard` reads the spend back. |
 | **Docs** | Hover, search and ask against a Talyvor Docs space (`talyvor.docsUrl` — optional; without it these commands are inert). |
 | **PR review** | `Talyvor: Review Current PR` / `Review Selected Code`, using a GitHub token you supply. |
+| **Claude Code, metered** | `Talyvor: Run Claude Code (metered by Lens)` opens a terminal running Claude Code through the Talyvor Code CLI, so its spend is billed by your Lens and attributed to the active issue. Needs the CLI — see below. |
 | **Semantic index** | `Talyvor: Build Semantic Index` builds a local index the agent retrieves from. It stays on your machine. |
 
 Model is picked per workspace from `talyvor.model` — the enumerated set is `claude-haiku-4-5`,
-`claude-sonnet-4-6`, `gpt-4o`, `gpt-4o-mini`, `mistral-large`, `llama-3.1-70b`. Whether a given one
+`claude-sonnet-4-6`, `claude-opus-4-6`, `gpt-4o`, `gpt-4o-mini`, `mistral-large`. Whether a given one
 answers depends on which provider keys your Lens workspace has.
 
 ## What the agent is allowed to do to your machine
@@ -65,13 +66,23 @@ Keys pasted into `talyvor.lensApiKey`, `talyvor.trackApiKey`, `talyvor.docsApiKe
 cleared from your settings file. Those settings exist to migrate an existing value, and are marked
 deprecated for that reason.
 
-## What is NOT here
+## Metering Claude Code
 
-The Talyvor Code **CLI** is a separate binary from this extension, and the two do not talk to each
-other. If what you want is the sidecar that meters an external agent's spend —
-`talyvor-code exec -- claude`, which today covers **Claude Code** and **aider** on its Anthropic and
-its OpenAI models — that is the CLI, from the repository's releases, not this extension.
-**Cursor and Codex are not supported** by either surface.
+Claude Code is metered by the **Talyvor Code CLI**, a separate binary, and
+`Talyvor: Run Claude Code (metered by Lens)` is how you start it from VS Code: it opens a terminal
+running `talyvor-code exec -- claude` in your workspace, handing the CLI your Lens URL and key through
+the terminal's environment (never its command line). The CLI puts a loopback proxy between Claude Code
+and your Lens, so every request is billed by Lens and attributed to the active issue — or to the issue
+named by your branch. Your claude.ai login and connectors are untouched.
+
+Install the CLI from the repository's releases:
+
+```
+curl -sSL https://raw.githubusercontent.com/gaboracnicolai/talyvor-code/main/install.sh | bash
+```
+
+Without it on your `PATH` the command says so and links here. **Claude Code is the one agent this
+meters.** Cursor, Aider and Codex are not supported.
 
 The extension bundles no model, no telemetry and no runtime dependencies: the packaged `.vsix` is
 compiled JavaScript, a licence, and this page.
