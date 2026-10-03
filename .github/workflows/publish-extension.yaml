@@ -1,0 +1,48 @@
+name: Publish extension
+
+# Publishes the VS Code extension to the Marketplace as talyvor.talyvor-code.
+#
+# Run it from the Actions tab (workflow_dispatch), or push a v* tag. VSCE_PAT is a Marketplace token
+# for the `talyvor` publisher and exists only as this repository's secret: it is handed to vsce
+# through the environment and never echoed. A tag must name the version in extension/package.json —
+# vsce publishes that version, so a mismatch would publish something the tag does not describe.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: publish-extension
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "20"
+
+      - name: a tag names the version being published
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          want="$(node -p "require('./extension/package.json').version")"
+          if [ "${GITHUB_REF_NAME#v}" != "$want" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} but extension/package.json is ${want} — bump the version first"
+            exit 1
+          fi
+
+      - run: cd extension && npm install
+      - run: cd extension && npm run compile
+      - run: cd extension && npm run test:unit
+      - run: cd extension && npm run package
+      - run: cd extension && ./scripts/check-vsix-listing.sh ./talyvor-code-*.vsix ./package.json
+
+      # Publishes the exact .vsix the steps above built and checked, not a fresh repackage.
+      - name: publish to the Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: cd extension && npx @vscode/vsce publish --no-dependencies --packagePath ./talyvor-code-*.vsix

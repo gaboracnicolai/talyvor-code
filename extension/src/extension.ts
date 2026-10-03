@@ -48,6 +48,7 @@ import {
 import { generateShellCommand } from "./commands/shell-command";
 import { selectModelCommand } from "./commands/model-selector";
 import { reviewPRCommand, reviewSelectionCommand } from "./commands/pr-review";
+import { runClaudeCodeCommand } from "./commands/claude-code";
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   // Move any plaintext API keys into SecretStorage and populate the credential cache BEFORE any client
@@ -235,6 +236,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ),
     vscode.commands.registerCommand("talyvor.selectModel", () =>
       selectModelCommand(),
+    ),
+    vscode.commands.registerCommand("talyvor.runClaudeCode", () =>
+      runClaudeCodeCommand(),
     ),
     vscode.commands.registerCommand("talyvor.reviewPR", () =>
       reviewPRCommand(lensClient, tracker, TalyvorConfig.getLensConfig(), issueProvider),
