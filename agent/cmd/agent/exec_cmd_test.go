@@ -67,8 +67,8 @@ func TestTheBannerSaysWhatWasDetectedIncludingNothing(t *testing.T) {
 		issue string
 		want  string
 	}{
-		{"ENG-42", "issue=ENG-42"},
-		{"", "issue=(none)"},
+		{"ENG-42", "spend is attributed to ENG-42"},
+		{"", "unattributed"},
 	} {
 		var out, errb bytes.Buffer
 		if err := runExec(&out, &errb, execCfg(t, tc.issue), []string{"--", "sh", "-c", "exit 0"}); err != nil {

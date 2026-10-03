@@ -4,6 +4,7 @@
 // the same thread.
 
 import * as vscode from "vscode";
+import { CHAT_CSS, estimateHTML } from "./theme-pure";
 import type { LensClient } from "../lens/client";
 import type { LensConfig, Message } from "../lens/types";
 import { CostTracker, estimateCostUSD, formatDuration } from "../providers/cost-tracker";
@@ -43,7 +44,7 @@ type WebviewOutbound =
       type: "session";
       issue: string;
       model: string;
-      totalCostUSD: number;
+      costHTML: string; // estimateHTML(): the "~" and "est." travel with the figure
       duration: string;
     };
 
@@ -346,7 +347,7 @@ export class ChatPanel {
       type: "session",
       issue: issueLabel,
       model: config.model,
-      totalCostUSD: s.totalCostUSD,
+      costHTML: estimateHTML(s.totalCostUSD),
       duration: formatDuration(s.sessionStart),
     });
   }
@@ -366,9 +367,9 @@ export class ChatPanel {
 <style>${this.css()}</style>
 </head><body>
 <header>
-  <span class="brand">Talyvor Chat</span>
+  <span class="eyebrow">Talyvor · Chat</span>
   <span id="issueChip" class="chip"></span>
-  <button id="clearBtn">Clear</button>
+  <button id="clearBtn" class="ghost">Clear</button>
 </header>
 <main id="messages"></main>
 <form id="composer" autocomplete="off">
@@ -380,53 +381,16 @@ export class ChatPanel {
   </div>
 </form>
 <footer>
-  <span id="sessionStat">Session $0.00 · 0s · —</span>
+  <span class="eyebrow">Session</span> <span id="sessionCost">${estimateHTML(0)}</span> <span id="sessionMeta">· 0s · —</span>
 </footer>
 <script>${this.script()}</script>
 </body></html>`;
   }
 
   // CSS lives inline because the webview blocks external requests
-  // by default and the bundle stays under 4KB. Colors mirror the
-  // VS Code dark palette + the Talyvor amber accent.
+  // by default. Every colour is a theme variable — see theme-pure.ts.
   private css(): string {
-    return `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d4d8e2;background:#1e1e1e;margin:0;display:flex;flex-direction:column;height:100vh;line-height:1.4}
-header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#191919}
-header .brand{font-weight:600;color:#fff}
-.chip{font-size:11px;background:#2a2a2a;color:#f0a030;padding:2px 6px;border-radius:4px;font-family:monospace}
-header button{margin-left:auto;background:#2a2a2a;color:#aaa;border:1px solid #333;border-radius:4px;padding:4px 10px;cursor:pointer}
-header button:hover{color:#fff}
-main{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px}
-.msg{padding:8px 12px;border-radius:6px;max-width:90%;font-size:13px}
-.msg.user{align-self:flex-end;background:#1a3a5c;color:#e6f0fa}
-.msg.assistant{align-self:flex-start;background:#1a1d24}
-.msg.assistant p{margin:0 0 8px}
-.msg.assistant p:last-child{margin-bottom:0}
-.code{background:#0c0e12;border:1px solid #1f242c;border-radius:6px;margin:6px 0;overflow:hidden}
-.code-head{display:flex;align-items:center;gap:6px;padding:4px 8px;background:#13161c;font-size:11px;color:#888}
-.code-head span{flex:1;font-family:monospace}
-.code-head button{background:transparent;color:#888;border:1px solid #2a2a2a;border-radius:3px;font-size:10px;padding:2px 6px;cursor:pointer}
-.code-head button:hover{color:#f0a030;border-color:#f0a030}
-.code pre{margin:0;padding:8px;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;white-space:pre-wrap;overflow-x:auto;color:#d4d8e2}
-.thinking{display:flex;gap:4px;align-self:flex-start;padding:8px 12px}
-.thinking i{width:6px;height:6px;border-radius:50%;background:#888;animation:bounce 1.2s infinite}
-.msg.assistant.streaming .stream-body{white-space:pre-wrap;font-family:inherit;color:#d4d8e2}
-.msg.assistant.streaming .caret{display:inline-block;color:#f0a030;animation:blink 1s steps(2,start) infinite;margin-left:1px;font-weight:bold}
-@keyframes blink{to{visibility:hidden}}
-.thinking i:nth-child(2){animation-delay:0.15s}
-.thinking i:nth-child(3){animation-delay:0.3s}
-@keyframes bounce{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}
-.error{color:#ff7070;font-size:12px;padding:8px 12px;background:#3a1a1a;border-radius:6px;align-self:stretch}
-form{padding:8px 12px;border-top:1px solid #2a2a2a;background:#191919}
-textarea{width:100%;background:#0c0e12;color:#d4d8e2;border:1px solid #2a2a2a;border-radius:6px;padding:8px;font-family:inherit;font-size:13px;resize:none;box-sizing:border-box}
-textarea:focus{outline:none;border-color:#f0a030}
-.composer-row{display:flex;align-items:center;gap:10px;margin-top:6px;font-size:11px;color:#888}
-.composer-row button{margin-left:auto;background:#f0a030;color:#1e1e1e;border:0;border-radius:4px;padding:6px 16px;font-weight:600;cursor:pointer}
-.composer-row button:hover{opacity:0.9}
-.composer-row button:disabled{opacity:0.5;cursor:not-allowed}
-.shake{animation:shake 0.3s}
-@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-3px)}75%{transform:translateX(3px)}}
-footer{padding:6px 12px;border-top:1px solid #2a2a2a;background:#191919;font-size:11px;color:#666}`;
+    return CHAT_CSS;
   }
 
   // The script handles all webview-side wiring: message routing,
@@ -439,14 +403,15 @@ const messages = document.getElementById('messages');
 const input = document.getElementById('input');
 const sendBtn = document.getElementById('sendBtn');
 const issueChip = document.getElementById('issueChip');
-const sessionStat = document.getElementById('sessionStat');
+const sessionCost = document.getElementById('sessionCost');
+const sessionMeta = document.getElementById('sessionMeta');
 const includeFile = document.getElementById('includeFile');
 const includeSelection = document.getElementById('includeSelection');
 const composer = document.getElementById('composer');
 const clearBtn = document.getElementById('clearBtn');
 
 let thinkingEl = null;
-let session = {model: '', totalCostUSD: 0};
+let session = {model: '', costHTML: ''};
 
 function appendMsg(cls, html) {
   const div = document.createElement('div');
@@ -597,8 +562,8 @@ window.addEventListener('message', (e) => {
     case 'session':
       session = m;
       issueChip.textContent = m.issue;
-      sessionStat.textContent =
-        'Session $' + m.totalCostUSD.toFixed(4) + ' · ' + m.duration + ' · ' + m.model;
+      sessionCost.innerHTML = m.costHTML;
+      sessionMeta.textContent = '· ' + m.duration + ' · ' + m.model;
       break;
   }
 });

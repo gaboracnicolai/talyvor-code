@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"slices"
+	"strconv"
 
 	"github.com/talyvor/code/internal/config"
 	"github.com/talyvor/code/internal/sidecar"
+	"github.com/talyvor/code/internal/ui"
 )
 
 // exitCode carries a child process's exit status out through the ordinary error return, so main
@@ -96,24 +98,40 @@ FLAGS
 // plants no key — but a developer who has one set in their own shell IS having it withheld from
 // the child, which changes which account is billed. That is worth a line rather than a surprise.
 func printExecBanner(w io.Writer, s *sidecar.Sidecar, command, issue string) {
-	fmt.Fprintf(w, "talyvor exec: running %s through Lens on %s\n", command, s.BaseURL())
+	st := ui.For(w)
+	fmt.Fprintln(w, st.Row("exec", st.Figure(command)+" through Lens on "+s.BaseURL()))
 	if issue == "" {
-		fmt.Fprintln(w, "  issue=(none) — this work will be recorded in Track as unattributed")
+		fmt.Fprintln(w, st.Row("track", st.Figure("unattributed")+st.Sep()+"no issue was found, so Track records this work against none"))
 	} else {
-		fmt.Fprintf(w, "  issue=%s — spend will be attributed to it in Track\n", issue)
+		fmt.Fprintln(w, st.Row("track", "spend is attributed to "+st.Issue(issue)))
 	}
-	fmt.Fprintln(w, "  prompts pass through unread: the proxy never logs, stores or inspects them")
+	fmt.Fprintln(w, st.Row("privacy", "prompts pass through unread: the proxy never logs, stores or inspects them"))
 	if os.Getenv("ANTHROPIC_API_KEY") != "" || os.Getenv("ANTHROPIC_AUTH_TOKEN") != "" {
-		fmt.Fprintln(w, "  your ANTHROPIC_API_KEY is NOT passed to the child — Lens is billed instead of your")
-		fmt.Fprintln(w, "  own Anthropic account, and your claude.ai connectors keep working because of it")
+		fmt.Fprintln(w, st.Row("anthropic", "your ANTHROPIC_API_KEY is NOT passed to the child — Lens is billed instead of your"))
+		fmt.Fprintln(w, st.Row("", "own Anthropic account, and your claude.ai connectors keep working because of it"))
 	} else {
-		fmt.Fprintln(w, "  your claude.ai login and connectors are untouched")
+		fmt.Fprintln(w, st.Row("anthropic", "your claude.ai login and connectors are untouched"))
 	}
 	// ⚠ THE SAME SENTENCE IS OWED FOR THE SECOND PROVIDER. `exec -- aider --model gpt-4o` reached
 	// api.openai.com on the developer's own key and put nothing on Lens; it now goes through the
 	// proxy, which moves the bill. Withholding someone's key is worth a line whichever key it is.
 	if os.Getenv("OPENAI_API_KEY") != "" {
-		fmt.Fprintln(w, "  your OPENAI_API_KEY is NOT passed to the child either — OpenAI-shaped requests go")
-		fmt.Fprintln(w, "  through Lens too, so Lens is billed rather than your own OpenAI account")
+		fmt.Fprintln(w, st.Row("openai", "your OPENAI_API_KEY is NOT passed to the child either — OpenAI-shaped requests go"))
+		fmt.Fprintln(w, st.Row("", "through Lens too, so Lens is billed rather than your own OpenAI account"))
 	}
+}
+
+// issueOrNone is the issue in the accent, or a bold "none" — never a blank a reader skims past.
+func issueOrNone(st ui.Style, issue string) string {
+	if issue == "" {
+		return st.Figure("none") + st.Muted(" (unattributed in Track)")
+	}
+	return st.Issue(issue)
+}
+
+// attributionSummary is the line `ask` and `chat` print to stderr after an answer: which issue the
+// call was attributed to, which model answered, and how much came back. stdout stays the answer.
+func attributionSummary(st ui.Style, issue, model string, chars int) string {
+	return st.Row("issue", issueOrNone(st, issue)+st.Sep()+st.Eyebrow("model")+" "+model+
+		st.Sep()+st.Figure(strconv.Itoa(chars))+" "+st.Muted("chars"))
 }

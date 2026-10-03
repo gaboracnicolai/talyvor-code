@@ -52,9 +52,10 @@ function testExtractDefaultsToNeedsDiscussion(): void {
 // ─── verdictBadge ─────────────────────────────────
 
 function testVerdictBadges(): void {
-  assert(verdictBadge("APPROVE").color === "#5cd187", "approve color");
-  assert(verdictBadge("REQUEST CHANGES").color === "#ff7070", "rc color");
-  assert(verdictBadge("NEEDS DISCUSSION").color === "#f0a030", "needs disc color");
+  // The badge takes its colour from the user's theme (panels/theme-pure.ts), never a literal.
+  assert(verdictBadge("APPROVE").color === "var(--vscode-testing-iconPassed)", "approve color");
+  assert(verdictBadge("REQUEST CHANGES").color === "var(--vscode-errorForeground)", "rc color");
+  assert(verdictBadge("NEEDS DISCUSSION").color === "var(--vscode-editorWarning-foreground)", "needs disc color");
   assert(verdictBadge("APPROVE").emoji === "✅", "approve emoji");
 }
 

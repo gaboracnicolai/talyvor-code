@@ -23,6 +23,8 @@ import { ChatPanel } from "./panels/ChatPanel";
 import { TestGenerator } from "./providers/test-generator";
 import { TestPanel } from "./panels/TestPanel";
 import { AgentPanel } from "./panels/AgentPanel";
+import { COST_CSS, estimateHTML } from "./panels/theme-pure";
+import { costDisclaimerLines, formatCostEstimate } from "./track/cost-label-pure";
 import { IssueContextProvider } from "./track/issue-context";
 import { TalyvorStatusBar } from "./track/status-bar";
 import {
@@ -367,62 +369,51 @@ function renderCostHTML(
       const pct = session.totalCostUSD > 0
         ? ((v / session.totalCostUSD) * 100).toFixed(0)
         : "0";
-      return `<tr><td>${escapeHTML(k)}</td><td>$${v.toFixed(4)}</td><td class="muted">${pct}%</td></tr>`;
+      return `<tr><td><code>${escapeHTML(k)}</code></td><td class="figure">${formatCostEstimate(v)}</td><td class="figure muted">${pct}%</td></tr>`;
     })
     .join("");
   const byFeatureRows = Object.entries(session.byFeature)
     .sort((a, b) => b[1].costUSD - a[1].costUSD)
     .map(([k, v]: [string, FeatureUsage]) =>
-      `<tr><td>${escapeHTML(featureLabel(k))}</td><td>$${v.costUSD.toFixed(4)}</td><td class="muted">${v.calls} call${v.calls === 1 ? "" : "s"} · ${v.tokens.toLocaleString()} tokens</td></tr>`,
+      `<tr><td>${escapeHTML(featureLabel(k))}</td><td class="figure">${formatCostEstimate(v.costUSD)}</td><td class="figure muted">${v.calls} call${v.calls === 1 ? "" : "s"} · ${v.tokens.toLocaleString()} tokens</td></tr>`,
     )
     .join("");
   const sessionContribution =
     session.byIssue[issueId] ?? session.byIssue["(no issue)"] ?? 0;
   return `<!doctype html><html><head><meta charset="utf-8">
-<style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd;background:#1e1e1e;padding:16px;line-height:1.45}
-h1{font-size:14px;color:#fff;border-bottom:1px solid #333;padding-bottom:8px;margin-top:0}
-h2{font-size:12px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin-top:24px}
-.kv{display:grid;grid-template-columns:200px 1fr;gap:6px}
-.kv dt{color:#888}
-.kv dd{margin:0;color:#ddd}
-.cost{font-size:24px;color:#f0a030}
-.delta{font-size:12px;color:#5cd187;margin-left:8px}
-table{width:100%;border-collapse:collapse;margin-top:8px;font-size:12px}
-td{padding:4px 8px;border-bottom:1px solid #2a2a2a}
-.muted{color:#666;font-size:11px}
-.status-chip{display:inline-block;background:#2a2a2a;color:#aaa;padding:1px 6px;border-radius:3px;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;margin-left:8px}
-</style></head><body>
-<h1>Talyvor Code — Cost Dashboard</h1>
-
-<h2>🎯 Current issue</h2>
+<style>${COST_CSS}</style></head><body>
+<header><span class="eyebrow">Talyvor · AI cost</span></header>
+<main>
+<h2 class="eyebrow">Current issue</h2>
 <dl class="kv">
-  <dt>Issue</dt><dd>${escapeHTML(issueId)}${issueTitle ? " — " + escapeHTML(issueTitle) : ""}${issueStatus ? `<span class="status-chip">${escapeHTML(issueStatus)}</span>` : ""}</dd>
-  <dt>Track total AI cost</dt><dd class="cost">$${issueTotalUsd.toFixed(2)}<span class="delta">+$${sessionContribution.toFixed(4)} this session</span></dd>
+  <dt class="eyebrow">Issue</dt><dd><span class="chip">${escapeHTML(issueId)}</span>${issueTitle ? " " + escapeHTML(issueTitle) : ""}${issueStatus ? ` <span class="tag">${escapeHTML(issueStatus)}</span>` : ""}</dd>
+  <dt class="eyebrow">Track total</dt><dd><span class="figure big">$${issueTotalUsd.toFixed(2)}</span> <span class="muted">recorded by Lens</span></dd>
+  <dt class="eyebrow">This session</dt><dd>${estimateHTML(sessionContribution)}</dd>
 </dl>
 
-<h2>Session summary</h2>
+<h2 class="eyebrow">Session</h2>
 <dl class="kv">
-  <dt>Total cost</dt><dd>$${session.totalCostUSD.toFixed(4)}</dd>
-  <dt>Total tokens</dt><dd>${session.totalTokens.toLocaleString()}</dd>
-  <dt>AI calls</dt><dd>${session.completionCount}</dd>
-  <dt>Duration</dt><dd>${formatDuration(session.sessionStart)}</dd>
-  <dt>Model</dt><dd>${escapeHTML(model)}</dd>
+  <dt class="eyebrow">Cost</dt><dd>${estimateHTML(session.totalCostUSD)}</dd>
+  <dt class="eyebrow">Tokens</dt><dd class="figure">${session.totalTokens.toLocaleString()}</dd>
+  <dt class="eyebrow">AI calls</dt><dd class="figure">${session.completionCount}</dd>
+  <dt class="eyebrow">Duration</dt><dd class="figure">${formatDuration(session.sessionStart)}</dd>
+  <dt class="eyebrow">Model</dt><dd>${escapeHTML(model)}</dd>
 </dl>
 
 ${
   Object.keys(session.byFeature).length > 0
-    ? `<h2>By feature</h2><table>${byFeatureRows}</table>`
+    ? `<h2 class="eyebrow">By feature</h2><table><tr><th class="eyebrow">Feature</th><th class="eyebrow">Cost · est.</th><th></th></tr>${byFeatureRows}</table>`
     : ""
 }
 
 ${
   byIssueEntries.length > 0
-    ? `<h2>By issue (cost attribution)</h2><table>${byIssueRows}</table>`
+    ? `<h2 class="eyebrow">By issue</h2><table><tr><th class="eyebrow">Issue</th><th class="eyebrow">Cost · est.</th><th class="eyebrow">Share</th></tr>${byIssueRows}</table>`
     : ""
 }
 
-<p class="muted">Active-issue total comes from Lens analytics; session figures are estimated locally. Cost syncs to Track every 5 minutes.</p>
+<p class="muted">The Track total is recorded by Lens for every request. Figures marked est. are this editor's own count, ${costDisclaimerLines()[0].charAt(0).toLowerCase() + costDisclaimerLines()[0].slice(1)}</p>
+</main>
 </body></html>`;
 }
 

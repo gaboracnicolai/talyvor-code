@@ -11,6 +11,7 @@
 import * as vscode from "vscode";
 import type { DocsClient, DocsPage, AskResult } from "./docs-client";
 import type { LensConfig } from "../lens/types";
+import { DOCS_CSS } from "../panels/theme-pure";
 import {
   absolutiseDocsURL,
   escapeHTML,
@@ -188,7 +189,7 @@ export class DocsPanel {
 <style>${this.css()}</style>
 </head><body>
 <header>
-  <span class="brand">Talyvor Docs</span>
+  <span class="eyebrow">Talyvor · Docs</span>
   ${this.mode !== "search" ? `<button id="backBtn" class="ghost">← Back</button>` : ""}
 </header>
 <main>${body}</main>
@@ -203,7 +204,7 @@ export class DocsPanel {
           `<li class="result" data-url="${escapeHTML(r.url)}" data-pageid="${escapeHTML(r.pageId)}" data-title="${escapeHTML(r.pageTitle)}">
   <div class="r-title">${escapeHTML(r.pageTitle)} <span class="space">${escapeHTML(r.spaceName)}</span></div>
   <div class="r-headline">${escapeHTML(r.headline)}</div>
-  <div class="r-meta"><span class="badge badge-${escapeHTML(r.source)}">${escapeHTML(r.source)}</span> <span class="rank">rank ${r.rank.toFixed(2)}</span></div>
+  <div class="r-meta"><span class="tag badge-${escapeHTML(r.source)}">${escapeHTML(r.source)}</span> <span class="eyebrow">rank</span> <span class="figure">${r.rank.toFixed(2)}</span></div>
 </li>`,
       )
       .join("");
@@ -232,7 +233,7 @@ ${empty}
     <div class="page-meta">
       <span class="freshness" style="color:${fresh.color}">${fresh.emoji} ${fresh.label}</span>
       ${verified}
-      <span class="muted">AI cost: $${page.aiCostUsd.toFixed(2)}</span>
+      <span><span class="eyebrow">AI cost</span> <span class="figure">$${page.aiCostUsd.toFixed(2)}</span></span>
     </div>
     <div class="page-actions">
       <button data-action="ask">Ask AI about this doc</button>
@@ -247,7 +248,7 @@ ${empty}
     const q = escapeHTML(this.askQuestion);
     if (!this.askResult) {
       return `<div class="ask">
-  <h2>Asked the docs</h2>
+  <h2 class="eyebrow">Asked the docs</h2>
   <p class="muted">${q}</p>
   <div class="dots"><i></i><i></i><i></i></div>
 </div>`;
@@ -259,10 +260,10 @@ ${empty}
       )
       .join("");
     return `<div class="ask">
-  <h2>Asked the docs</h2>
+  <h2 class="eyebrow">Asked the docs</h2>
   <p class="q">${q}</p>
   <div class="answer">${renderMarkdown(this.askResult.answer)}</div>
-  ${sources ? `<h3>Sources</h3><ul class="sources">${sources}</ul>` : ""}
+  ${sources ? `<h3 class="eyebrow">Sources</h3><ul class="sources">${sources}</ul>` : ""}
   <form id="followupForm">
     <input id="followup" type="text" placeholder="Follow-up question…">
     <button type="submit">Ask</button>
@@ -271,50 +272,7 @@ ${empty}
   }
 
   private css(): string {
-    return `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d4d8e2;background:#1e1e1e;margin:0;display:flex;flex-direction:column;height:100vh;line-height:1.5;font-size:13px}
-header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#191919}
-header .brand{font-weight:600;color:#fff}
-header button{margin-left:auto}
-main{flex:1;overflow-y:auto;padding:12px}
-button{background:#f0a030;color:#1e1e1e;border:0;border-radius:4px;padding:6px 14px;font-weight:600;cursor:pointer;font-size:12px}
-button.ghost{background:#2a2a2a;color:#d4d8e2;border:1px solid #333}
-button:hover{opacity:0.9}
-form{display:flex;gap:6px;margin-bottom:12px}
-input[type=search],input[type=text]{flex:1;background:#0c0e12;color:#d4d8e2;border:1px solid #2a2a2a;border-radius:6px;padding:6px 10px;font-size:13px}
-input:focus{outline:none;border-color:#f0a030}
-.results{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:8px}
-.result{padding:8px 10px;border:1px solid #2a2a2a;border-radius:6px;cursor:pointer}
-.result:hover{border-color:#f0a030}
-.r-title{font-weight:600;color:#fff}
-.r-title .space{font-size:11px;color:#888;font-weight:400;margin-left:6px}
-.r-headline{font-size:12px;color:#aaa;margin-top:4px}
-.r-meta{margin-top:6px;font-size:10px;color:#666;display:flex;gap:8px;align-items:center}
-.badge{font-size:10px;background:#2a2a2a;color:#f0a030;padding:1px 6px;border-radius:3px;text-transform:uppercase;letter-spacing:0.05em}
-.muted{color:#666;font-size:12px}
-.page-header h1{margin:0 0 6px;font-size:20px;color:#fff}
-.page-meta{display:flex;gap:10px;font-size:11px;color:#888;margin-bottom:6px;flex-wrap:wrap;align-items:center}
-.freshness{font-weight:500}
-.verified{color:#5cd187}
-.needs{color:#f0a030}
-.page-actions{display:flex;gap:6px;margin:6px 0 12px}
-.md-body h1,.md-body h2,.md-body h3{color:#fff;margin-top:16px}
-.md-h1{font-size:18px}
-.md-h2{font-size:16px}
-.md-h3{font-size:14px}
-.md-p{margin:6px 0}
-.md-code{background:#0c0e12;border:1px solid #1f242c;border-radius:6px;padding:8px;font-family:"SF Mono",Menlo,monospace;font-size:12px;overflow-x:auto}
-.md-ic{background:#13161c;padding:1px 4px;border-radius:3px;font-family:"SF Mono",Menlo,monospace;font-size:11px}
-.md-ul,.md-ol{margin:6px 0;padding-left:20px}
-a{color:#f0a030}
-.ask h2{font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin:0 0 8px}
-.ask .q{padding:6px 8px;background:#13161c;border-radius:4px;color:#ddd}
-.ask .answer{margin-top:8px}
-.sources{margin:6px 0 12px;padding-left:18px;font-size:12px}
-.dots{display:flex;gap:6px;padding:12px 0}
-.dots i{width:6px;height:6px;border-radius:50%;background:#888;animation:bounce 1.2s infinite}
-.dots i:nth-child(2){animation-delay:0.15s}
-.dots i:nth-child(3){animation-delay:0.3s}
-@keyframes bounce{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}`;
+    return DOCS_CSS;
   }
 
   private script(): string {

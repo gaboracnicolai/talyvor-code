@@ -19,6 +19,8 @@ package issueref
 import (
 	"regexp"
 	"strings"
+
+	"github.com/talyvor/code/internal/ui"
 )
 
 // pattern matches <prefix>-<number>.
@@ -94,13 +96,16 @@ func Resolve(explicit string, branch func() (string, error)) (identifier, source
 // displayed, and "my costs are not appearing in Track" is only diagnosable if the tool says it
 // attributed nothing. It NEVER prints the branch name — the identifier is the only thing derived
 // from it that may be shown or sent.
-func Describe(identifier, source string) string {
+//
+// It is one row of the CLI's eyebrow grammar (internal/ui), and the identifier carries the one
+// accent: which issue is being billed is the thing on screen most worth checking.
+func Describe(st ui.Style, identifier, source string) string {
 	switch source {
 	case "explicit":
-		return "issue=" + identifier + " (from --issue)"
+		return st.Row("issue", st.Issue(identifier)+st.Sep()+st.Muted("from --issue"))
 	case "branch":
-		return "issue=" + identifier + " (detected from branch)"
+		return st.Row("issue", st.Issue(identifier)+st.Sep()+st.Muted("detected from branch"))
 	default:
-		return "issue=(none) — this work will be recorded in Track as unattributed"
+		return st.Row("issue", st.Figure("none")+st.Sep()+"this work will be recorded in Track as unattributed")
 	}
 }

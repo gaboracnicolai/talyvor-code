@@ -736,7 +736,7 @@ func TestModels_PrintsTable(t *testing.T) {
 	for _, want := range []string{
 		"claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-6",
 		"gpt-4o", "gpt-4o-mini", "mistral-large",
-		"Provider", "Speed", "Cost",
+		"PROVIDER", "SPEED", "COST", // the header is a row of eyebrows (internal/ui)
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output missing %q:\n%s", want, out)
