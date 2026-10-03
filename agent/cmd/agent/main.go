@@ -38,6 +38,7 @@ import (
 	"github.com/talyvor/code/internal/scope"
 	"github.com/talyvor/code/internal/shell"
 	"github.com/talyvor/code/internal/track"
+	"github.com/talyvor/code/internal/ui"
 )
 
 // version is the binary's reported version.
@@ -59,7 +60,7 @@ func main() {
 		if errors.As(err, &code) {
 			os.Exit(int(code))
 		}
-		fmt.Fprintln(os.Stderr, "error:", err)
+		fmt.Fprintln(os.Stderr, ui.For(os.Stderr).ErrorPrefix(), err)
 		os.Exit(1)
 	}
 }
@@ -131,7 +132,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	// ⚠ SHOWN, INCLUDING WHEN IT RESOLVED TO NOTHING: a wrong identifier is only noticeable if it
 	// is displayed, and "my costs are not appearing in Track" is only diagnosable if the tool says
 	// it attributed nothing.
-	fmt.Fprintln(os.Stderr, "  "+issueref.Describe(resolvedIssue, issueSource))
+	fmt.Fprintln(os.Stderr, issueref.Describe(ui.For(os.Stderr), resolvedIssue, issueSource))
 
 	cmd, rest := tail[0], tail[1:]
 	switch cmd {
@@ -180,7 +181,19 @@ func run(args []string, stdout, stderr io.Writer) error {
 }
 
 func printUsage(w io.Writer) {
-	fmt.Fprintln(w, `talyvor-code — Talyvor's AI coding agent
+	st := ui.For(w)
+	for _, line := range strings.Split(usageText, "\n") {
+		switch {
+		case strings.HasPrefix(line, "talyvor-code "):
+			line = st.Figure("talyvor-code") + st.Muted(strings.TrimPrefix(line, "talyvor-code"))
+		case line != "" && line == strings.ToUpper(line) && !strings.HasPrefix(line, " "):
+			line = st.Eyebrow(line) // USAGE, COMMANDS, FLAGS: the eyebrow before each block
+		}
+		fmt.Fprintln(w, line)
+	}
+}
+
+const usageText = `talyvor-code — Talyvor's AI coding agent
 
 USAGE
   talyvor-code [flags] <command>
@@ -214,8 +227,7 @@ FLAGS
   --docs-key        Docs API key (or TALYVOR_DOCS_API_KEY)
   --workspace       Workspace ID (or TALYVOR_WORKSPACE_ID)
   --issue           Active issue, e.g. ENG-42 (or TALYVOR_ISSUE)
-  --model           Model (default claude-haiku-4-5)`)
-}
+  --model           Model (default claude-haiku-4-5)`
 
 func runCheck(w io.Writer, cfg config.Config) error {
 	if err := cfg.Validate(); err != nil {
@@ -230,7 +242,8 @@ func runCheck(w io.Writer, cfg config.Config) error {
 	if err != nil || !ok {
 		return fmt.Errorf("Lens unreachable at %s", cfg.LensURL)
 	}
-	fmt.Fprintf(w, "✓ Lens reachable at %s\n", cfg.LensURL)
+	st := ui.For(w)
+	fmt.Fprintln(w, st.Row("lens", st.OK("reachable at "+cfg.LensURL)))
 
 	// ⚠ REACHABLE IS NOT AUTHENTICATED. The line above comes from GET /healthz, which Lens
 	// serves WITHOUT auth — so before this probe existed, `check` printed that tick and exited 0
@@ -242,7 +255,7 @@ func runCheck(w io.Writer, cfg config.Config) error {
 	case lens.CredentialRejected:
 		return fmt.Errorf("Lens is reachable at %s but REJECTED the API key (HTTP %d) — the key is wrong or revoked, not the URL", cfg.LensURL, code)
 	case lens.CredentialOK:
-		fmt.Fprintln(w, "✓ API key verified")
+		fmt.Fprintln(w, st.Row("", st.OK("API key verified")))
 	case lens.CredentialUnknown:
 		// Say nothing: the probe could not tell, and a diagnostic must not guess.
 	}
@@ -258,11 +271,11 @@ func runCheck(w io.Writer, cfg config.Config) error {
 		if tc.IsConfigured() {
 			iss, err := tc.GetIssue(ctx, cfg.WorkspaceID, cfg.ActiveIssue)
 			if err != nil {
-				fmt.Fprintf(w, "! Track lookup failed for %s: %v\n", cfg.ActiveIssue, err)
+				fmt.Fprintln(w, st.Row("track", st.Warn(fmt.Sprintf("lookup failed for %s: %v", st.Issue(cfg.ActiveIssue), err))))
 			} else if iss == nil {
-				fmt.Fprintf(w, "! Issue %s not found in Track\n", cfg.ActiveIssue)
+				fmt.Fprintln(w, st.Row("track", st.Warn(st.Issue(cfg.ActiveIssue)+" not found in Track")))
 			} else {
-				fmt.Fprintf(w, "✓ Active issue: %s — %s\n", iss.Identifier, iss.Title)
+				fmt.Fprintln(w, st.Row("track", st.OK(st.Issue(iss.Identifier)+" — "+iss.Title)))
 			}
 		}
 	}
@@ -364,8 +377,7 @@ func runAsk(stdout io.Writer, cfg config.Config, args []string) error {
 	}
 	// Cost-attribution summary on stderr — keeps stdout clean
 	// for pipes.
-	fmt.Fprintf(os.Stderr, "issue=%s model=%s chars=%d\n",
-		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(text))
+	fmt.Fprintln(os.Stderr, attributionSummary(ui.For(os.Stderr), cfg.ActiveIssue, chosenModel, len(text)))
 	return nil
 }
 
@@ -510,9 +522,11 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "Talyvor Code Chat (issue: %s, model: %s)\n",
-		nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel)
-	fmt.Fprintln(stdout, `Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/model <id>" to swap model, "/file <path>" to attach a file.`)
+	st := ui.For(stdout)
+	fmt.Fprintln(stdout, st.Figure("Talyvor Code Chat"))
+	fmt.Fprintln(stdout, st.Row("issue", issueOrNone(st, cfg.ActiveIssue)))
+	fmt.Fprintln(stdout, st.Row("model", chosenModel))
+	fmt.Fprintln(stdout, st.Muted(`Type your message. "exit" to quit, "/clear" to reset history, "/issue <id>" to change issue, "/model <id>" to swap model, "/file <path>" to attach a file.`))
 
 	lc, err := lens.New(cfg.LensURL, cfg.LensAPIKey)
 	if err != nil {
@@ -622,8 +636,7 @@ func runChat(stdin io.Reader, stdout, stderr io.Writer, cfg config.Config) error
 		}
 		history = append(history, lens.Message{Role: "assistant", Content: reply})
 		history = trimChatHistory(history)
-		fmt.Fprintf(stderr, "(issue=%s model=%s chars=%d)\n",
-			nonEmpty(cfg.ActiveIssue, "(none)"), chosenModel, len(reply))
+		fmt.Fprintln(stderr, attributionSummary(ui.For(stderr), cfg.ActiveIssue, chosenModel, len(reply)))
 	}
 	return scanner.Err()
 }
@@ -2713,9 +2726,10 @@ func runModels(stdout io.Writer) error {
 			ctW = len(m.CostTier)
 		}
 	}
-	fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  Best for\n",
-		idW, "Model", prW, "Provider", spW, "Speed", ctW, "Cost")
-	fmt.Fprintln(stdout, strings.Repeat("─", idW+prW+spW+ctW+12))
+	st := ui.For(stdout)
+	fmt.Fprintln(stdout, st.Eyebrow(fmt.Sprintf("%-*s  %-*s  %-*s  %-*s  Best for",
+		idW, "Model", prW, "Provider", spW, "Speed", ctW, "Cost")))
+	fmt.Fprintln(stdout, st.Muted(strings.Repeat("─", idW+prW+spW+ctW+12)))
 	for _, m := range rows {
 		fmt.Fprintf(stdout, "%-*s  %-*s  %-*s  %-*s  %s\n",
 			idW, m.ID, prW, m.Provider, spW, m.SpeedTier, ctW, m.CostTier,

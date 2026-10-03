@@ -6,6 +6,7 @@
 import * as vscode from "vscode";
 import type { GeneratedTests } from "../providers/test-generator";
 import { escapeHTML } from "./chat-pure";
+import { TEST_CSS, estimateHTML } from "./theme-pure";
 
 type Inbound =
   | { type: "createFile" }
@@ -161,41 +162,29 @@ export class TestPanel {
 <style>${this.css()}</style>
 </head><body>
 <header>
-  <span class="brand">Generated Tests</span>
-  <span class="chip">${escapeHTML(this.tests.framework)}</span>
+  <span class="eyebrow">Talyvor · Generated tests</span>
+  <span class="tag">${escapeHTML(this.tests.framework)}</span>
 </header>
 <section class="meta">
-  <div><span>Source</span><code>${escapeHTML(basename(this.sourceUri.fsPath))}</code></div>
-  <div><span>Target</span><code>${escapeHTML(this.tests.fileName)}</code></div>
-  <div><span>Language</span><code>${escapeHTML(this.tests.language)}</code></div>
+  <div><span class="eyebrow">Source</span><code>${escapeHTML(basename(this.sourceUri.fsPath))}</code></div>
+  <div><span class="eyebrow">Target</span><code>${escapeHTML(this.tests.fileName)}</code></div>
+  <div><span class="eyebrow">Language</span><code>${escapeHTML(this.tests.language)}</code></div>
 </section>
 <div class="actions">
   <button id="create">Create test file</button>
-  <button id="insert">Insert into existing…</button>
-  <button id="copy">Copy</button>
+  <button id="insert" class="ghost">Insert into existing…</button>
+  <button id="copy" class="ghost">Copy</button>
 </div>
 <pre><code>${escapeHTML(this.tests.code)}</code></pre>
 <footer>
-  Generated with claude-sonnet-4-6 · cost $${this.tests.costUSD.toFixed(4)} · Powered by Talyvor Lens
+  <span class="eyebrow">Model</span> claude-sonnet-4-6 · <span class="eyebrow">Cost</span> ${estimateHTML(this.tests.costUSD)} · Powered by Talyvor Lens
 </footer>
 <script>${this.script()}</script>
 </body></html>`;
   }
 
   private css(): string {
-    return `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d4d8e2;background:#1e1e1e;margin:0;padding:0;font-size:13px;line-height:1.45}
-header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#191919}
-header .brand{font-weight:600;color:#fff}
-.chip{font-size:11px;background:#2a2a2a;color:#f0a030;padding:2px 6px;border-radius:4px;font-family:monospace}
-.meta{display:flex;gap:18px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#16181d;font-size:11px;color:#888}
-.meta>div{display:flex;align-items:center;gap:6px}
-.meta code{color:#d4d8e2;background:#0c0e12;padding:2px 6px;border-radius:3px;font-family:"SF Mono",Menlo,monospace}
-.actions{display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#191919}
-.actions button{background:#2a2a2a;color:#d4d8e2;border:1px solid #333;border-radius:4px;padding:5px 12px;font-size:12px;cursor:pointer}
-.actions button:first-child{background:#f0a030;color:#1e1e1e;border-color:#f0a030;font-weight:600}
-.actions button:hover{filter:brightness(1.1)}
-pre{margin:0;padding:12px;background:#0c0e12;overflow:auto;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;color:#d4d8e2;white-space:pre;line-height:1.5}
-footer{padding:6px 12px;border-top:1px solid #2a2a2a;background:#191919;font-size:11px;color:#666}`;
+    return TEST_CSS;
   }
 
   private script(): string {

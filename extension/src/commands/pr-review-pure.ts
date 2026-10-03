@@ -28,11 +28,11 @@ export interface VerdictBadge {
 export function verdictBadge(v: PRVerdict): VerdictBadge {
   switch (v) {
     case "APPROVE":
-      return { label: "APPROVE", color: "#5cd187", emoji: "✅" };
+      return { label: "APPROVE", color: "var(--vscode-testing-iconPassed)", emoji: "✅" };
     case "REQUEST CHANGES":
-      return { label: "REQUEST CHANGES", color: "#ff7070", emoji: "🔴" };
+      return { label: "REQUEST CHANGES", color: "var(--vscode-errorForeground)", emoji: "🔴" };
     case "NEEDS DISCUSSION":
-      return { label: "NEEDS DISCUSSION", color: "#f0a030", emoji: "🟡" };
+      return { label: "NEEDS DISCUSSION", color: "var(--vscode-editorWarning-foreground)", emoji: "🟡" };
   }
 }
 

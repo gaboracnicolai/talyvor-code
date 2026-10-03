@@ -8,6 +8,7 @@ import type { IssueContextProvider } from "../track/issue-context";
 import type { LensConfig } from "../lens/types";
 import type { TrackClient, TrackIssue } from "../track/client";
 import { isValidIssueIdentifier } from "../track/issue-context-pure";
+import { ISSUE_CSS } from "../panels/theme-pure";
 
 // QUICK_PICK_DEBOUNCE_MS is the keystroke debounce when the user
 // types in the issue picker. Hits the Track search endpoint at
@@ -137,19 +138,16 @@ function renderIssueHTML(issue: TrackIssue): string {
   const esc = (s: string) =>
     s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return `<!doctype html><html><head><meta charset="utf-8">
-<style>
-body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#ddd;background:#1e1e1e;padding:16px;line-height:1.5}
-h1{font-size:18px;color:#fff;margin:0 0 8px}
-.id{color:#f0a030;font-family:monospace;font-size:13px}
-.status{display:inline-block;background:#2a2a2a;color:#aaa;padding:2px 8px;border-radius:4px;font-size:11px;text-transform:uppercase;letter-spacing:0.05em}
-.cost{font-size:22px;color:#f0a030;margin-top:8px}
-.desc{margin-top:16px;white-space:pre-wrap;color:#ccc;font-size:13px}
-</style></head><body>
-<div class="id">${esc(issue.identifier)}</div>
+<style>${ISSUE_CSS}</style></head><body>
+<header><span class="eyebrow">Talyvor · Issue</span><span class="chip">${esc(issue.identifier)}</span></header>
+<main>
 <h1>${esc(issue.title)}</h1>
-<span class="status">${esc(issue.status || "—")}</span>
-<div class="cost">$${issue.aiCostUsd.toFixed(2)}<span style="font-size:11px;color:#888;margin-left:6px">total AI cost</span></div>
+<span class="tag">${esc(issue.status || "—")}</span>
+<dl class="kv" style="margin-top:16px">
+  <dt class="eyebrow">Total AI cost</dt><dd><span class="figure big">$${issue.aiCostUsd.toFixed(2)}</span> <span class="muted">recorded by Lens</span></dd>
+</dl>
 <div class="desc">${esc(issue.description || "(no description)")}</div>
+</main>
 </body></html>`;
 }
 

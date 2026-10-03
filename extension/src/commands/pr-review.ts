@@ -19,6 +19,7 @@ import { CostTracker, estimateCostUSD } from "../providers/cost-tracker";
 import type { IssueContextProvider } from "../track/issue-context";
 import { ChatPanel } from "../panels/ChatPanel";
 import { renderMarkdown } from "../docs/docs-pure";
+import { REVIEW_CSS } from "../panels/theme-pure";
 import {
   buildPRReviewSystemPrompt,
   buildPRReviewUserMessage,
@@ -306,13 +307,14 @@ class PRReviewPanel {
     const counts = countFindings(this.review);
     const body = renderMarkdown(this.review);
     const showPostButton = Boolean(this.owner && this.repo);
-    return `<!doctype html><html><head><meta charset="utf-8"><style>${this.css(badge.color)}</style></head>
+    return `<!doctype html><html><head><meta charset="utf-8"><style>${REVIEW_CSS}</style></head>
 <body>
 <header>
-  <span class="verdict" style="background:${badge.color};color:#1e1e1e">${badge.emoji} ${badge.label}</span>
+  <span class="eyebrow">Talyvor · Review</span>
+  <span class="verdict" style="color:${badge.color}">${badge.emoji} ${badge.label}</span>
   <span class="meta">${escapeHTML(this.branch)} → ${escapeHTML(this.base)}</span>
-  <span class="counts">🔴 ${counts.critical} · 🟡 ${counts.warning}</span>
-  <button id="copyBtn">Copy Markdown</button>
+  <span><span class="eyebrow">Critical</span> <span class="figure">${counts.critical}</span> <span class="muted">·</span> <span class="eyebrow">Warnings</span> <span class="figure">${counts.warning}</span></span>
+  <button id="copyBtn" class="ghost">Copy Markdown</button>
   ${showPostButton ? `<button id="postBtn">Post to GitHub</button>` : ""}
 </header>
 <main class="md-body">${body}</main>
@@ -324,27 +326,6 @@ document.getElementById('postBtn')?.addEventListener('click', () => vscode.postM
 </body></html>`;
   }
 
-  private css(verdictColor: string): string {
-    return `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d4d8e2;background:#1e1e1e;margin:0;display:flex;flex-direction:column;height:100vh;line-height:1.55;font-size:13px}
-header{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid #2a2a2a;background:#191919;flex-wrap:wrap}
-.verdict{font-size:11px;font-weight:700;padding:3px 10px;border-radius:4px;letter-spacing:0.05em}
-.meta{font-family:"SF Mono",Menlo,monospace;font-size:11px;color:#aaa}
-.counts{font-size:11px;color:#888;margin-left:8px}
-header button{margin-left:auto;background:#f0a030;color:#1e1e1e;border:0;border-radius:4px;padding:5px 12px;font-weight:600;cursor:pointer;font-size:12px}
-header button + button{margin-left:6px}
-header button:hover{opacity:0.9}
-main{flex:1;overflow-y:auto;padding:16px 18px;max-width:920px}
-.md-body h1,.md-body h2,.md-body h3{color:#fff;margin-top:18px;border-bottom:1px solid #2a2a2a;padding-bottom:4px}
-.md-body h2:first-child{margin-top:0}
-.md-h1{font-size:18px}
-.md-h2{font-size:15px}
-.md-h3{font-size:13px;border-bottom:0;padding-bottom:0}
-.md-p{margin:6px 0}
-.md-code{background:#0c0e12;border:1px solid #1f242c;border-radius:6px;padding:8px;font-family:"SF Mono",Menlo,monospace;font-size:12px;overflow-x:auto}
-.md-ic{background:#13161c;padding:1px 4px;border-radius:3px;font-family:"SF Mono",Menlo,monospace;font-size:11px}
-.md-ul,.md-ol{margin:6px 0;padding-left:20px}
-a{color:${verdictColor}}`;
-  }
 }
 
 function escapeHTML(s: string): string {

@@ -15,6 +15,14 @@ export function formatSessionCost(usd: number): string {
   return `~$${usd.toFixed(2)}`;
 }
 
+/**
+ * The same estimate as a panel shows it, per task or per session. Same tilde; four places, because a
+ * single generation costs fractions of a cent and "~$0.00" would say nothing.
+ */
+export function formatCostEstimate(usd: number): string {
+  return `~$${usd.toFixed(4)}`;
+}
+
 /** The tooltip lines that say what the number is and is not. */
 export function costDisclaimerLines(activeIssue?: string): string[] {
   const lines = ["Estimated locally at one flat rate — not your bill."];

@@ -16,6 +16,7 @@ import { AgentMode, type AgentTask } from "../agent/AgentMode";
 import type { DiffLine } from "../agent/agent-pure";
 import type { IssueContextProvider } from "../track/issue-context";
 import { escapeHTML } from "./chat-pure";
+import { AGENT_CSS, estimateHTML } from "./theme-pure";
 
 type Inbound =
   | { type: "start"; description: string }
@@ -237,9 +238,9 @@ export class AgentPanel {
 <style>${this.css()}</style>
 </head><body>
 <header>
-  <span class="brand">Talyvor Agent</span>
+  <span class="eyebrow">Talyvor · Agent</span>
   <span class="chip">${escapeHTML(cfg.activeIssue || "(no issue)")}</span>
-  <span class="status" id="status">${task ? task.status : "idle"}</span>
+  <span class="status eyebrow" id="status">${task ? task.status : "idle"}</span>
 </header>
 <main>${body}</main>
 <script>${this.script()}</script>
@@ -285,8 +286,8 @@ export class AgentPanel {
         <h2>✅ Task completed</h2>
         <p>Applied ${approved} file change${approved === 1 ? "" : "s"}.</p>
         ${healedBadge}
-        <p>Total cost: $${task.totalCostUSD.toFixed(4)}</p>
-        ${task.issueId ? `<p>Active issue: <code>${escapeHTML(task.issueId)}</code></p>` : ""}
+        <p><span class="eyebrow">Total cost</span> ${estimateHTML(task.totalCostUSD)}</p>
+        ${task.issueId ? `<p><span class="eyebrow">Issue</span> <span class="chip">${escapeHTML(task.issueId)}</span></p>` : ""}
         <div class="actions">
           <button id="createPRBtn">Create PR</button>
         </div>
@@ -303,7 +304,7 @@ export class AgentPanel {
     const attempts = task.healAttempts ?? [];
     const cards = attempts.map((a) => this.renderHealAttempt(a)).join("");
     return `<div class="healing">
-  <h2>🔧 Self-healing</h2>
+  <h2 class="eyebrow">Self-healing</h2>
   <p class="muted">Running the project's build command and asking the model to fix any failures. Streaming output appears in the <code>Talyvor Agent — Heal</code> output channel.</p>
   ${attempts.length > 0 ? `<div class="attempts">${cards}</div>` : `<div class="progress"><div class="dots"><i></i><i></i><i></i></div></div>`}
 </div>`;
@@ -318,7 +319,7 @@ export class AgentPanel {
   <header>
     <span class="op">attempt ${a.attempt}</span>
     <code>${escapeHTML(a.command)}</code>
-    <span class="status-pill">${a.success ? "passed" : `exit ${a.exitCode}`}</span>
+    <span class="status-pill eyebrow">${a.success ? "passed" : `exit ${a.exitCode}`}</span>
   </header>
   ${!a.success ? `<pre class="heal-err">${escapeHTML(a.stderrTail || a.stdoutTail || "(no output)")}</pre>` : ""}
   ${a.appliedCount > 0 ? `<p class="muted">Applied ${a.appliedCount} fix${a.appliedCount === 1 ? "" : "es"}</p>` : ""}
@@ -335,11 +336,12 @@ export class AgentPanel {
       .join("");
     return `<div class="review">
   <section class="plan">
-    <h2>Plan</h2>
+    <h2 class="eyebrow">Plan</h2>
     <ul>${planList}</ul>
   </section>
   <section class="changes">
-    <h2>${task.changes.length} file change${task.changes.length === 1 ? "" : "s"} (cost so far: $${task.totalCostUSD.toFixed(4)})</h2>
+    <h2 class="eyebrow">${task.changes.length} file change${task.changes.length === 1 ? "" : "s"}</h2>
+    <p class="muted"><span class="eyebrow">Cost so far</span> ${estimateHTML(task.totalCostUSD)}</p>
     ${changes}
   </section>
   <footer class="actions">
@@ -393,64 +395,7 @@ export class AgentPanel {
   // ─── CSS + script ───
 
   private css(): string {
-    return `body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#d4d8e2;background:#1e1e1e;margin:0;display:flex;flex-direction:column;height:100vh;line-height:1.4;font-size:13px}
-header{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid #2a2a2a;background:#191919}
-header .brand{font-weight:600;color:#fff}
-.chip{font-size:11px;background:#2a2a2a;color:#f0a030;padding:2px 6px;border-radius:4px;font-family:monospace}
-header .status{margin-left:auto;font-size:11px;color:#888;text-transform:uppercase;letter-spacing:0.05em}
-main{flex:1;overflow-y:auto;padding:12px}
-.idle{display:flex;flex-direction:column;gap:8px;max-width:680px}
-.hint{color:#888;font-size:12px;margin:0}
-textarea{background:#0c0e12;color:#d4d8e2;border:1px solid #2a2a2a;border-radius:6px;padding:8px;font-family:inherit;font-size:13px;resize:vertical;box-sizing:border-box}
-textarea:focus{outline:none;border-color:#f0a030}
-.examples{color:#666;font-size:11px}
-.examples ul{margin:4px 0 0 16px;padding:0}
-button{background:#f0a030;color:#1e1e1e;border:0;border-radius:4px;padding:6px 16px;font-weight:600;cursor:pointer;font-size:12px}
-button:hover{opacity:0.9}
-button.ghost{background:#2a2a2a;color:#d4d8e2;border:1px solid #333}
-.progress{display:flex;flex-direction:column;align-items:center;padding:32px;color:#888}
-.dots{display:flex;gap:6px;margin-bottom:12px}
-.dots i{width:8px;height:8px;border-radius:50%;background:#888;animation:bounce 1.2s infinite}
-.dots i:nth-child(2){animation-delay:0.15s}
-.dots i:nth-child(3){animation-delay:0.3s}
-@keyframes bounce{0%,80%,100%{transform:scale(0.6);opacity:0.4}40%{transform:scale(1);opacity:1}}
-.error{padding:12px;background:#3a1a1a;color:#ff7070;border-radius:6px}
-.completed{padding:12px}
-.completed h2{color:#5cd187;margin:0 0 8px}
-.review h2{font-size:12px;text-transform:uppercase;letter-spacing:0.05em;color:#aaa;margin:16px 0 6px}
-.review .plan ul{margin:0;padding-left:18px}
-.change{border:1px solid #2a2a2a;border-radius:6px;margin:8px 0;overflow:hidden}
-.change.approved{border-color:#5cd187}
-.change.rejected{border-color:#ff7070;opacity:0.6}
-.change header{background:#13161c;padding:6px 8px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #2a2a2a}
-.op{font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px}
-.op-create{background:#1a3a1a;color:#5cd187}
-.op-modify{background:#3a2a1a;color:#f0a030}
-.op-delete{background:#3a1a1a;color:#ff7070}
-.change code{font-family:"SF Mono",Menlo,monospace;font-size:12px;color:#d4d8e2;flex:1}
-.change header button{padding:3px 10px;font-size:11px}
-pre.diff{margin:0;padding:8px;background:#0c0e12;overflow:auto;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:12px;line-height:1.5;color:#d4d8e2;white-space:pre}
-.dh{color:#888;display:block}
-.dc{color:#888;display:block}
-.da{color:#5cd187;display:block}
-.dr{color:#ff7070;display:block}
-.feedback{padding:8px;background:#13161c;font-size:11px;color:#888;border-top:1px solid #2a2a2a}
-.feedback button{margin-left:8px;padding:2px 8px;font-size:11px}
-.actions{padding:12px 0;display:flex;gap:8px}
-.muted{color:#666}
-.healing h2{font-size:13px;color:#aaa;text-transform:uppercase;letter-spacing:0.05em;margin:8px 0}
-.healing .attempts{display:flex;flex-direction:column;gap:8px;margin-top:12px}
-.heal-attempt{border:1px solid #2a2a2a;border-radius:6px;overflow:hidden}
-.heal-attempt.ok{border-color:#5cd187}
-.heal-attempt.fail{border-color:#f0a030}
-.heal-attempt header{background:#13161c;padding:6px 8px;display:flex;align-items:center;gap:8px;border-bottom:1px solid #2a2a2a}
-.heal-attempt .op{font-size:10px;font-weight:600;padding:2px 6px;border-radius:3px;background:#2a2a2a;color:#f0a030}
-.heal-attempt .status-pill{margin-left:auto;font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#aaa}
-.heal-attempt.ok .status-pill{color:#5cd187}
-.heal-attempt.fail .status-pill{color:#ff7070}
-pre.heal-err{margin:0;padding:8px;background:#0c0e12;color:#ff9090;font-family:"SF Mono",Menlo,Consolas,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;max-height:200px;overflow:auto}
-.heal-fixes{list-style:none;padding:6px 10px;margin:0;font-size:11px;color:#aaa}
-.heal-fixes li{padding:2px 0}`;
+    return AGENT_CSS;
   }
 
   private script(): string {

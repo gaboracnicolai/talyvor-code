@@ -59,13 +59,13 @@ export interface FreshnessIcon {
 export function freshnessIcon(status: string): FreshnessIcon {
   switch ((status || "").toLowerCase()) {
     case "fresh":
-      return { emoji: "🟢", label: "Fresh", color: "#5cd187" };
+      return { emoji: "🟢", label: "Fresh", color: "var(--vscode-testing-iconPassed)" };
     case "warning":
-      return { emoji: "🟡", label: "Warning", color: "#f0a030" };
+      return { emoji: "🟡", label: "Warning", color: "var(--vscode-editorWarning-foreground)" };
     case "stale":
-      return { emoji: "🔴", label: "Stale", color: "#ff7070" };
+      return { emoji: "🔴", label: "Stale", color: "var(--vscode-errorForeground)" };
     default:
-      return { emoji: "⚪", label: "Unknown", color: "#888" };
+      return { emoji: "⚪", label: "Unknown", color: "var(--vscode-descriptionForeground)" };
   }
 }
 

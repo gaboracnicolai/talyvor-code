@@ -1,6 +1,10 @@
 package issueref
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/talyvor/code/internal/ui"
+)
 
 // The extraction rules. The HEADER these produce is asserted separately in internal/lens — a
 // correct extractor whose value never reaches the wire is the failure this file cannot see.
@@ -68,10 +72,10 @@ func TestResolve_Precedence(t *testing.T) {
 // ⚠ THE ABSENCE MUST BE VISIBLE. "my costs are not appearing in Track" is only diagnosable if the
 // tool says it attributed nothing — and the branch name must never appear in what it says.
 func TestDescribe_SaysWhenItResolvedToNothing(t *testing.T) {
-	if got := Describe("", "none"); got == "" || !contains(got, "unattributed") {
+	if got := Describe(ui.Plain(), "", "none"); got == "" || !contains(got, "unattributed") {
 		t.Errorf("Describe(none) = %q — it must say the work will be unattributed", got)
 	}
-	if got := Describe("ENG-42", "branch"); !contains(got, "ENG-42") || !contains(got, "branch") {
+	if got := Describe(ui.Plain(), "ENG-42", "branch"); !contains(got, "ENG-42") || !contains(got, "branch") {
 		t.Errorf("Describe(branch) = %q — it must name the identifier and where it came from", got)
 	}
 	// The branch name is never an input to Describe, so it cannot be printed. Pinned by signature.
