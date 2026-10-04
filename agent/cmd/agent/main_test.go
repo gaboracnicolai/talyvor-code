@@ -27,6 +27,18 @@ func TestRun_VersionPrintsVersion(t *testing.T) {
 	}
 }
 
+// `talyvor-code --version` is what install.sh's reader types to see what they got; before 0.3.0 it
+// was "flag provided but not defined".
+func TestRun_VersionFlagPrintsVersion(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if err := run([]string{"--version"}, &stdout, &stderr); err != nil {
+		t.Fatalf("run: %v (stderr %q)", err, stderr.String())
+	}
+	if got, want := stdout.String(), "talyvor-code "+version+"\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
 func TestRun_NoArgsPrintsUsage(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	if err := run(nil, &stdout, &stderr); err != nil {

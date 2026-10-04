@@ -265,6 +265,20 @@ jobs:
           test -s talyvor-code-linux-amd64
           echo "all assets present and verified"
 
+      # The binary a customer installs, not the source it came from: it reports the tag, and
+      # `exec` refuses to hand the Lens key to a cleartext remote host (b7cdc1c, which v0.2.0
+      # shipped without).
+      - name: Self-check — the shipped binary has the version and the exec key refusal
+        run: |
+          bin=dist/talyvor-code-linux-amd64
+          chmod +x "$bin"
+          test "$("$bin" --version)" = "talyvor-code ${GITHUB_REF_NAME}"
+          if out=$(TALYVOR_LENS_URL=http://lens.invalid TALYVOR_LENS_API_KEY=tlv_canary "$bin" exec -- true 2>&1); then
+            echo "::error::exec accepted http://lens.invalid — the key would have been sent there"; echo "$out"; exit 1
+          fi
+          echo "$out" | grep -q "lens-url" || { echo "::error::exec failed for another reason: $out"; exit 1; }
+          echo "exec refused: $out"
+
       - name: Publish release with binaries + checksums
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

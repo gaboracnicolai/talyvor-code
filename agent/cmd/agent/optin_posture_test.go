@@ -66,6 +66,7 @@ var classifiedBoolFlags = []boolFlag{
 	{"draft", "Open as a draft PR", true, "creates a remote pull request"},
 	{"explain", "Explain the command", false, "prints an explanation; runs nothing"},
 	{"run", "Execute the command", true, "executes a shell command on the caller's machine"},
+	{"version", "Print the version", false, "prints the version and exits; runs nothing"},
 }
 
 var boolVarRe = regexp.MustCompile(`fs\.BoolVar\(&\w+,\s*"([^"]+)",\s*(\w+),\s*"([^"]*)"`)
