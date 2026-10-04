@@ -15,7 +15,9 @@
 //     a muted .tag.
 //   · an estimate is labelled as one (estimateHTML), never styled to pass for a measurement.
 
+import type { DiffLine } from "../agent/agent-pure";
 import { costDisclaimerLines, formatCostEstimate } from "../track/cost-label-pure";
+import { escapeHTML } from "./chat-pure";
 
 const BASE_CSS = `:root{
 --t-fg:var(--vscode-foreground);
@@ -229,4 +231,23 @@ body>header button + button{margin-left:0}
 export function estimateHTML(usd: number): string {
   const note = costDisclaimerLines()[0];
   return `<span class="figure" title="${note}">${formatCostEstimate(usd)}</span> <span class="eyebrow" title="${note}">est.</span>`;
+}
+
+// diffHTML renders a diff as the rows of pre.diff: one display:block span per line.
+//
+// ⚠ NO NEWLINE BETWEEN THE ROWS. pre.diff is white-space:pre, so a "\n" after a block span is a
+// second, empty row — every line of the Agent panel's diff used to have a blank line under it.
+export function diffHTML(lines: DiffLine[]): string {
+  return lines.map((line) => {
+    switch (line.kind) {
+      case "header":
+        return `<span class="dh">${escapeHTML(line.text)}</span>`;
+      case "context":
+        return `<span class="dc"> ${escapeHTML(line.text)}</span>`;
+      case "add":
+        return `<span class="da">+${escapeHTML(line.text)}</span>`;
+      case "remove":
+        return `<span class="dr">-${escapeHTML(line.text)}</span>`;
+    }
+  }).join("");
 }

@@ -14,6 +14,11 @@
 // ⚠ IT NEVER GUESSES. No repo, a detached HEAD, main/master, or no match returns "" — and the
 // caller then sends NO header at all, which Track records as unattributed. That is the correct
 // outcome: an unattributed cost is honest, a cost attributed to the wrong issue is not.
+//
+// ⚠ A SHAPE IS NOT AN ISSUE. <letters>-<digits> is also a ticket in someone else's tracker, a
+// queue item, a version: the branch b18-52-design-language printed "ISSUE B18-52" and sent it to
+// Lens. So a match counts only when its key is one this workspace's Track knows (or one the user
+// configured with --issue-keys); with no known keys, a branch attributes nothing.
 package issueref
 
 import (
@@ -42,12 +47,25 @@ var protectedBranches = map[string]bool{
 	"HEAD": true, // detached HEAD reports this
 }
 
+// KeySource returns the issue keys (Track team identifiers, e.g. "ENG") this workspace uses.
+//
+// It is a function so the lookup is LAZY: it is called only when a branch contains something
+// shaped like an identifier, so main, an explicit --issue or a plain feature/add-login costs no
+// round trip to Track.
+type KeySource func() []string
+
+// Keys is a KeySource over a fixed list.
+func Keys(keys ...string) KeySource { return func() []string { return keys } }
+
 // FromBranch returns the Track identifier a branch names, or "" when it names none.
 //
 // The identifier is UPPER-CASED: a branch called eng-42 refers to the same issue as ENG-42, and
 // sending the lowercase form attributes to nothing at all because Track stores the team identifier
 // as the team wrote it — conventionally upper case.
-func FromBranch(branch string) string {
+//
+// Only a match whose key keys() returns counts, compared case-insensitively; the first such match
+// in the name wins, so fix/b18-52-ENG-42 still finds ENG-42 when B18 is not a key.
+func FromBranch(branch string, keys KeySource) string {
 	b := strings.TrimSpace(branch)
 	if b == "" {
 		return ""
@@ -59,12 +77,28 @@ func FromBranch(branch string) string {
 	if protectedBranches[b] || protectedBranches[strings.ToLower(b)] {
 		return ""
 	}
-
-	m := pattern.FindStringSubmatch(b)
-	if m == nil {
+	if !pattern.MatchString(b) || keys == nil {
 		return ""
 	}
-	return strings.ToUpper(m[2]) + "-" + m[3]
+
+	known := map[string]bool{}
+	for _, k := range keys() {
+		if k = strings.ToUpper(strings.TrimSpace(k)); k != "" {
+			known[k] = true
+		}
+	}
+	for rest := b; ; {
+		m := pattern.FindStringSubmatchIndex(rest)
+		if m == nil {
+			return ""
+		}
+		if key := strings.ToUpper(rest[m[4]:m[5]]); known[key] {
+			return key + "-" + rest[m[6]:m[7]]
+		}
+		// Resume right after this key: the pattern consumes the separators either side of a
+		// match, and the next candidate may start on the very one this match ate.
+		rest = rest[m[5]:]
+	}
 }
 
 // Resolve applies the precedence: an EXPLICIT identifier always wins, a detected one is used only
@@ -72,7 +106,7 @@ func FromBranch(branch string) string {
 //
 // ⚠ EXPLICIT WINS UNCONDITIONALLY. Someone who passed --issue has said what they mean; a branch
 // name is an inference, and an inference must never override a statement.
-func Resolve(explicit string, branch func() (string, error)) (identifier, source string) {
+func Resolve(explicit string, branch func() (string, error), keys KeySource) (identifier, source string) {
 	if e := strings.TrimSpace(explicit); e != "" {
 		return e, "explicit"
 	}
@@ -84,7 +118,7 @@ func Resolve(explicit string, branch func() (string, error)) (identifier, source
 		// Not a repo, no commits yet, git absent — all the same answer: attribute nothing.
 		return "", "none"
 	}
-	if id := FromBranch(name); id != "" {
+	if id := FromBranch(name, keys); id != "" {
 		return id, "branch"
 	}
 	return "", "none"

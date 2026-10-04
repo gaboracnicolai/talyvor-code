@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  AGENT_CSS, CHAT_CSS, COST_CSS, DOCS_CSS, ISSUE_CSS, REVIEW_CSS, TEST_CSS, estimateHTML,
+  AGENT_CSS, CHAT_CSS, COST_CSS, DOCS_CSS, ISSUE_CSS, REVIEW_CSS, TEST_CSS, diffHTML, estimateHTML,
 } from "./theme-pure";
 import { freshnessIcon } from "../docs/docs-pure";
 import { verdictBadge } from "../commands/pr-review-pure";
@@ -32,4 +32,22 @@ test("an estimated cost renders with its tilde and an est. label, never as a bar
   assert.ok(html.includes("~$0.0123"), html);
   assert.ok(html.includes(">est.<"), html);
   assert.ok(html.includes("not your bill"), "the disclaimer rides along as the tooltip");
+});
+
+test("the Agent panel's diff renders one row per line, with no blank row between them", () => {
+  const html = diffHTML([
+    { kind: "header", text: "@@ -1,2 +1,2 @@" },
+    { kind: "context", text: "a" },
+    { kind: "remove", text: "b" },
+    { kind: "add", text: "c" },
+  ]);
+  // Each line is a block row (display:block), inside a pre (white-space:pre) ...
+  assert.match(AGENT_CSS, /pre\.diff\{[^}]*white-space:pre[;}]/);
+  for (const cls of ["dh", "dc", "da", "dr"]) {
+    assert.match(AGENT_CSS, new RegExp(`\\.${cls}[,{][^}]*display:block`), `.${cls} is not a block row`);
+  }
+  const rows = html.match(/<span class="d[hcar]">[^<]*<\/span>/g) ?? [];
+  assert.equal(rows.length, 4);
+  // ... so any newline outside a row is an extra, empty row.
+  assert.equal(html.replace(/<span class="d[hcar]">[^<]*<\/span>/g, ""), "");
 });

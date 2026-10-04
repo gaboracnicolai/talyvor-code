@@ -13,10 +13,9 @@ import type { LensClient } from "../lens/client";
 import type { LensConfig } from "../lens/types";
 import { CostTracker } from "../providers/cost-tracker";
 import { AgentMode, type AgentTask } from "../agent/AgentMode";
-import type { DiffLine } from "../agent/agent-pure";
 import type { IssueContextProvider } from "../track/issue-context";
 import { escapeHTML } from "./chat-pure";
-import { AGENT_CSS, estimateHTML } from "./theme-pure";
+import { AGENT_CSS, diffHTML, estimateHTML } from "./theme-pure";
 
 type Inbound =
   | { type: "start"; description: string }
@@ -362,9 +361,7 @@ export class AgentPanel {
       : c.approved === false
         ? "rejected"
         : "pending";
-    const diff = c.diff
-      .map((line) => this.renderDiffLine(line))
-      .join("");
+    const diff = diffHTML(c.diff);
     return `<article class="change ${approvedClass}" data-idx="${idx}">
   <header>
     <span class="op op-${c.operation}">${badge}</span>
@@ -377,19 +374,6 @@ export class AgentPanel {
         ? `<div class="feedback">Feedback: ${escapeHTML(c.rejectionFeedback)} <button data-action="regenerate">Regenerate</button></div>`
         : ""}
 </article>`;
-  }
-
-  private renderDiffLine(line: DiffLine): string {
-    switch (line.kind) {
-      case "header":
-        return `<span class="dh">${escapeHTML(line.text)}</span>\n`;
-      case "context":
-        return `<span class="dc"> ${escapeHTML(line.text)}</span>\n`;
-      case "add":
-        return `<span class="da">+${escapeHTML(line.text)}</span>\n`;
-      case "remove":
-        return `<span class="dr">-${escapeHTML(line.text)}</span>\n`;
-    }
   }
 
   // ─── CSS + script ───

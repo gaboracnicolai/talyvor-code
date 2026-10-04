@@ -25,7 +25,10 @@ type Config struct {
 	DocsAPIKey  string
 	WorkspaceID string
 	ActiveIssue string
-	Model       string
+	// IssueKeys is a comma-separated list of issue keys ("ENG,OPS") a branch name may attribute
+	// to, in addition to the team keys the workspace's Track reports. See internal/issueref.
+	IssueKeys string
+	Model     string
 	// ReportVerdicts gates the K4 code loop: when true the agent reports mechanical build/test verdicts
 	// back to Lens for the specific generation that produced the code. DEFAULT FALSE — off = the agent
 	// behaves exactly as before; reporting is best-effort and NEVER blocks or fails a user's build.
@@ -72,6 +75,9 @@ func Load(flags Config) Config {
 	}
 	if out.ActiveIssue == "" {
 		out.ActiveIssue = os.Getenv("TALYVOR_ISSUE")
+	}
+	if out.IssueKeys == "" {
+		out.IssueKeys = os.Getenv("TALYVOR_ISSUE_KEYS")
 	}
 	if out.Model == "" {
 		out.Model = os.Getenv("TALYVOR_MODEL")
