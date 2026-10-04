@@ -3,6 +3,20 @@
 This file is the Marketplace **Changelog** tab. It ships inside the `.vsix`; anything not written
 here is invisible to someone deciding whether to install.
 
+## [0.3.0]
+
+Released together with Talyvor Code CLI v0.3.0, which `Talyvor: Run Claude Code (metered by Lens)`
+launches. Re-run the CLI's `install.sh` to upgrade it; `talyvor-code --version` shows what you have.
+
+### Fixed
+
+- **The CLI that `Run Claude Code` starts could send your Lens API key somewhere other than Lens.**
+  The last CLI release, v0.2.0, let `talyvor-code exec` forward the key to whatever
+  `TALYVOR_LENS_URL` named, including a plain-`http` remote host or a cloud metadata address.
+  v0.3.0 refuses those before it starts anything — remote URLs must be `https`, and `http` is
+  allowed only for localhost, the same rule every other command already applied.
+- **`talyvor-code --version` was an error.** It now prints the version.
+
 ## [0.1.0]
 
 The first release on the Marketplace: `code --install-extension talyvor.talyvor-code`.

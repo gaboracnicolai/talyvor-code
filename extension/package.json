@@ -2,7 +2,7 @@
   "name": "talyvor-code",
   "displayName": "Talyvor Code",
   "description": "AI coding assistant powered by Talyvor Lens \u2014 track AI costs per issue",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "publisher": "talyvor",
   "license": "BUSL-1.1",
   "repository": {

@@ -87,6 +87,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		workspaceID string
 		issue       string
 		model       string
+		showVersion bool
 	)
 	fs := flag.NewFlagSet("talyvor-code", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -99,8 +100,13 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&workspaceID, "workspace", "", "Workspace ID (or TALYVOR_WORKSPACE_ID)")
 	fs.StringVar(&issue, "issue", "", "Active issue identifier, e.g. ENG-42 (or TALYVOR_ISSUE)")
 	fs.StringVar(&model, "model", "", "Model (default claude-haiku-4-5)")
+	fs.BoolVar(&showVersion, "version", false, "Print the version and exit")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if showVersion {
+		fmt.Fprintln(stdout, "talyvor-code", version)
+		return nil
 	}
 	tail := fs.Args()
 	if len(tail) == 0 {
