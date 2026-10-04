@@ -1,15 +1,33 @@
 # Talyvor Code
 
-AI coding assistance in VS Code, with every request billed through **Talyvor Lens** and attributed
-to a **Talyvor Track** issue — so the AI spend on a piece of work is a number you can look up
-rather than a line on a provider invoice.
+An AI coding agent that runs on its own **Talyvor agent wallet** — a budget you fund, spending rules
+you set, and a live statement of every call it made. **Talyvor Lens** checks the wallet's balance
+and rules before each model call, so the agent cannot spend more than you gave it, and every call
+is tagged with the **Talyvor Track** issue you set it working on — cost per issue is a number you
+can look up rather than a line on a provider invoice.
 
 Extension id: **`talyvor.talyvor-code`**
+
+## Give it a wallet
+
+1. In Talyvor, open **Agent Wallets** and create an agent for this editor — one per developer reads
+   best on the statement.
+2. Fund it, and set its rules: a budget, limits, and which spends need your approval.
+3. Press **Issue a key**. That key spends only this agent's balance, under its rules, and is shown
+   once.
+4. Set `talyvor.lensUrl` to your Lens and paste the agent key into `talyvor.lensApiKey`; it is moved
+   into the OS keychain straight away (see *Secrets* below).
+5. Run **`Talyvor: Test Lens Connection`**.
+
+From then on the agent's statement in Agent Wallets shows what it spent, call by call, and
+`Talyvor: Show AI Cost Dashboard` breaks the same spend down by issue. Topping up, pausing the agent
+or tightening a rule takes effect on its next call — nothing to change in VS Code. A workspace key
+works too, but then the spend is billed to the workspace rather than to an agent's wallet.
 
 ## Before it does anything: you need a Lens
 
 This extension is a client. It has no built-in model and no default account, and every AI feature
-below calls **your** Lens instance — self-hosted or hosted — with **your** key. With `talyvor.lensUrl`
+below calls **your** Lens instance — self-hosted or hosted — with **your** agent key. With `talyvor.lensUrl`
 and `talyvor.lensApiKey` unset, the commands report *"Talyvor is not configured"* and stop. The
 default `talyvor.lensUrl` is `http://localhost:8080`, which is a local Lens, not a service run for
 you.
@@ -30,6 +48,7 @@ VS Code **1.85** or newer. No runtime dependencies are installed with the extens
 
 | | |
 | --- | --- |
+| **Its own wallet** | Configured with an agent key, every call below spends that agent's Talyvor wallet, under its budget and rules — see *Give it a wallet*. |
 | **Inline completions** | Ghost-text completions as you type, through Lens (`talyvor.enableCompletions`, on by default). |
 | **Chat, explain, fix, refactor, tests** | `Talyvor: Open AI Chat` (⌘/Ctrl+Shift+L), plus explain / fix-error / refactor / generate-tests on the editor context menu. |
 | **An agent that edits files** | `Talyvor: Start Agent Task` (⌘/Ctrl+Shift+A) plans, edits and runs commands inside the workspace root. |

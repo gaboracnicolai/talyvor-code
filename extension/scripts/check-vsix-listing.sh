@@ -56,4 +56,15 @@ if grep -q '^extension/scripts/' <<<"$entries"; then
   fail ".vsix ships build scripts under extension/scripts/ — add the directory to .vscodeignore"
 fi
 
-echo "vsix listing ok: readme.md, changelog.md, no build scripts, and the readme names '$id'"
+# 5. The listing leads with the agent wallet (B28.13). The Marketplace shows the manifest's
+#    description in search results and the readme's first paragraph at the top of the page, so both
+#    are read from the archive: the packaged manifest, and the readme's text up to its first blank
+#    line after the title.
+manifest="$(unzip -p "$vsix" 'extension/package.json')"
+node -e "process.exit(/wallet/i.test(JSON.parse(process.argv[1]).description||'')?0:1)" "$manifest" \
+  || fail "the packaged manifest's description never mentions the agent wallet — the Marketplace search result would not say what the extension is"
+first_para="$(unzip -p "$vsix" 'extension/readme.md' | awk 'NR>1 && NF==0 && seen {done=1} !done && NR>1 && NF>0 {seen=1; print}')"
+grep -qi 'agent wallet' <<<"$first_para" \
+  || fail "the packaged readme's first paragraph never mentions the agent wallet"
+
+echo "vsix listing ok: readme.md, changelog.md, no build scripts, the readme names '$id', and the listing leads with the agent wallet"

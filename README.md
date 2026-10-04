@@ -1,6 +1,11 @@
 # Talyvor Code
 
-**AI coding assistant powered by Talyvor Lens — every AI call attributed to your active Track issue.**
+**An AI coding agent that runs on its own Talyvor wallet — budget, rules, cost per issue.**
+
+Give it an agent key from **Agent Wallets** in Talyvor and every call it makes spends only that
+agent's wallet: Lens checks the balance and the rules before the model is called, the agent's
+statement shows what it spent, and each call is tagged with your active Track issue. See
+[`extension/README.md`](extension/README.md#give-it-a-wallet) for the five-step setup.
 
 Three surfaces ship from this repository:
 
