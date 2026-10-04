@@ -165,6 +165,7 @@ TALYVOR_MCP_TOKEN=$(openssl rand -hex 32) talyvor-code serve --port 7777 --root 
 | `TALYVOR_DOCS_API_KEY` | `--docs-key` |
 | `TALYVOR_WORKSPACE_ID` | `--workspace` |
 | `TALYVOR_ISSUE` | `--issue` |
+| `TALYVOR_ISSUE_KEYS` | `--issue-keys` |
 | `TALYVOR_MODEL` | `--model` |
 
 ## JetBrains plugin (IntelliJ IDEA, GoLand, PyCharm, …)
@@ -210,6 +211,9 @@ rather than guessed.
   buffered, logged or inspected. Pinned by a test that fails if a prompt is ever written down.
 - **It never sends your branch name**, only the identifier — branch names carry customer names and
   unreleased codenames.
+- **It only detects issues your workspace has.** `eng-42-fix` counts as ENG-42 only when ENG is one
+  of your Track teams (asked of Track when it is configured) or a key you listed with
+  `--issue-keys ENG,OPS`; `b18-52-design-language` names no team, so it attributes nothing.
 - **It does not touch your claude.ai login.** No API key *value* is ever planted in the child's
   environment — a value is what makes Claude Code disable your connectors, and it is also what
   anything the child spawns could read. `ANTHROPIC_API_KEY` is set and left EMPTY: measured, that

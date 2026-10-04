@@ -86,6 +86,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		docsKey     string
 		workspaceID string
 		issue       string
+		issueKeys   string
 		model       string
 		showVersion bool
 	)
@@ -99,6 +100,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	fs.StringVar(&docsKey, "docs-key", "", "Docs API key (or TALYVOR_DOCS_API_KEY)")
 	fs.StringVar(&workspaceID, "workspace", "", "Workspace ID (or TALYVOR_WORKSPACE_ID)")
 	fs.StringVar(&issue, "issue", "", "Active issue identifier, e.g. ENG-42 (or TALYVOR_ISSUE)")
+	fs.StringVar(&issueKeys, "issue-keys", "", "Issue keys a branch name may attribute to, e.g. ENG,OPS, besides Track's teams (or TALYVOR_ISSUE_KEYS)")
 	fs.StringVar(&model, "model", "", "Model (default claude-haiku-4-5)")
 	fs.BoolVar(&showVersion, "version", false, "Print the version and exit")
 	if err := fs.Parse(args); err != nil {
@@ -122,6 +124,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 		DocsAPIKey:  docsKey,
 		WorkspaceID: workspaceID,
 		ActiveIssue: issue,
+		IssueKeys:   issueKeys,
 		Model:       model,
 	})
 
@@ -133,7 +136,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 	//
 	// ⚠ ONLY THE IDENTIFIER IS EVER USED. The branch name itself is not stored, logged or sent —
 	// branch names carry customer names, incidents and codenames. See internal/issueref.
-	resolvedIssue, issueSource := issueref.Resolve(cfg.ActiveIssue, git.GetCurrentBranch)
+	resolvedIssue, issueSource := issueref.Resolve(cfg.ActiveIssue, git.GetCurrentBranch, issueKeySource(cfg))
 	cfg.ActiveIssue = resolvedIssue
 	// ⚠ SHOWN, INCLUDING WHEN IT RESOLVED TO NOTHING: a wrong identifier is only noticeable if it
 	// is displayed, and "my costs are not appearing in Track" is only diagnosable if the tool says
@@ -186,6 +189,31 @@ func run(args []string, stdout, stderr io.Writer) error {
 	return fmt.Errorf("unknown command %q (try `talyvor-code help`)", cmd)
 }
 
+// issueKeySource is where a branch name's <key>-<n> is checked against: the keys the user
+// configured, plus the team keys the workspace's Track reports. Track is asked lazily — only when
+// the branch has a candidate — and briefly; if it cannot answer, only the configured keys count,
+// and an unknown key attributes nothing rather than a guess.
+func issueKeySource(cfg config.Config) issueref.KeySource {
+	return func() []string {
+		var keys []string
+		for _, k := range strings.Split(cfg.IssueKeys, ",") {
+			if k = strings.TrimSpace(k); k != "" {
+				keys = append(keys, k)
+			}
+		}
+		tc, err := track.New(cfg.TrackURL, cfg.TrackAPIKey)
+		if err != nil || !tc.IsConfigured() || cfg.WorkspaceID == "" {
+			return keys
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		if teams, err := tc.TeamKeys(ctx, cfg.WorkspaceID); err == nil {
+			keys = append(keys, teams...)
+		}
+		return keys
+	}
+}
+
 func printUsage(w io.Writer) {
 	st := ui.For(w)
 	for _, line := range strings.Split(usageText, "\n") {
@@ -233,6 +261,7 @@ FLAGS
   --docs-key        Docs API key (or TALYVOR_DOCS_API_KEY)
   --workspace       Workspace ID (or TALYVOR_WORKSPACE_ID)
   --issue           Active issue, e.g. ENG-42 (or TALYVOR_ISSUE)
+  --issue-keys      Issue keys a branch may name, e.g. ENG,OPS, besides Track's teams (or TALYVOR_ISSUE_KEYS)
   --model           Model (default claude-haiku-4-5)`
 
 func runCheck(w io.Writer, cfg config.Config) error {

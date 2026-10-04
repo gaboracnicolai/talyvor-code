@@ -201,3 +201,42 @@ func (c *Client) ListIssues(ctx context.Context, workspaceID string, limit int) 
 	}
 	return out, nil
 }
+
+// TeamKeys returns the team identifiers ("ENG", "OPS") the workspace's Track builds issue
+// identifiers from — GET /v1/workspaces/{ws}/teams, which answers a JSON array of teams. The CLI
+// uses them to decide whether a branch's <key>-<n> is one of this workspace's issues at all.
+func (c *Client) TeamKeys(ctx context.Context, workspaceID string) ([]string, error) {
+	if !c.IsConfigured() {
+		return nil, nil
+	}
+	if workspaceID == "" {
+		return nil, errors.New("track: workspace_id required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.url+"/v1/workspaces/"+url.PathEscape(workspaceID)+"/teams", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return nil, errors.New("track: " + resp.Status)
+	}
+	var teams []struct {
+		Identifier string `json:"identifier"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(teams))
+	for _, t := range teams {
+		if t.Identifier != "" {
+			keys = append(keys, t.Identifier)
+		}
+	}
+	return keys, nil
+}

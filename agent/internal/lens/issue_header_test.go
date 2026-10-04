@@ -16,6 +16,9 @@ import (
 // extractor whose value never reaches the wire, or — far worse — a caller that forwards the BRANCH
 // NAME instead of the identifier. These assert the bytes an HTTP server actually received.
 
+// known is the workspace's Track teams for every test here.
+var known = issueref.Keys("ENG")
+
 // captureHeaders runs one Complete against a test server and returns what it saw.
 func captureHeaders(t *testing.T, issueID string) http.Header {
 	t.Helper()
@@ -44,7 +47,7 @@ func captureHeaders(t *testing.T, issueID string) http.Header {
 func TestIssueHeader_TransmitsOnlyTheIdentifierNeverTheBranch(t *testing.T) {
 	const branch = "fix/acme-corp-breach-ENG-42"
 
-	id := issueref.FromBranch(branch)
+	id := issueref.FromBranch(branch, known)
 	if id != "ENG-42" {
 		t.Fatalf("FromBranch(%q) = %q, want ENG-42", branch, id)
 	}
@@ -69,7 +72,7 @@ func TestIssueHeader_TransmitsOnlyTheIdentifierNeverTheBranch(t *testing.T) {
 // A lowercase branch must attribute to the same issue — otherwise eng-42 silently attributes to
 // nothing while looking like it worked.
 func TestIssueHeader_LowercaseBranchNormalisesOnTheWire(t *testing.T) {
-	id := issueref.FromBranch("eng-42/fix")
+	id := issueref.FromBranch("eng-42/fix", known)
 	got := captureHeaders(t, id)
 	if h := got.Get("X-Talyvor-Issue"); h != "ENG-42" {
 		t.Errorf("X-Talyvor-Issue = %q, want ENG-42 (case-normalised)", h)
@@ -80,7 +83,7 @@ func TestIssueHeader_LowercaseBranchNormalisesOnTheWire(t *testing.T) {
 // unattributed, which is correct; a guessed identifier would be a wrong bill.
 func TestIssueHeader_UnmatchedBranchSendsNothing(t *testing.T) {
 	for _, branch := range []string{"main", "master", "HEAD", "spike/try-something", ""} {
-		id := issueref.FromBranch(branch)
+		id := issueref.FromBranch(branch, known)
 		if id != "" {
 			t.Fatalf("FromBranch(%q) = %q, want empty — this would attribute work to a guess", branch, id)
 		}
@@ -93,7 +96,7 @@ func TestIssueHeader_UnmatchedBranchSendsNothing(t *testing.T) {
 
 // ⚠ EXPLICIT BEATS DETECTED, and the wire is where that has to be true.
 func TestIssueHeader_ExplicitWinsOverTheBranch(t *testing.T) {
-	id, source := issueref.Resolve("ENG-9", func() (string, error) { return "feature/ENG-42-add-login", nil })
+	id, source := issueref.Resolve("ENG-9", func() (string, error) { return "feature/ENG-42-add-login", nil }, known)
 	if id != "ENG-9" || source != "explicit" {
 		t.Fatalf("Resolve = (%q,%q), want (ENG-9, explicit)", id, source)
 	}
@@ -104,9 +107,29 @@ func TestIssueHeader_ExplicitWinsOverTheBranch(t *testing.T) {
 
 // The detected identifier reaches the wire when nothing was stated.
 func TestIssueHeader_DetectedIdentifierReachesTheWire(t *testing.T) {
-	id, source := issueref.Resolve("", func() (string, error) { return "feature/ENG-42-add-login", nil })
+	id, source := issueref.Resolve("", func() (string, error) { return "feature/ENG-42-add-login", nil }, known)
 	if id != "ENG-42" || source != "branch" {
 		t.Fatalf("Resolve = (%q,%q), want (ENG-42, branch)", id, source)
+	}
+	if h := captureHeaders(t, id).Get("X-Talyvor-Issue"); h != "ENG-42" {
+		t.Errorf("X-Talyvor-Issue = %q, want ENG-42", h)
+	}
+}
+
+// ⚠ B27.17: a <key>-<n> whose key the workspace does not know sends NOTHING; a known one sends
+// the identifier. b18-52-x printed "ISSUE B18-52" and sent it to Lens before this.
+func TestIssueHeader_OnlyAKnownKeyReachesTheWire(t *testing.T) {
+	id, source := issueref.Resolve("", func() (string, error) { return "b18-52-x", nil }, known)
+	if id != "" || source != "none" {
+		t.Fatalf("Resolve(b18-52-x) = (%q,%q), want (\"\", none) — B18 is not a key this workspace has", id, source)
+	}
+	if h := captureHeaders(t, id).Get("X-Talyvor-Issue"); h != "" {
+		t.Errorf("b18-52-x put X-Talyvor-Issue %q on the wire; it must send nothing", h)
+	}
+
+	id, source = issueref.Resolve("", func() (string, error) { return "eng-42-x", nil }, known)
+	if id != "ENG-42" || source != "branch" {
+		t.Fatalf("Resolve(eng-42-x) = (%q,%q), want (ENG-42, branch)", id, source)
 	}
 	if h := captureHeaders(t, id).Get("X-Talyvor-Issue"); h != "ENG-42" {
 		t.Errorf("X-Talyvor-Issue = %q, want ENG-42", h)

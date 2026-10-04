@@ -9,6 +9,9 @@ import (
 // The extraction rules. The HEADER these produce is asserted separately in internal/lens — a
 // correct extractor whose value never reaches the wire is the failure this file cannot see.
 
+// known is the workspace these tests run in: the teams its Track reports.
+var known = Keys("ENG", "MKT", "QA", "platform")
+
 func TestFromBranch_TheShapesDevelopersActuallyUse(t *testing.T) {
 	for _, c := range []struct{ branch, want string }{
 		{"feature/ENG-42-add-login", "ENG-42"},
@@ -23,7 +26,7 @@ func TestFromBranch_TheShapesDevelopersActuallyUse(t *testing.T) {
 		{"feature/QA-3-flaky", "QA-3"},
 		{"feature/PLATFORM-88-migrate", "PLATFORM-88"},
 	} {
-		if got := FromBranch(c.branch); got != c.want {
+		if got := FromBranch(c.branch, known); got != c.want {
 			t.Errorf("FromBranch(%q) = %q, want %q", c.branch, got, c.want)
 		}
 	}
@@ -39,9 +42,36 @@ func TestFromBranch_RefusesToGuess(t *testing.T) {
 		"",
 		"   ",
 	} {
-		if got := FromBranch(branch); got != "" {
+		if got := FromBranch(branch, known); got != "" {
 			t.Errorf("FromBranch(%q) = %q, want empty — attributing this would be a guess", branch, got)
 		}
+	}
+}
+
+// ⚠ A KEY THE WORKSPACE DOES NOT HAVE IS NOT AN ISSUE. b18-52-design-language printed
+// "ISSUE B18-52"; B18 is a queue item, not a Track team.
+func TestFromBranch_OnlyKnownKeysCount(t *testing.T) {
+	for _, c := range []struct {
+		branch string
+		keys   KeySource
+		want   string
+	}{
+		{"b18-52-design-language", known, ""},
+		{"release-2-hotfix", known, ""},
+		{"b18-52-eng-42-fix", known, "ENG-42"}, // the first KNOWN key wins, not the first shape
+		{"eng-42-x", Keys("eng"), "ENG-42"},    // keys compare case-insensitively
+		{"eng-42-x", Keys(), ""},               // no known keys: nothing is attributed
+		{"eng-42-x", nil, ""},
+	} {
+		if got := FromBranch(c.branch, c.keys); got != c.want {
+			t.Errorf("FromBranch(%q) = %q, want %q", c.branch, got, c.want)
+		}
+	}
+	// Lazy: a branch with no candidate never asks for the keys (that would be a Track round trip).
+	asked := false
+	FromBranch("feature/add-login", func() []string { asked = true; return nil })
+	if asked {
+		t.Error("FromBranch asked for keys on a branch with no <key>-<n> in it")
 	}
 }
 
@@ -51,20 +81,20 @@ func TestResolve_Precedence(t *testing.T) {
 	}
 	failing := func() (string, error) { return "", errNotARepo }
 
-	if id, src := Resolve("ENG-9", branch("feature/ENG-42")); id != "ENG-9" || src != "explicit" {
+	if id, src := Resolve("ENG-9", branch("feature/ENG-42"), known); id != "ENG-9" || src != "explicit" {
 		t.Errorf("explicit did not win: (%q,%q)", id, src)
 	}
-	if id, src := Resolve("", branch("feature/ENG-42")); id != "ENG-42" || src != "branch" {
+	if id, src := Resolve("", branch("feature/ENG-42"), known); id != "ENG-42" || src != "branch" {
 		t.Errorf("detection did not apply: (%q,%q)", id, src)
 	}
-	if id, src := Resolve("", branch("main")); id != "" || src != "none" {
+	if id, src := Resolve("", branch("main"), known); id != "" || src != "none" {
 		t.Errorf("main attributed something: (%q,%q)", id, src)
 	}
 	// ⚠ NOT A REPO IS THE SAME ANSWER AS NO MATCH: attribute nothing, do not fail the command.
-	if id, src := Resolve("", failing); id != "" || src != "none" {
+	if id, src := Resolve("", failing, known); id != "" || src != "none" {
 		t.Errorf("a git failure did not degrade to unattributed: (%q,%q)", id, src)
 	}
-	if id, src := Resolve("", nil); id != "" || src != "none" {
+	if id, src := Resolve("", nil, known); id != "" || src != "none" {
 		t.Errorf("a nil branch reader did not degrade to unattributed: (%q,%q)", id, src)
 	}
 }
