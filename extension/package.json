@@ -1,7 +1,7 @@
 {
   "name": "talyvor-code",
   "displayName": "Talyvor Code",
-  "description": "AI coding assistant powered by Talyvor Lens \u2014 track AI costs per issue",
+  "description": "An AI coding agent that runs on its own Talyvor wallet \u2014 budget, rules, cost per issue",
   "version": "0.3.0",
   "publisher": "talyvor",
   "license": "BUSL-1.1",
@@ -22,7 +22,10 @@
     "copilot",
     "coding assistant",
     "talyvor",
-    "lens"
+    "lens",
+    "agent wallet",
+    "ai agent",
+    "budget"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -40,7 +43,7 @@
         "talyvor.lensApiKey": {
           "type": "string",
           "default": "",
-          "description": "Talyvor Lens API key. DEPRECATED as a storage location: on activation this value is moved into the OS keychain (SecretStorage) and cleared from settings. Set it here once to migrate, or it will be migrated automatically.",
+          "description": "Your coding agent's key: in Talyvor, open Agent Wallets, pick the agent and press Issue a key \u2014 every call then spends only that agent's wallet, under its rules. A workspace key also works, billed to the workspace instead. DEPRECATED as a storage location: on activation this value is moved into the OS keychain (SecretStorage) and cleared from settings. Set it here once to migrate, or it will be migrated automatically.",
           "markdownDeprecationMessage": "Stored in the OS keychain (SecretStorage) now; this setting is cleared automatically after migration."
         },
         "talyvor.trackUrl": {

@@ -3,6 +3,15 @@
 This file is the Marketplace **Changelog** tab. It ships inside the `.vsix`; anything not written
 here is invisible to someone deciding whether to install.
 
+## [Unreleased]
+
+### Changed
+
+- **Talyvor Code now runs on its own agent wallet.** The listing and the setup steps lead with it:
+  create an agent in Talyvor's **Agent Wallets**, fund it, set its rules, press **Issue a key**, and
+  paste that key into `talyvor.lensApiKey`. Every call then spends only that agent's balance, under
+  its rules, and shows on its statement; the cost per issue is unchanged.
+
 ## [0.3.0]
 
 Released together with Talyvor Code CLI v0.3.0, which `Talyvor: Run Claude Code (metered by Lens)`
