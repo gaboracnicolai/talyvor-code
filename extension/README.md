@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/gaboracnicolai/talyvor-code/main/extension/media/talyvor-logo-dark.png">
+  <img src="https://raw.githubusercontent.com/gaboracnicolai/talyvor-code/main/extension/media/talyvor-logo-light.png" alt="Talyvor" width="360">
+</picture>
+
 # Talyvor Code
 
 An AI coding agent that runs on its own **Talyvor agent wallet** — a budget you fund, spending rules

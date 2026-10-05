@@ -27,3 +27,8 @@ node_modules/**
 # customer's install. This file is an exclude-list, so a NEW top-level directory is shipped
 # by default; that is the direction it fails in.
 scripts/**
+
+# The README's logo is fetched from GitHub by absolute URL (vsce rewrites neither a <picture>'s
+# srcset nor a path relative to extension/), so the PNGs need not ride in every install.
+# media/icon.png is the package icon and DOES ship.
+media/talyvor-logo-*.png

@@ -11,6 +11,8 @@ here is invisible to someone deciding whether to install.
   create an agent in Talyvor's **Agent Wallets**, fund it, set its rules, press **Issue a key**, and
   paste that key into `talyvor.lensApiKey`. Every call then spends only that agent's balance, under
   its rules, and shows on its statement; the cost per issue is unchanged.
+- **The Talyvor brand.** The extension carries the Talyvor app icon and an Obsidian listing banner,
+  and the README opens with the Talyvor logo.
 
 ## [0.3.0]
 

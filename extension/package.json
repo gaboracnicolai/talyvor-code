@@ -4,6 +4,11 @@
   "description": "An AI coding agent that runs on its own Talyvor wallet \u2014 budget, rules, cost per issue",
   "version": "0.3.0",
   "publisher": "talyvor",
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#060A12",
+    "theme": "dark"
+  },
   "license": "BUSL-1.1",
   "repository": {
     "type": "git",
