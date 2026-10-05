@@ -16,6 +16,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.wm.ToolWindow
 import com.intellij.openapi.wm.ToolWindowFactory
+import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBScrollPane
 import com.intellij.ui.components.JBTextArea
@@ -23,7 +24,6 @@ import com.talyvor.code.LensClient
 import com.talyvor.code.StreamCallbacks
 import com.talyvor.code.TalyvorSettings
 import java.awt.BorderLayout
-import java.awt.Color
 import java.awt.Dimension
 import java.awt.event.ActionEvent
 import javax.swing.BorderFactory
@@ -31,6 +31,28 @@ import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JButton
 import javax.swing.JPanel
+
+// Every colour comes from Brand, as a JBColor that follows the IDE's light or dark theme.
+private fun BrandColor.jb() = JBColor(light, dark)
+
+// A chat bubble: a raised panel with a 1px hairline, sitting on the transcript's surface.
+private fun bubbleArea(text: String, bg: JBColor) = JBTextArea(text).apply {
+    isEditable = false
+    background = bg
+    foreground = Brand.ink.jb()
+    lineWrap = true
+    wrapStyleWord = true
+    border = BorderFactory.createCompoundBorder(
+        BorderFactory.createLineBorder(Brand.line.jb()),
+        BorderFactory.createEmptyBorder(8, 10, 8, 10),
+    )
+}
+
+private fun bubbleRow(area: JBTextArea) = JPanel(BorderLayout()).apply {
+    background = Brand.surface.jb()
+    add(area, BorderLayout.CENTER)
+    border = BorderFactory.createEmptyBorder(2, 6, 2, 6)
+}
 
 class ChatToolWindowFactory : ToolWindowFactory {
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
@@ -52,13 +74,13 @@ private class ChatPanel(private val project: Project) : JPanel(BorderLayout()) {
     init {
         border = BorderFactory.createEmptyBorder(6, 6, 6, 6)
         transcript.layout = BoxLayout(transcript, BoxLayout.Y_AXIS)
-        transcript.background = Color(30, 30, 30)
+        transcript.background = Brand.surface.jb()
         transcriptScroll.preferredSize = Dimension(0, 400)
-        transcriptScroll.viewport.background = Color(30, 30, 30)
+        transcriptScroll.viewport.background = Brand.surface.jb()
 
         val headerRow = Box.createHorizontalBox().apply {
             add(JBLabel(" Talyvor Chat ").apply {
-                foreground = Color(240, 160, 48)
+                foreground = Brand.accent.jb()
             })
             add(Box.createHorizontalGlue())
             add(header)
@@ -86,9 +108,9 @@ private class ChatPanel(private val project: Project) : JPanel(BorderLayout()) {
         sendBtn.isEnabled = s.lensUrl.isNotEmpty() && s.lensApiKey.isNotEmpty()
         if (!sendBtn.isEnabled) {
             header.text = " Not configured — Settings → Tools → Talyvor Code "
-            header.foreground = Color(255, 112, 112)
+            header.foreground = Brand.critical.jb()
         } else {
-            header.foreground = Color(140, 140, 140)
+            header.foreground = Brand.inkMuted.jb()
         }
     }
 
@@ -181,19 +203,8 @@ private class ChatPanel(private val project: Project) : JPanel(BorderLayout()) {
 // streaming deltas arrive. Mirrors ChatTurn's assistant styling so a
 // finished turn and a streaming one look identical.
 private class LiveAssistantTurn {
-    private val area = JBTextArea("").apply {
-        isEditable = false
-        background = Color(26, 29, 36)
-        foreground = Color(212, 216, 226)
-        lineWrap = true
-        wrapStyleWord = true
-        border = BorderFactory.createEmptyBorder(8, 10, 8, 10)
-    }
-    val component: JPanel = JPanel(BorderLayout()).apply {
-        background = Color(26, 29, 36)
-        add(area, BorderLayout.CENTER)
-        border = BorderFactory.createEmptyBorder(2, 6, 2, 6)
-    }
+    private val area = bubbleArea("", Brand.raised.jb())
+    val component: JPanel = bubbleRow(area)
 
     fun setText(text: String) {
         area.text = text
@@ -202,22 +213,7 @@ private class LiveAssistantTurn {
 
 private data class ChatTurn(val role: String, val text: String) {
     fun toComponent(): JPanel {
-        val isUser = role == "user"
-        val bg = if (isUser) Color(26, 58, 92) else Color(26, 29, 36)
-        val fg = if (isUser) Color(230, 240, 250) else Color(212, 216, 226)
-        val area = JBTextArea(text).apply {
-            isEditable = false
-            background = bg
-            foreground = fg
-            lineWrap = true
-            wrapStyleWord = true
-            border = BorderFactory.createEmptyBorder(8, 10, 8, 10)
-        }
-        val wrap = JPanel(BorderLayout()).apply {
-            background = bg
-            add(area, BorderLayout.CENTER)
-            border = BorderFactory.createEmptyBorder(2, 6, 2, 6)
-        }
-        return wrap
+        val bg = if (role == "user") Brand.accentTint.jb() else Brand.raised.jb()
+        return bubbleRow(bubbleArea(text, bg))
     }
 }

@@ -59,12 +59,22 @@ fi
 # 5. The listing leads with the agent wallet (B28.13). The Marketplace shows the manifest's
 #    description in search results and the readme's first paragraph at the top of the page, so both
 #    are read from the archive: the packaged manifest, and the readme's text up to its first blank
-#    line after the title.
+#    line after the `# ` title (the logo sits above the title, B29.20).
 manifest="$(unzip -p "$vsix" 'extension/package.json')"
 node -e "process.exit(/wallet/i.test(JSON.parse(process.argv[1]).description||'')?0:1)" "$manifest" \
   || fail "the packaged manifest's description never mentions the agent wallet — the Marketplace search result would not say what the extension is"
-first_para="$(unzip -p "$vsix" 'extension/readme.md' | awk 'NR>1 && NF==0 && seen {done=1} !done && NR>1 && NF>0 {seen=1; print}')"
+first_para="$(unzip -p "$vsix" 'extension/readme.md' | awk '!t && /^# / {t=1; next} t && NF==0 && seen {done=1} t && !done && NF>0 {seen=1; print}')"
 grep -qi 'agent wallet' <<<"$first_para" \
   || fail "the packaged readme's first paragraph never mentions the agent wallet"
 
-echo "vsix listing ok: readme.md, changelog.md, no build scripts, the readme names '$id', and the listing leads with the agent wallet"
+# 6. The listing carries the brand (B29.20): the Talyvor app icon at 128×128, inside the archive the
+#    manifest points at, on an Obsidian banner.
+icon="$(node -e "process.stdout.write(JSON.parse(process.argv[1]).icon||'')" "$manifest")"
+[ -n "$icon" ] || fail "the packaged manifest has no icon — the Marketplace and the Extensions view show a blank tile"
+grep -qx "extension/$icon" <<<"$entries" || fail "the manifest's icon $icon is not in the .vsix"
+dims="$(unzip -p "$vsix" "extension/$icon" | node -e "const b=require('fs').readFileSync(0); process.stdout.write(b.toString('latin1',1,4)==='PNG' ? b.readUInt32BE(16)+'x'+b.readUInt32BE(20) : 'not a PNG')")"
+[ "$dims" = "128x128" ] || fail "the icon is $dims, not the 128x128 PNG the Marketplace asks for"
+node -e "const b=JSON.parse(process.argv[1]).galleryBanner||{}; process.exit(b.color==='#060A12'&&b.theme==='dark'?0:1)" "$manifest" \
+  || fail "the packaged manifest's galleryBanner is not Obsidian #060A12 on the dark theme"
+
+echo "vsix listing ok: readme.md, changelog.md, no build scripts, the readme names '$id', the listing leads with the agent wallet, and it carries the brand icon and banner"
