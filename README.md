@@ -49,7 +49,7 @@ Three surfaces ship from this repository:
 
 ```bash
 cd extension
-npm install
+npm ci            # installs exactly what package-lock.json records
 npm run compile
 ```
 
@@ -57,8 +57,8 @@ Open the `extension/` folder in VS Code and press F5 to launch a development hos
 
 ```bash
 cd extension
-npx vsce package
-# → talyvor-code-0.1.0.vsix — install via "Extensions: Install from VSIX…"
+npm run package   # the vsce version package-lock.json pins
+# → talyvor-code-<version>.vsix — install via "Extensions: Install from VSIX…"
 ```
 
 ### Configure
