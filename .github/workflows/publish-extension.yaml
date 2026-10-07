@@ -35,14 +35,15 @@ jobs:
             exit 1
           fi
 
-      - run: cd extension && npm install
+      - run: cd extension && npm ci
       - run: cd extension && npm run compile
       - run: cd extension && npm run test:unit
       - run: cd extension && npm run package
       - run: cd extension && ./scripts/check-vsix-listing.sh ./talyvor-code-*.vsix ./package.json
 
-      # Publishes the exact .vsix the steps above built and checked, not a fresh repackage.
+      # Publishes the exact .vsix the steps above built and checked, not a fresh repackage, with the
+      # vsce the lockfile pins: `--no` makes npx fail rather than download one if it is missing.
       - name: publish to the Marketplace
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
-        run: cd extension && npx @vscode/vsce publish --no-dependencies --packagePath ./talyvor-code-*.vsix
+        run: cd extension && npx --no -- vsce publish --no-dependencies --packagePath ./talyvor-code-*.vsix
